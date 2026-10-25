@@ -788,15 +788,16 @@ probe_attempt() { # <вид> <путь к утилите> <host[/путь]> [pro
   [ "$host" = "$path" ] && path="" || path="/$path"
   command -v timeout >/dev/null 2>&1 && to="timeout 10"
   t0=$(uptime_cs)
-  local tmp_body
+  local tmp_body jar
   tmp_body=$(mktemp "${TMPDIR:-/tmp}/probe_body.XXXXXX" 2>/dev/null || echo "$STATE_DIR/probe_body.$$.$RANDOM.tmp")
+  jar=$(mktemp "$STATE_DIR/probe.ck.XXXXXX" 2>/dev/null || echo "$STATE_DIR/probe.ck.$$.$RANDOM.tmp")
 
   case "$proto" in
     1) # Plain HTTP (порт 80)
       local url="http://${host}:80${path:-/}"
       if [ "$kind" = "curl" ]; then
-        out=$($to "$bin" -s -L --max-redirs 3 -m 6 --connect-timeout 4 -o "$tmp_body" -A 'Mozilla/5.0' \
-          -w "\nREDIRECT_URL:%{redirect_url}\nHTTP_CODE:%{http_code}\n" "$url" 2>&1); rc=$?
+        out=$($to "$bin" -s -L --max-redirs 5 -m 8 --connect-timeout 5 -o "$tmp_body" -A 'Mozilla/5.0' \
+          -b "$jar" -c "$jar" -w "\nREDIRECT_URL:%{redirect_url}\nHTTP_CODE:%{http_code}\n" "$url" 2>&1); rc=$?
       else
         out=$($to "$bin" wget -q -T 6 -O "$tmp_body" -U 'Mozilla/5.0' "$url" 2>&1); rc=$?
       fi
@@ -808,11 +809,11 @@ probe_attempt() { # <вид> <путь к утилите> <host[/путь]> [pro
           out=$($to "$bin" -s -k --tlsv1.2 --tls-max 1.2 \
             -H "Upgrade: websocket" -H "Connection: Upgrade" \
             -H "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==" -H "Sec-WebSocket-Version: 13" \
-            -L --max-redirs 3 -m 8 --connect-timeout 5 -o "$tmp_body" -A 'Mozilla/5.0' \
-            -w "\nREDIRECT_URL:%{redirect_url}\nHTTP_CODE:%{http_code}\n" "https://gateway.discord.gg/?v=10&encoding=json" 2>&1); rc=$?
+            -L --max-redirs 5 -m 8 --connect-timeout 5 -o "$tmp_body" -A 'Mozilla/5.0' \
+            -b "$jar" -c "$jar" -w "\nREDIRECT_URL:%{redirect_url}\nHTTP_CODE:%{http_code}\n" "https://gateway.discord.gg/?v=10&encoding=json" 2>&1); rc=$?
         else
-          out=$($to "$bin" -s -k --tlsv1.2 --tls-max 1.2 -L --max-redirs 3 -m 8 --connect-timeout 5 -o "$tmp_body" -A 'Mozilla/5.0' \
-            -w "\nREDIRECT_URL:%{redirect_url}\nHTTP_CODE:%{http_code}\n" "$url" 2>&1); rc=$?
+          out=$($to "$bin" -s -k --tlsv1.2 --tls-max 1.2 -L --max-redirs 5 -m 8 --connect-timeout 5 -o "$tmp_body" -A 'Mozilla/5.0' \
+            -b "$jar" -c "$jar" -w "\nREDIRECT_URL:%{redirect_url}\nHTTP_CODE:%{http_code}\n" "$url" 2>&1); rc=$?
         fi
       else
         out=$($to "$bin" wget -q -T 6 -O "$tmp_body" -U 'Mozilla/5.0' --no-check-certificate "$url" 2>&1); rc=$?
@@ -825,18 +826,18 @@ probe_attempt() { # <вид> <путь к утилите> <host[/путь]> [pro
           out=$($to "$bin" -s -k --tlsv1.3 \
             -H "Upgrade: websocket" -H "Connection: Upgrade" \
             -H "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==" -H "Sec-WebSocket-Version: 13" \
-            -L --max-redirs 3 -m 8 --connect-timeout 5 -o "$tmp_body" -A 'Mozilla/5.0' \
-            -w "\nREDIRECT_URL:%{redirect_url}\nHTTP_CODE:%{http_code}\n" "https://gateway.discord.gg/?v=10&encoding=json" 2>&1); rc=$?
+            -L --max-redirs 5 -m 8 --connect-timeout 5 -o "$tmp_body" -A 'Mozilla/5.0' \
+            -b "$jar" -c "$jar" -w "\nREDIRECT_URL:%{redirect_url}\nHTTP_CODE:%{http_code}\n" "https://gateway.discord.gg/?v=10&encoding=json" 2>&1); rc=$?
         else
-          out=$($to "$bin" -s -k --tlsv1.3 -L --max-redirs 3 -m 8 --connect-timeout 5 -o "$tmp_body" -A 'Mozilla/5.0' \
-            -w "\nREDIRECT_URL:%{redirect_url}\nHTTP_CODE:%{http_code}\n" "$url" 2>&1); rc=$?
+          out=$($to "$bin" -s -k --tlsv1.3 -L --max-redirs 5 -m 8 --connect-timeout 5 -o "$tmp_body" -A 'Mozilla/5.0' \
+            -b "$jar" -c "$jar" -w "\nREDIRECT_URL:%{redirect_url}\nHTTP_CODE:%{http_code}\n" "$url" 2>&1); rc=$?
         fi
       else
         out=$($to "$bin" wget -q -T 6 -O "$tmp_body" -U 'Mozilla/5.0' --no-check-certificate "$url" 2>&1); rc=$?
       fi
       ;;
     4) # QUIC / HTTP/3 (UDP 443)
-      rm -f "$tmp_body"
+      rm -f "$tmp_body" "$jar"
       if grep -qFi "$host" "$LISTS_DIR/quic_unsupported.list" 2>/dev/null; then
         echo "skip quic_unsupported"
         return
@@ -850,7 +851,7 @@ probe_attempt() { # <вид> <путь к утилите> <host[/путь]> [pro
       fi
       ;;
     *)
-      rm -f "$tmp_body"
+      rm -f "$tmp_body" "$jar"
       echo "fail other"
       return
       ;;
@@ -862,19 +863,19 @@ probe_attempt() { # <вид> <путь к утилите> <host[/путь]> [pro
   http_code=$(printf '%s\n' "$out" | sed -n 's/^HTTP_CODE://p')
   case "$redir" in
     *rkn.gov.ru*|*eais.*|*warning.rt.ru*|*blackhole*|*zapret*)
-      rm -f "$tmp_body"
+      rm -f "$tmp_body" "$jar"
       echo "fail isp_redir"
       return ;;
   esac
 
   if is_block_notice "$tmp_body"; then
-    rm -f "$tmp_body"
+    rm -f "$tmp_body" "$jar"
     echo "fail isp_redir"
     return
   fi
 
   if [ "$host" = "gateway.discord.gg" ] && [ "$kind" = "curl" ] && [ "$rc" = 0 ]; then
-    rm -f "$tmp_body"
+    rm -f "$tmp_body" "$jar"
     if [ "$http_code" = "101" ]; then
       echo "ok $(( (t1 - t0) * 10 ))"
     else
@@ -883,8 +884,11 @@ probe_attempt() { # <вид> <путь к утилите> <host[/путь]> [pro
     return
   fi
 
-  rm -f "$tmp_body"
+  rm -f "$tmp_body" "$jar"
   if [ "$rc" = 0 ]; then echo "ok $(( (t1 - t0) * 10 ))"; return; fi
+  # Followed maximum redirects (bot cookie protection loop, e.g. Cloudflare / mi.com)
+  # Server answered repeatedly over HTTP/TLS, so DPI did not block it: site is reachable
+  [ "$kind:$rc" = "curl:47" ] && { echo "ok $(( (t1 - t0) * 10 ))"; return; }
   case "$kind:$rc:$out" in
     wget:*"server returned error"*|curl:22:*) echo "ok $(( (t1 - t0) * 10 ))" ;;
     curl:35:*)

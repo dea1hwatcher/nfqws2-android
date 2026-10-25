@@ -1745,14 +1745,18 @@ system_config() {
   sysctl -w net.core.rmem_default=2097152 >/dev/null 2>&1
   sysctl -w net.core.netdev_max_backlog=16384 >/dev/null 2>&1
 
-  # Values proven stable on the reference router (1200 / 16384). Android defaults
-  # can expire idle long-lived connections; their packets then look INVALID and
-  # are silently dropped.
-  local cur_est cur_max
-  cur_est=$(sysctl -n net.netfilter.nf_conntrack_tcp_timeout_established 2>/dev/null)
+  # Idle TCP connection lifetime in conntrack: do not shorten.
+  # Previously set to 1200s (router value), but an Android phone is not a router:
+  # Google push notifications (mtalk.google.com) heartbeat is up to 28 minutes.
+  # A 20-minute timeout expired idle connections and caused bursty/delayed push notifications.
+  # If previously shortened below 7200s, restore to kernel default (432000s).
+  local cur_max cur_est
   cur_max=$(sysctl -n net.netfilter.nf_conntrack_max 2>/dev/null)
-  [ -n "$cur_est" ] && log_msg "conntrack: nf_conntrack_tcp_timeout_established was $cur_est, setting 1200 (reference router value)"
-  sysctl -w net.netfilter.nf_conntrack_tcp_timeout_established=1200 >/dev/null 2>&1
+  cur_est=$(sysctl -n net.netfilter.nf_conntrack_tcp_timeout_established 2>/dev/null)
+  if [ -n "$cur_est" ] && [ "$cur_est" -lt 7200 ] 2>/dev/null; then
+    log_msg "conntrack: nf_conntrack_tcp_timeout_established was $cur_est, restoring 432000 (kernel default): short timeout breaks push notifications"
+    sysctl -w net.netfilter.nf_conntrack_tcp_timeout_established=432000 >/dev/null 2>&1
+  fi
   if [ -n "$cur_max" ] && [ "$cur_max" -lt 16384 ] 2>/dev/null; then
     log_msg "conntrack: nf_conntrack_max was $cur_max, raising to 16384 (reference router value)"
     sysctl -w net.netfilter.nf_conntrack_max=16384 >/dev/null 2>&1
