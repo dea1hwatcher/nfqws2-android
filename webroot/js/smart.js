@@ -7,6 +7,8 @@
    виды соединений, ошибки, обучение. В плитку можно зайти: там подробности.
    Статистику можно смотреть для любой сети, не только текущей. */
 let SMS = null, smartTimer = null, smartView = null;
+const isSmartMode = () => (typeof currentStrategy !== 'undefined' ? currentStrategy === 'smart' : (SMS && SMS.active == 1));
+
 // Виды соединений: в каждый входят наборы вариантов (slot) своих профилей
 // [ключ, заголовок плитки, заголовок подробностей, значок, наборы]
 const SMART_GROUPS = [
@@ -16,10 +18,11 @@ const SMART_GROUPS = [
 ];
 const SMART_SLOT_TITLE = {tls: 'Обычные сайты', tls_cf: 'Сайты за Cloudflare', tls_16: 'Хостинги и CDN (обрыв на 16 КБ)',
   tls_as: 'Хостинги: Contabo, Frantech и другие', google: 'Google и YouTube', quic: 'QUIC', quic_16: 'QUIC на хостингах и CDN'};
+
 /* Фоновое обучение идёт вместе со службой: на паузе или остановленной оно
    ждёт и продолжится само, когда служба снова заработает */
 function smartLearnState(m){
-  if(m.learn != 1) return {value: t('Выкл.'), sub: t('только по ходу работы'), on: false};
+  if(!m || m.learn != 1) return {value: t('Выкл.'), sub: t('только по ходу работы'), on: false};
   if(m.active != 1) return {value: t('Ждёт'), sub: t('начнётся в умном режиме'), on: false};
   if(m.paused == 1) return {value: t('Пауза'), sub: t('продолжится, когда служба возобновит работу'), on: false};
   if(m.running != 1) return {value: t('Пауза'), sub: t('служба остановлена — продолжится при запуске'), on: false};
@@ -37,7 +40,7 @@ async function smartLoad(){
   if(openSheetId === 'smart-sheet' && smartSheetKind === 'learn') smartTrainSheet();
   clearTimeout(smartTimer);
   // пока экран открыт — раз в 20 секунд свежая статистика (фоновое обучение идёт)
-  if(SMS && (currentPage === 'config' && isSmartMode())) smartTimer = setTimeout(() => { if((currentPage === 'config' && isSmartMode())) smartLoad(); }, 20000);
+  if(SMS && currentPage === 'smart') smartTimer = setTimeout(() => { if(currentPage === 'smart') smartLoad(); }, 20000);
 }
 const smartNetLabel = n => n.id === 'mobile' || /^mobile-/.test(n.id) ? t('Мобильная: {0}', n.label) : n.id === 'wifi' ? t('Wi‑Fi') : t('Wi‑Fi: {0}', n.label);
 const isPassName = name => /без обхода/i.test(name || '');
@@ -57,7 +60,9 @@ const pct = (ok, err) => ok + err > 0 ? Math.round(100 * ok / (ok + err)) : null
    · Охват — 50 сайтов и больше.
    Итог = 45% знания + 35% точности + 20% охвата. */
 function smartGroupStat(m, g){
-  const slots = SMART_GROUPS.find(x => x[0] === g)[4];
+  const group = SMART_GROUPS.find(x => x[0] === g);
+  if(!group) return {ok: 0, err: 0, best: null, conf: 0};
+  const slots = group[4];
   let ok = 0, err = 0, best = null, bestShare = 0, total = 0;
   slots.forEach(sl => (m.top && m.top[sl] || []).forEach(v => {
     ok += v.ok; err += v.err;
@@ -71,7 +76,7 @@ function smartGroupStat(m, g){
 function smartProgress(m){
   const cur = (m.nets || []).find(n => n.id === m.view) || {sites: 0};
   const g = {}; SMART_GROUPS.forEach(([k]) => g[k] = smartGroupStat(m, k));
-  const know = 0.5 * g.tls.conf + 0.3 * g.google.conf + 0.2 * g.quic.conf;
+  const know = 0.5 * (g.tls ? g.tls.conf : 0) + 0.3 * (g.google ? g.google.conf : 0) + 0.2 * (g.quic ? g.quic.conf : 0);
   const acc = m.acc && m.acc.ok + m.acc.err > 0 ? m.acc.ok / (m.acc.ok + m.acc.err) : 0;
   const cov = Math.min(1, (cur.sites || 0) / 50);
   return {p: Math.round(100 * (0.45 * know + 0.35 * acc + 0.2 * cov)), g, acc, sites: cur.sites || 0};
@@ -103,6 +108,13 @@ function renderSmart(){
   const nets = m.nets || [];
   const view = nets.find(n => n.id === m.view);
   const parts = [];
+
+  if(m.active != 1){
+    parts.push('<div class="suggest">' + icon('auto', 's24') + '<span class="grow">' +
+      esc(t('Умный режим сейчас не выбран. Он сам подберёт обход для каждого сайта из блоков авторских стратегий и альтов Flowseal и запомнит его для каждой сети.')) + '</span>' +
+      '<button class="btn tonal sm state" onclick="smartEnable()">' + esc(t('Включить')) + '</button></div>');
+  }
+
   const pr = smartProgress(m);
   // шапка: кольцо обученности и сеть, чью статистику смотрим
   const netText = view ? smartNetLabel(view) : (m.offline == 1 ? t('Нет связи') : t('Сеть ещё не определена'));
@@ -113,7 +125,7 @@ function renderSmart(){
       '<span class="smart-hero-sub">' + esc(m.offline == 1 && view && view.current == 1 ? t('Нет связи — перебор на паузе') : t('Обученность в этой сети')) + '</span>' +
       (nets.length > 1
         ? '<button type="button" class="chip dropdown state" aria-haspopup="menu" onclick="smartPickNet(this)"><span>' + esc(netText) + '</span>' + icon('caret', 's18') + '</button>'
-        : '<span class="smart-hero-net">' + icon(view && /^mobile/.test(view.id) ? 'globe' : 'wifi', 's18') + esc(netText) + '</span>') +
+        : '<span class="smart-hero-net">' + icon(view && /^mobile/.test(view.id) ? 'globe' : 'wifi', 's18') + '<span>' + esc(netText) + '</span></span>') +
     '</div></div>');
   // плитки
   const probs = (m.problems || []).length, nodpi = (m.nodpi || []).length;
@@ -121,7 +133,7 @@ function renderSmart(){
     {icon: 'list', title: 'Сайты', value: String(pr.sites), sub: pr.acc ? t('открываются в {0}% случаев', Math.round(pr.acc * 100)) : t('пока ничего'), on: "smartSites('all')"}
   ];
   SMART_GROUPS.forEach(([k, title, , ic]) => {
-    const g = pr.g[k], p = pct(g.ok, g.err);
+    const g = pr.g[k] || {ok: 0, err: 0}, p = pct(g.ok, g.err);
     tiles.push({icon: ic, title, value: p == null ? '—' : p + '%',
       sub: g.best ? g.best.name : (p == null ? t('нет данных') : t('ещё подбирает')), on: "smartGroup('" + k + "')"});
   });
@@ -142,7 +154,17 @@ function renderSmart(){
   setHTML('smart-body', parts.join(''), false);
 }
 
+async function smartEnable(){
+  await applyStrategy('smart');
+  await smartLoad();
+}
+
+async function smartOffer(){
+  if(currentPage === 'smart') smartLoad();
+}
+
 function smartPickNet(anchor){
+  if(!SMS || !SMS.nets) return;
   openMenu(anchor, (SMS.nets || []).map(n => ({
     label: smartNetLabel(n), sub: plural(n.sites, t('сайт'), t('сайта'), t('сайтов')) + (n.current == 1 ? ' · ' + t('сейчас') : ''),
     icon: n.id === SMS.view ? 'check' : '',
@@ -154,31 +176,39 @@ function smartPickNet(anchor){
 let smartSheetKind = '';
 function smartSheet(title, html, kind){
   smartSheetKind = kind || '';
-  $('smart-sheet-title').textContent = title;
-  $('smart-sheet-body').innerHTML = html;
-  $('smart-sheet-body').scrollTop = 0;
+  const tEl = $('smart-sheet-title');
+  const bEl = $('smart-sheet-body');
+  if(tEl) tEl.textContent = title;
+  if(bEl){ bEl.innerHTML = html; bEl.scrollTop = 0; }
   if(openSheetId !== 'smart-sheet') openSheet('smart-sheet');
 }
 function smartSiteRows(list){
-  if(!list.length) return '<div class="empty"><span>' + esc(t('Пока пусто')) + '</span></div>';
+  if(!list || !list.length) return '<div class="empty"><span>' + esc(t('Пока пусто')) + '</span></div>';
   return '<div class="list">' + list.map(s =>
     settingsRow({icon: s.err > s.ok ? 'warn' : 'check', title: s.host,
       sub: (s.name || '#' + s.n) + ' · ' + t('удачных {0} · с ошибками {1}', s.ok, s.err)})).join('') + '</div>';
 }
 async function smartSitesList(grp){
+  if(!SMS || !SMS.view) return [];
   const r = await ctlx(['smart-sites', SMS.view, grp]);
   try { return JSON.parse(r.out); } catch(e){ return []; }
 }
 async function smartSites(grp){
+  if(!SMS) await smartLoad();
+  if(!SMS) return;
   smartSheet(t('Выученные сайты'), '<div class="helper">' + esc(t('Загрузка…')) + '</div>');
   const list = await smartSitesList(grp);
   smartSheet(t('Выученные сайты'), '<div class="helper">' + esc(t('Сайт и вариант, на котором он сейчас работает. Первые 300 — по числу удачных соединений.')) + '</div>' + smartSiteRows(list));
 }
 async function smartGroup(k){
-  const [, , title, , slots] = SMART_GROUPS.find(x => x[0] === k);
+  if(!SMS) await smartLoad();
+  if(!SMS) return;
+  const item = SMART_GROUPS.find(x => x[0] === k);
+  if(!item) return;
+  const [, , title, , slots] = item;
   const top = SMS.top || {};
   const varRows = slots.filter(sl => (top[sl] || []).length).map(sl =>
-    '<div class="list">' + (slots.length > 1 ? '<div class="sheet-group" role="presentation">' + esc(t(SMART_SLOT_TITLE[sl])) + '</div>' : '') +
+    '<div class="list">' + (slots.length > 1 ? '<div class="sheet-group" role="presentation">' + esc(t(SMART_SLOT_TITLE[sl] || sl)) + '</div>' : '') +
       top[sl].slice().sort((a, b) => b.sites - a.sites || b.ok - a.ok).slice(0, 6).map(v => {
         const p = pct(v.ok, v.err);
         return settingsRow({icon: v.err > v.ok ? 'warn' : 'check', title: v.name || ('#' + v.n),
@@ -191,6 +221,8 @@ async function smartGroup(k){
   if(box) box.innerHTML = smartSiteRows(list);
 }
 async function smartProblems(){
+  if(!SMS) await smartLoad();
+  if(!SMS) return;
   const nodpi = SMS.nodpi || [];
   smartSheet(t('Ошибки'), '<div class="helper">' + esc(t('Загрузка…')) + '</div>');
   const list = await smartSitesList('problems');
@@ -204,6 +236,7 @@ async function smartProblems(){
       : '<div class="empty"><span>' + esc(t('Таких нет')) + '</span></div>'));
 }
 function smartTrainSheet(){
+  if(!SMS) return;
   const m = SMS, bg = m.bg || {}, ls = smartLearnState(m);
   smartSheet(t('Обучение'),
     '<div class="helper">' + esc(t('Умный режим учится сам, по ходу работы. Фоновое обучение раз в две минуты открывает один сайт из списка популярных и ваших — так он заранее знает обход для каждого вида соединений. Оно идёт, пока работает служба: на паузе и без сети ждёт и продолжается само.')) + '</div>' +
@@ -216,7 +249,7 @@ function smartTrainSheet(){
 async function smartLearnToggle(on){
   const r = await withBusy(['set', 'SMART_LEARN', on ? '1' : '0']);
   if(r.code){ toast(errText(r, 'Не удалось сохранить')); return; }
-  SMS.learn = on ? 1 : 0;
+  if(SMS) SMS.learn = on ? 1 : 0;
   renderSmart();
   toast(on ? t('Фоновое обучение включено') : t('Фоновое обучение выключено'));
 }
@@ -248,7 +281,8 @@ async function smartExport(){
 }
 async function smartImport(files){
   const f = files && files[0];
-  $('smart-imp').value = '';
+  const el = $('smart-imp');
+  if(el) el.value = '';
   if(!f) return;
   if(!await mdConfirm(t('Загрузить обучение?'),
     t('Сайты из файла, которых здесь ещё нет, добавятся к выученному в текущей сети. Своё выученное останется. Служба перезапустится.'), {ok: t('Загрузить'), iconName: 'upload'})) return;
