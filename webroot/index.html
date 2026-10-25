@@ -293,6 +293,7 @@
   <section class="page" data-page="smart" aria-label="Умный режим" data-ta="aria-label">
     <div class="helper" data-t>Сам подбирает обход для каждого сайта из блоков авторских стратегий и альтов Flowseal, запоминает удачный вариант за сайтом и помнит выученное отдельно для Wi‑Fi и мобильной сети. Без связи не перебирает ничего.</div>
     <div id="smart-body" class="stack"></div>
+    <input type="file" id="smart-imp" accept=".tsv,text/tab-separated-values,text/plain" hidden onchange="smartImport(this.files)">
   </section>
 
   <!-- Home Wi-Fi -->
@@ -586,6 +587,15 @@
   <div class="sheet-title" id="replaced-sheet-title" data-t>Архив заменённых пресетов</div>
   <div class="sheet-desc" data-t>Резервные копии конфигураций, сохранённые перед заменой или редактированием.</div>
   <div class="list sheet-scroll" id="replaced-list" style="max-height:360px;"></div>
+  <div class="sheet-actions">
+    <button class="btn text state" onclick="closeSheet()"><span data-t>Закрыть</span></button>
+  </div>
+</div>
+
+<div class="sheet list-sheet" id="smart-sheet" role="dialog" aria-modal="true" aria-labelledby="smart-sheet-title">
+  <button type="button" class="sheet-drag" aria-label="Закрыть" data-ta="aria-label"><span class="handle"></span></button>
+  <div class="sheet-title" id="smart-sheet-title"></div>
+  <div class="sheet-scroll" id="smart-sheet-body"></div>
   <div class="sheet-actions">
     <button class="btn text state" onclick="closeSheet()"><span data-t>Закрыть</span></button>
   </div>

@@ -120,6 +120,27 @@ sandbox_init() {
   cp "$TESTS_DIR/lib/mock/nfqws2" "$MODDIR/bin/nfqws2"
   chmod 0755 "$MOCKBIN"/* "$MODDIR/bin/nfqws2"
 
+  if ! command -v node >/dev/null 2>&1 && command -v python >/dev/null 2>&1; then
+    cat > "$MOCKBIN/node" <<'EOF_NODE'
+#!/bin/sh
+if [ "$1" = "-e" ]; then
+  python -c "
+import sys, json
+code = sys.argv[1]
+fpath = sys.argv[2] if len(sys.argv) > 2 else None
+if fpath:
+    with open(fpath, 'r', encoding='utf-8') as f:
+        data = json.load(f)
+    if 'Array.isArray' in code and not isinstance(data, list):
+        sys.exit(1)
+" "$2" "$3"
+  exit $?
+fi
+exec python "$@"
+EOF_NODE
+    chmod 0755 "$MOCKBIN/node"
+  fi
+
   MOCK_IPT_STORE="$MOCK_DIR/ipt"
   MOCK_NFQWS_ARGS_FILE="$MOCK_DIR/nfqws2.args"
   MOCK_PM_FILE=""

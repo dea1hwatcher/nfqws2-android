@@ -32,9 +32,10 @@ start_failed() {
   firewall_stop
 }
 
-# watchdog/netwatch: auto-restart, home Wi-Fi pause, VPN pause, per-network strategies
+# watchdog/netwatch: auto-restart, home Wi-Fi pause, VPN pause, whitelist pause, per-network strategies
+wl_wanted() { [ "$WL_PAUSE" = "1" ] && { [ -f "$DESIRED_FILE" ] || [ -f "$HOME_PAUSED_FILE" ]; }; }
 watchers_wanted() {
-  { [ -f "$DESIRED_FILE" ] && { [ "$WATCHDOG" = "1" ] || smart_active; }; } || [ "$HOME_WIFI" = "1" ] || [ "$NET_STRATEGY" = "1" ] || [ "$VPN_PAUSE" = "1" ];
+  { [ -f "$DESIRED_FILE" ] && { [ "$WATCHDOG" = "1" ] || smart_active; }; } || [ "$HOME_WIFI" = "1" ] || [ "$NET_STRATEGY" = "1" ] || [ "$VPN_PAUSE" = "1" ] || [ "$WL_PAUSE" = "1" ];
 }
 
 start() {
@@ -360,6 +361,7 @@ ensure_helper() {
 ensure_watchdog() {
   # обрыв застрявших соединений — пока работает умный режим
   is_running && ensure_helper "$SK_PIDFILE" smartkill smart_active
+  ensure_helper "$WL_PIDFILE" wlwatch wl_wanted
   watchers_wanted || return 0
   ensure_helper "$WD_PIDFILE" watchdog || return 0
   ensure_netwatch
@@ -385,7 +387,7 @@ smartkill() {
   echo $$ > "$SK_PIDFILE"
   protect_process
   trap 'smartkill_exit; exit 0' TERM INT HUP
-  local w="$SMART_KILL_FILE.work" ver ip lp c up flush=0 n killed=0 logged=0
+  local w="$SMART_KILL_FILE.work" ver ip lp c up flush=0 n learn_at=0 lp_pid= every
   # заявки прошлого запуска — до того, как цепочка заработает: их порты уже
   # могли достаться другим соединениям
   rm -f "$SMART_KILL_FILE"
@@ -395,6 +397,20 @@ smartkill() {
     conf_refresh
     is_running && smart_active || break
     read -r up _ < /proc/uptime; up=${up%.*}
+    # фоновое обучение: раз в SMART_LEARN_EVERY секунд для сети подключения
+    [ "$learn_at" = 0 ] && learn_at=$((up + 60))
+    every=$SMART_LEARN_EVERY
+    if [ -f "$SMART_TURBO_FILE" ] && [ "$(cat "$SMART_TURBO_FILE" 2>/dev/null)" -gt "$(date +%s)" ] 2>/dev/null; then
+      every=$SMART_TURBO_EVERY
+      [ "$learn_at" -gt $((up + every)) ] && learn_at=$((up + every))
+    fi
+    if [ "${SMART_LEARN:-1}" = 1 ] && [ "$up" -ge "$learn_at" ]; then
+      learn_at=$((up + every))
+      if [ -z "$lp_pid" ] || ! kill -0 "$lp_pid" 2>/dev/null; then
+        sh "$MODDIR/bin/nfqws2-ctl" smart-learn-once </dev/null >/dev/null 2>&1 &
+        lp_pid=$!
+      fi
+    fi
     if [ -s "$SMART_KILL_FILE" ]; then
       mv -f "$SMART_KILL_FILE" "$w" 2>/dev/null
       n=0
@@ -405,12 +421,7 @@ smartkill() {
         $c -w -t filter -A $SK_CHAIN -p tcp -d "$ip" --sport "$lp" -j REJECT --reject-with tcp-reset 2>/dev/null && n=$((n + 1))
       done < "$w"
       rm -f "$w"
-      [ "$n" -gt 0 ] && { killed=$((killed + n)); flush=$((up + 15)); }
-    fi
-    # в журнал — сводкой, не чаще раза в минуту: обрывов бывает много подряд
-    if [ "$killed" -gt 0 ] && [ $((up - logged)) -ge 60 ]; then
-      log_msg "Smart mode: stuck connections killed — $killed (apps will reconnect on alternative strategy)"
-      killed=0; logged=$up
+      [ "$n" -gt 0 ] && flush=$((up + 15))
     fi
     if [ "$flush" -gt 0 ] && [ "$up" -ge "$flush" ]; then
       iptables -w -t filter -F $SK_CHAIN 2>/dev/null; ip6tables -w -t filter -F $SK_CHAIN 2>/dev/null
@@ -422,6 +433,48 @@ smartkill() {
 }
 smartkill_exit() {
   [ "$(cat "$SK_PIDFILE" 2>/dev/null)" = "$$" ] && rm -f "$SK_PIDFILE"
+  rm -f "$STATE_DIR/conf_seen.$$"
+}
+# Mobile operator whitelist detection loop: pauses bypass while active
+wlwatch() {
+  echo $$ > "$WL_PIDFILE"
+  protect_process
+  trap 'wlwatch_exit; exit 0' TERM INT HUP
+  local up next=0 pend=0 net last="" res
+  while :; do
+    sleep 5
+    conf_refresh
+    wl_wanted || break
+    read -r up _ < /proc/uptime; up=${up%.*}
+    net=$(cat "$SMART_NET_FILE" 2>/dev/null)
+    [ "$net" != "$last" ] && { last="$net"; next=0; pend=0; }
+    [ "$up" -ge "$next" ] || continue
+    if on_wifi || vpn_active; then
+      [ -f "$WL_FILE" ] && { rm -f "$WL_FILE"; sh "$MODDIR/service.sh" home_check >/dev/null 2>&1; }
+      pend=0; next=$((up + 60)); continue
+    fi
+    res=$(wl_probe)
+    case "$res" in
+      whitelist)
+        if [ -f "$WL_FILE" ]; then next=$((up + 120))
+        elif [ "$pend" -gt 0 ] && [ $((up - pend)) -ge 20 ]; then
+          date +%s > "$WL_FILE"; pend=0; next=$((up + 120))
+          sh "$MODDIR/service.sh" home_check >/dev/null 2>&1
+        else
+          [ "$pend" -gt 0 ] || pend=$up
+          next=$((up + 20))
+        fi ;;
+      normal)
+        pend=0; next=$((up + 300))
+        [ -f "$WL_FILE" ] && { rm -f "$WL_FILE"; sh "$MODDIR/service.sh" home_check >/dev/null 2>&1; } ;;
+      *) pend=0; next=$((up + 60)) ;;
+    esac
+  done
+  if [ "$WL_PAUSE" != "1" ] && [ -f "$WL_FILE" ]; then rm -f "$WL_FILE"; sh "$MODDIR/service.sh" home_check >/dev/null 2>&1; fi
+  wlwatch_exit
+}
+wlwatch_exit() {
+  [ "$(cat "$WL_PIDFILE" 2>/dev/null)" = "$$" ] && rm -f "$WL_PIDFILE"
   rm -f "$STATE_DIR/conf_seen.$$"
 }
 conf_refresh() {
@@ -555,32 +608,39 @@ watchdog() {
   rm -f "$WD_PIDFILE"
 }
 
-# home Wi-Fi and VPN pause: networks from home_wifi.list or active VPN pause the service; leaving resumes.
-# A manual start there is remembered in home_override while that condition stays (@vpn or SSID).
+# home Wi-Fi, VPN, and whitelist pause: home Wi-Fi, active VPN, or carrier whitelisting pause the service.
+# A manual start there is remembered in home_override while that condition stays (@vpn, @wl or SSID).
 home_check() {
   [ -n "$(find "$STATE_DIR/home.lock" -maxdepth 0 -mmin +2 2>/dev/null)" ] && rmdir "$STATE_DIR/home.lock" 2>/dev/null
   mkdir "$STATE_DIR/home.lock" 2>/dev/null || return 0
 
-  local ssid="" vpn=0 ovr="" want=""
+  local ssid="" vpn=0 wl=0 ovr="" want=""
   [ "$HOME_WIFI" = "1" ] && ssid=$(current_ssid)
   [ "$VPN_PAUSE" = "1" ] && vpn_active && vpn=1
+  [ "$WL_PAUSE" = "1" ] && [ -f "$WL_FILE" ] && wl=1
   [ -f "$HOME_OVERRIDE_FILE" ] && ovr=$(cat "$HOME_OVERRIDE_FILE" 2>/dev/null)
   case "$ovr" in
     '') ;;
     @vpn) [ "$vpn" = 1 ] || { rm -f "$HOME_OVERRIDE_FILE"; ovr=""; } ;;
+    @wl)  [ "$wl" = 1 ] || { rm -f "$HOME_OVERRIDE_FILE"; ovr=""; } ;;
     *)    [ "$ovr" = "$ssid" ] || { rm -f "$HOME_OVERRIDE_FILE"; ovr=""; } ;;
   esac
 
   if [ "$vpn" = 1 ] && [ "$ovr" != "@vpn" ]; then
     want="@vpn"
+  elif [ "$wl" = 1 ] && [ "$ovr" != "@wl" ]; then
+    want="@wl"
   elif [ "$HOME_WIFI" = "1" ] && ssid_is_home "$ssid" && [ "$ovr" != "$ssid" ]; then
     want="$ssid"
   fi
 
   if [ -n "$want" ]; then
     if is_running && [ ! -f "$HOME_PAUSED_FILE" ]; then
-      if [ "$want" = "@vpn" ]; then log_msg "VPN active — bypass paused"
-      else log_msg "Home Wi-Fi «$want» — bypass paused"; fi
+      case "$want" in
+        @vpn) log_msg "VPN active — bypass paused" ;;
+        @wl)  log_msg "Carrier whitelist active (белые списки — обход приостановлен)" ;;
+        *)    log_msg "Home Wi-Fi «$want» — bypass paused" ;;
+      esac
       stop >/dev/null 2>&1
       printf '%s' "$want" > "$HOME_PAUSED_FILE"
       update_description paused "$want"
@@ -589,8 +649,11 @@ home_check() {
       update_description paused "$want"
     fi
   elif [ -f "$HOME_PAUSED_FILE" ]; then
-    if [ "$(cat "$HOME_PAUSED_FILE" 2>/dev/null)" = "@vpn" ]; then log_msg "VPN disconnected — bypass resumed"
-    else log_msg "Home Wi-Fi no longer active — bypass resumed"; fi
+    case "$(cat "$HOME_PAUSED_FILE" 2>/dev/null)" in
+      @vpn) log_msg "VPN disconnected — bypass resumed" ;;
+      @wl)  log_msg "Carrier whitelist ended (Белые списки выключены — обход возобновлён)" ;;
+      *)    log_msg "Home Wi-Fi no longer active — bypass resumed" ;;
+    esac
     rm -f "$HOME_PAUSED_FILE"
     start >/dev/null 2>&1 || log_msg "Failed to resume bypass after pause"
   fi
@@ -632,6 +695,8 @@ manual_start() {
   rm -f "$HOME_PAUSED_FILE"
   if [ "$VPN_PAUSE" = "1" ] && vpn_active; then
     printf '@vpn' > "$HOME_OVERRIDE_FILE"
+  elif [ "$WL_PAUSE" = "1" ] && [ -f "$WL_FILE" ]; then
+    printf '@wl' > "$HOME_OVERRIDE_FILE"
   elif [ "$HOME_WIFI" = "1" ] && ssid=$(current_ssid) && ssid_is_home "$ssid"; then
     printf '%s' "$ssid" > "$HOME_OVERRIDE_FILE"
   fi
@@ -690,6 +755,7 @@ case "$1" in
   watchdog)           watchdog ;;
   netwatch)           netwatch ;;
   smartkill)          smartkill ;;
+  wlwatch)            wlwatch ;;
   firewall_apply)     firewall_start ;;
   firewall_stop)      firewall_stop ;;
   *)

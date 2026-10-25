@@ -147,6 +147,8 @@ done
 
 queue_suite "module: nfqws2-ctl" sh "$HERE/module/test_ctl.sh"
 queue_suite "module: smart mode" sh "$HERE/module/test_smart.sh"
+queue_suite "module: system theme colours" sh "$HERE/module/test_monet.sh"
+queue_suite "module: white lists" sh "$HERE/module/test_whitelist.sh"
 
 if [ "$FAST" = 1 ]; then
   queue_skip "module: service and firewall" "--fast"

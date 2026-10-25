@@ -17,12 +17,16 @@ NFQWS_BIN="$MODDIR/bin/nfqws2"
 PIDFILE="$STATE_DIR/nfqws2.pid"
 WD_PIDFILE="$STATE_DIR/watchdog.pid"
 WN_PIDFILE="$STATE_DIR/netwatch.pid"
+WL_PIDFILE="$STATE_DIR/wlwatch.pid"
+WL_FILE="$STATE_DIR/whitelist"                  # carrier whitelisting active timestamp
 DESIRED_FILE="$STATE_DIR/desired"
 ARGS_FILE="$STATE_DIR/last.args"
 APP_UIDS_FILE="$STATE_DIR/app_uids"
 SERVICE_LOG="$LOG_DIR/service.log"
 NFQWS_LOG="$LOG_DIR/nfqws2.log"
 ACTIVE_FILE="$STATE_DIR/active_strategy"
+LAST_STRATEGY_FILE="$STATE_DIR/last_strategy"   # last non-smart strategy
+FIRST_STRATEGY=hardcorp74                       # default initial strategy
 
 # Release-shipped lists; .pending = newer version kept aside due to user edits
 LISTS_PENDING_DIR="$LISTS_DIR/.pending"
@@ -33,7 +37,11 @@ HOME_PAUSED_FILE="$STATE_DIR/home_paused"      # paused by home network; holds S
 HOME_OVERRIDE_FILE="$STATE_DIR/home_override"  # user re-enabled on this network
 SMART_DIR="$CONFDIR/smart"                     # умный режим: выученное по сетям (<сеть>.tsv)
 SMART_NET_FILE="$STATE_DIR/smart_net"          # id текущей сети для умного режима или offline
-SMART_TRAIN_FILE="$STATE_DIR/smart_train"      # ход обучения
+SMART_LEARN_FILE="$STATE_DIR/smart_learn"      # background learning state
+SMART_LEARN_EVERY=120                          # seconds between learning attempts
+SMART_TURBO_FILE="$STATE_DIR/smart_turbo"      # fast learning expiration
+SMART_TURBO_EVERY=15
+SMART_TRAIN_FILE="$STATE_DIR/smart_train"      # legacy training progress
 SMART_TRAIN_PID="$STATE_DIR/smart_train.pid"
 SK_PIDFILE="$STATE_DIR/smartkill.pid"          # обрыв застрявших соединений умного режима
 SMART_KILL_FILE="$STATE_DIR/smart_kill"        # их пишет оркестратор: «4|6 адрес локальный-порт»
@@ -111,6 +119,8 @@ set_defaults() {
   : "${CALLS_BYPASS:=0}"
   : "${TCP_MSS_CLAMP:=0}"
   : "${AUTO_PORTS:=0}"
+  : "${WL_PAUSE:=1}"
+  : "${SMART_LEARN:=1}"
 }
 
 log_msg() {
@@ -209,11 +219,32 @@ validate_conf() {
   ' "$1"
 }
 
+# Smart mode is a module strategy: its active configuration is kept in sync with the module.
+# When a new layout is released (SMART_CONF_VER in strategies/smart.conf), the active configuration
+# is rebuilt with user settings preserved (USER_KEYS). If the user created a custom copy in
+# $USER_STRATEGIES_DIR/smart.conf, we do not touch it.
+smart_conf_sync() {
+  local want have tmp="$STATE_DIR/smart_sync.$$"
+  [ "$(head -n 1 "$ACTIVE_FILE" 2>/dev/null | tr -d '\r\n')" = smart ] || return 0
+  [ -f "$USER_STRATEGIES_DIR/smart.conf" ] && return 0
+  want=$(SMART_CONF_VER=; . "$STRATEGIES_DIR/smart.conf" >/dev/null 2>&1; echo "$SMART_CONF_VER")
+  have=$(SMART_CONF_VER=; . "$CONFFILE" >/dev/null 2>&1; echo "$SMART_CONF_VER")
+  if [ -z "$want" ] || [ "$want" = "$have" ]; then return 0; fi
+  if render_strategy smart > "$tmp.raw" 2>/dev/null && [ -s "$tmp.raw" ] &&
+     merge_user_keys "$tmp.raw" "$CONFFILE" > "$tmp" && validate_conf "$tmp" >/dev/null 2>&1; then
+    cp -f "$CONFFILE" "$CONFFILE.bak" 2>/dev/null
+    mv -f "$tmp" "$CONFFILE" && chmod 0644 "$CONFFILE"
+    log_msg "Smart mode: config updated (конфиг обновлён) to layout $want"
+  fi
+  rm -f "$tmp" "$tmp.raw"
+}
+
 load_conf() {
   sync_lists_and_blobs
   if [ ! -f "$CONFFILE" ]; then
     cp -f "$MODDIR/defaults/nfqws2.conf" "$CONFFILE" 2>/dev/null
   fi
+  smart_conf_sync
   local err
   err=$(validate_conf "$CONFFILE" 2>&1) || {
     log_msg "Config $CONFFILE contains errors: $err"
@@ -1933,6 +1964,8 @@ update_description() { # running | stopped | paused <ssid>
     paused)
       if [ "$2" = "@vpn" ] || [ "$2" = "vpn" ] || [ "$2" = "VPN" ]; then
         d="⏸ Пауза: активен VPN"
+      elif [ "$2" = "@wl" ]; then
+        d="⏸ Пауза: белые списки оператора"
       else
         d="⏸ Пауза: домашняя Wi-Fi «$2»"
       fi ;;
@@ -1994,7 +2027,7 @@ render_strategy() {
 
 # Module settings (same across strategies) are carried over whole from the live
 # config on strategy change/reset. NFQWS_EXTRA_ARGS only for standard $MODE_* refs.
-USER_KEYS="META_QUIC_REJECT CALLS_BYPASS TCP_MSS_CLAMP IPV6_ENABLED TCP_PORTS UDP_PORTS NFQUEUE_NUM PKT_LIMIT_OUT PKT_LIMIT_IN BLOCK_QUIC NAT_FIX APP_MODE AUTOSTART WATCHDOG NFQWS_USER LOG_LEVEL LOG_MAX_KB WAKELOCK HOME_WIFI ENABLE_HOTSPOT NET_STRATEGY VPN_PAUSE AUTO_PORTS NFQWS_EXTRA_ARGS"
+USER_KEYS="META_QUIC_REJECT CALLS_BYPASS TCP_MSS_CLAMP IPV6_ENABLED TCP_PORTS UDP_PORTS NFQUEUE_NUM PKT_LIMIT_OUT PKT_LIMIT_IN BLOCK_QUIC NAT_FIX APP_MODE AUTOSTART WATCHDOG NFQWS_USER LOG_LEVEL LOG_MAX_KB WAKELOCK HOME_WIFI ENABLE_HOTSPOT NET_STRATEGY VPN_PAUSE AUTO_PORTS WL_PAUSE SMART_LEARN NFQWS_EXTRA_ARGS"
 merge_user_keys() { # <generated config> <settings source config>  -> stdout
   awk -v keys=" $USER_KEYS " -v src="$2" '
     function quotes(str,   t) { t = str; return gsub(/"/, "", t) }
@@ -2077,6 +2110,30 @@ active_ssid() {
   printf '%s' "$s"
 }
 
+# Mobile operator whitelist detection: Russian mobile carriers sometimes enforce
+# whitelists where foreign non-blocked sites cannot connect, while Russian sites do.
+WL_FOREIGN="github.com www.microsoft.com www.apple.com www.wikipedia.org www.cloudflare.com"
+WL_ALLOWED="ya.ru vk.com www.gosuslugi.ru mail.ru"
+wl_probe() {
+  command -v curl >/dev/null 2>&1 || { echo unknown; return 0; }
+  local d="$STATE_DIR/wlprobe.$$" h f=0 w=0
+  rm -rf "$d"; mkdir -p "$d" || { echo unknown; return 0; }
+  for h in $WL_FOREIGN; do
+    ( curl -s -k -o /dev/null -m 6 --connect-timeout 5 -w '%{time_connect}' "https://$h/" > "$d/f.$h" 2>/dev/null ) &
+  done
+  for h in $WL_ALLOWED; do
+    ( curl -s -k -o /dev/null -m 6 --connect-timeout 5 -w '%{time_connect}' "https://$h/" > "$d/w.$h" 2>/dev/null ) &
+  done
+  wait
+  for h in "$d"/f.*; do awk '{ exit !($1 + 0 > 0) }' "$h" 2>/dev/null && f=$((f + 1)); done
+  for h in "$d"/w.*; do awk '{ exit !($1 + 0 > 0) }' "$h" 2>/dev/null && w=$((w + 1)); done
+  rm -rf "$d"
+  if [ "$f" -ge 2 ]; then echo normal
+  elif [ "$f" = 0 ] && [ "$w" -ge 2 ]; then echo whitelist
+  elif [ "$f" = 0 ] && [ "$w" = 0 ]; then echo offline
+  else echo partial; fi
+}
+
 on_wifi() {
   local d n="${NFQWS_SYSNET:-/sys/class/net}"
   for d in "$n"/wlan*; do
@@ -2111,7 +2168,6 @@ smart_net_id() {
 }
 
 smart_net_update() {
-  smart_active || return 0
   mkdir -p "$SMART_DIR" "$STATE_DIR" 2>/dev/null
   local line id label
   line=$(smart_net_id); id=${line%%	*}; label=${line#*	}
