@@ -168,6 +168,7 @@ else
   queue_suite "webui: monet palette" "$NODE_BIN" "$HERE/webui/test_monet.js"
   queue_suite "webui: dpi detector" "$NODE_BIN" "$HERE/webui/test_dpi.js"
   queue_suite "webui: export & backup" "$NODE_BIN" "$HERE/webui/test_export.js"
+  queue_suite "webui: memory & leak audit" "$NODE_BIN" "--expose-gc" "$HERE/webui/test_memory.js"
 
   # The contract test compares index.html against the real ctl, so the ctl
   # output is produced here and handed over as files
