@@ -228,7 +228,7 @@ async function smartExport(){
   const out = (r.out || '').trim();
   if(r.code || !out){ toast(errText(r, 'Не удалось сохранить')); return; }
   const p = out.split('\n')[0].split('\t');
-  await exportBlobFile(p[2] ? b64toBlob(p[2], 'text/tab-separated-values') : null, p[0], 'text/tab-separated-values', p[1], SAVE_DIR_DEFAULT);
+  await exportBlobFile(p[2] ? b64toBlob(p[2], 'text/tab-separated-values') : null, p[0], 'text/tab-separated-values', p[1]);
 }
 
 async function smartImport(files){
