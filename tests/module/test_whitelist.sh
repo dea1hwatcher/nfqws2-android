@@ -38,7 +38,7 @@ assert_eq "" "$(ls "$STATE_DIR" | grep wlprobe)" "it leaves no temporary files"
 section "white lists pause the bypass, like a VPN"
 NFQWS_SYSNET="$SANDBOX/sysnet"; export NFQWS_SYSNET
 mkdir -p "$NFQWS_SYSNET/rmnet_data1"; printf '0x1003\n' > "$NFQWS_SYSNET/rmnet_data1/flags"
-printf 'WATCHDOG=0\n' >> "$CONFFILE"
+printf 'WATCHDOG=0\nWL_PAUSE=1\n' >> "$CONFFILE"
 svc start >/dev/null 2>&1
 assert_file "$PIDFILE" "the bypass runs"
 date +%s > "$WL_FILE"

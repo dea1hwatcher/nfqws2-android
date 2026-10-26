@@ -119,7 +119,9 @@ set_defaults() {
   : "${CALLS_BYPASS:=0}"
   : "${TCP_MSS_CLAMP:=0}"
   : "${AUTO_PORTS:=0}"
-  : "${WL_PAUSE:=1}"
+  # opt-in: wlwatch probes the network periodically, and WL_PAUSE=1 keeps the
+  # watchdog alive through watchers_wanted() even when WATCHDOG=0
+  : "${WL_PAUSE:=0}"
   : "${SMART_LEARN:=1}"
 }
 
@@ -411,7 +413,7 @@ app_uid_count() {
 
 # 0 = app filter applied, 1 = off/not applicable, 2 = error
 app_rules() {
-  local CMD="$1" REAL_CMD="${FW_PROBE_CMD:-$1}" uids n chunk mark
+  local CMD="$1" REAL_CMD="${FW_PROBE_CMD:-$1}" uids n chunk chunks mark
   if ! app_mode_active; then
     if [ "$CMD" != "_fw_batch_cmd" ]; then
       $CMD -w -t mangle -F $IPT_GROUP_APP 2>/dev/null
@@ -440,10 +442,13 @@ app_rules() {
   [ "$APP_MODE" = "exclude" ] && mark="$MARK_EXCLUDE"
   $CMD -w -t mangle -N $IPT_GROUP_APP 2>/dev/null
   $CMD -w -t mangle -F $IPT_GROUP_APP
-  printf '%s\n' "$uids" | tr ',' '\n' | grep -E '^[0-9]+$' | sort -n -u | awk -v mx="$APP_UID_MAX" '
+  # Not a `| while read` pipeline: in the batch path $CMD appends to
+  # FW_BATCH_BUF, and a pipeline would run the loop in a subshell and lose
+  # every --uid-owner rule on iptables-restore systems.
+  chunks=$(printf '%s\n' "$uids" | tr ',' '\n' | grep -E '^[0-9]+$' | sort -n -u | awk -v mx="$APP_UID_MAX" '
       { b = int((NR - 1) / mx); a[b] = (b in a ? a[b] "," $0 : $0) }
-      END { for (i = 0; i <= b; i++) if (i in a) print a[i] }' | while IFS= read -r chunk; do
-    [ -n "$chunk" ] || continue
+      END { for (i = 0; i <= b; i++) if (i in a) print a[i] }')
+  for chunk in $chunks; do
     $CMD -w -t mangle -A $IPT_GROUP_APP -m owner --uid-owner "$chunk" -j CONNMARK --set-xmark "$mark"
   done
   $CMD -w -t mangle -A $IPT_GROUP_POST -j $IPT_GROUP_APP
