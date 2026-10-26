@@ -39,7 +39,7 @@ fi
 SANDBOX=$(mktemp -d "${NFQWS_TEST_TMP:-/tmp}/nfqws2-pack.XXXXXX") || exit 1
 SANDBOX=$(cd "$SANDBOX" && pwd)
 
-MODULE_FILES="action.sh boot-completed.sh customize.sh service.sh uninstall.sh module.prop icon.png LICENSE README.md"
+MODULE_FILES="action.sh boot-completed.sh customize.sh service.sh uninstall.sh module.prop icon.png LICENSE README.md changelog.md"
 MODULE_DIRS="bin $([ -d "$REPO_DIR/binaries" ] && echo binaries) blobs defaults lib lists lua strategies strategy-catalogs system webroot"
 
 # ── builder ───────────────────────────────────────────────────────────────────
@@ -129,7 +129,7 @@ PY
   rm -rf "$MODPATH/tests" "$MODPATH/tools" "$MODPATH/.workbuddy-ai" \
          "$MODPATH/.git" "$MODPATH/.github" "$MODPATH/.gitattributes" \
          "$MODPATH/CONTRIBUTING.md" "$MODPATH/java" \
-         "$MODPATH/docs" "$MODPATH/update.json" "$MODPATH/changelog.md" \
+         "$MODPATH/docs" "$MODPATH/update.json" \
          "$MODPATH/.gitignore"
   rm -f "$MODPATH"/*.zip
 

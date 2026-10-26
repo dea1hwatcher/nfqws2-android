@@ -20,7 +20,7 @@ ui_print "- Architecture: $ARCH -> $BIN"
 rm -rf "$MODPATH/tests" "$MODPATH/tools" "$MODPATH/.workbuddy-ai" \
        "$MODPATH/.git" "$MODPATH/.github" "$MODPATH/.gitattributes" \
        "$MODPATH/CONTRIBUTING.md" "$MODPATH/java" \
-       "$MODPATH/docs" "$MODPATH/update.json" "$MODPATH/changelog.md"
+       "$MODPATH/docs" "$MODPATH/update.json"
 rm -f "$MODPATH"/*.zip
 
 for f in \
