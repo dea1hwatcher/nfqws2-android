@@ -153,64 +153,6 @@ conf_modified() {
   echo "$r"
 }
 
-cmd_live_status() {
-  local pid rss=0 hwm=0 pk=0 dr=0 net label="" hits=-1 ok=0 err=0 key f cur
-  if is_running; then
-    pid=$(cat "$PIDFILE" 2>/dev/null)
-    rss=$(awk '/^VmRSS:/ { print $2 }' "/proc/$pid/status" 2>/dev/null)
-    hwm=$(awk '/^VmHWM:/ { print $2 }' "/proc/$pid/status" 2>/dev/null)
-    set -- $(awk -v q="$NFQUEUE_NUM" '$1 == q { print $8, $6 + $7 }' /proc/net/netfilter/nfnetlink_queue 2>/dev/null)
-    pk=${1:-0}; dr=${2:-0}
-  fi
-  net=$(cat "$SMART_NET_FILE" 2>/dev/null)
-  [ -n "$net" ] && label=$(awk -F'\t' -v k="$net" '$1 == k { print $2; exit }' "$SMART_DIR/nets.tsv" 2>/dev/null)
-  if command -v dns_enabled >/dev/null 2>&1 && dns_enabled; then hits=$(dns_hits); fi
-  cur=$(get_current_strategy)
-  if [ "$cur" = smart ]; then
-    f="$SMART_DIR/$net.tsv"
-    smart_valid_net "$net" && [ -f "$f" ] && set -- $(awk -F'\t' '
-      function sum(s,   a, k, i, p, r) { r = 0; k = split(s, a, ","); for (i = 1; i <= k; i++) { split(a[i], p, ":"); r += p[2] } return r }
-      !/^#/ { o += sum($4); e += sum($5) } END { printf "%d %d", o + 0.5, e + 0.5 }' "$f") && { ok=$1; err=$2; }
-  else
-    key=$(printf '%s' "$cur" | sed 's/[^A-Za-z0-9._-]/_/g')
-    [ -f "$STATE_DIR/strat_stat" ] && set -- $(awk -F'\t' -v k="$key" '$1 == k { print $2, $3; exit }' "$STATE_DIR/strat_stat") && { ok=${1:-0}; err=${2:-0}; }
-  fi
-  printf '{"rss":%d,"hwm":%d,"packets":%d,"drops":%d,"net":"%s","net_label":"%s","dns_hits":%d,"conn":{"ok":%d,"err":%d}}\n' \
-    "${rss:-0}" "${hwm:-0}" "${pk:-0}" "${dr:-0}" "$(json_str "$net")" "$(json_str "$label")" "$hits" "${ok:-0}" "${err:-0}"
-}
-
-last_strategy() {
-  local s
-  s=$(head -n 1 "$LAST_STRATEGY_FILE" 2>/dev/null | tr -d '\r\n')
-  if [ -z "$s" ]; then s=$(get_current_strategy); [ "$s" = smart ] && s=""; fi
-  if [ -n "$s" ] && { [ "$s" = default ] || strategy_file "$s" >/dev/null; }; then printf '%s\n' "$s"
-  else printf '%s\n' "$FIRST_STRATEGY"; fi
-}
-
-cmd_bypass_info() {
-  local cur first=1 n key ok=0 err=0 since=0 author="" repo="" date="" edited="" f
-  cur=$(get_current_strategy)
-  key=$(printf '%s' "$cur" | sed 's/[^A-Za-z0-9._-]/_/g')
-  if [ -f "$STATE_DIR/strat_stat" ]; then
-    set -- $(awk -F'\t' -v k="$key" '$1 == k { print $2, $3, $4; exit }' "$STATE_DIR/strat_stat")
-    ok=${1:-0}; err=${2:-0}; since=${3:-0}
-  fi
-  case "$cur" in
-    imp:*) author=$(M 'импорт' 'import'); f="$IMPORTS_DIR/${cur#imp:}.conf"; [ -f "$f" ] && date=$(date -r "$f" '+%Y-%m-%d' 2>/dev/null) ;;
-    *) set -- $(awk -F'\t' -v k="$cur" '!/^#/ && $1 == k { print $2, $3, $4; exit }' "$STRATEGIES_DIR/meta.tsv" 2>/dev/null)
-       author=$1; repo=$2; date=$3
-       [ -f "$USER_STRATEGIES_DIR/$cur.conf" ] && edited=$(date -r "$USER_STRATEGIES_DIR/$cur.conf" '+%Y-%m-%d' 2>/dev/null) ;;
-  esac
-  printf '{"strategy":"%s","last":"%s","modified":%s,"stat":{"ok":%d,"err":%d,"since":%d},"meta":{"author":"%s","repo":"%s","date":"%s","edited":"%s"},"imports":[' \
-    "$(json_str "$cur")" "$(json_str "$(last_strategy)")" "$(conf_modified)" "$ok" "$err" "$since" \
-    "$(json_str "$author")" "$(json_str "$repo")" "$(json_str "$date")" "$(json_str "$edited")"
-  for n in $(list_imports); do
-    [ "$first" = 1 ] || printf ','; first=0
-    printf '"%s"' "$(json_str "$n")"
-  done
-  printf ']}\n'
-}
-
 cmd_json_status() {
   local run=false pid="" uptime=0 upms=0 cs st
   if is_running; then
@@ -346,7 +288,8 @@ cmd_doctor() {
     fi
   fi
   local orch_doc
-  orch_doc=$(grep -c '^[[:space:]]*"[^"]*":' "$ORCHESTRA_MEMORY_FILE" 2>/dev/null || echo 0)
+  orch_doc=$(grep -c '^[[:space:]]*"[^"]*":' "$ORCHESTRA_MEMORY_FILE" 2>/dev/null || :)
+  [ -n "$orch_doc" ] || orch_doc=0
   row ok orchestra "$(M "память оркестратора: $orch_doc хостов" "orchestrator memory: $orch_doc hosts")"
   has_ipt_feature iptables -m owner --uid-owner 0 -j RETURN \
     && row ok owner "$(M 'фильтр приложений доступен' 'app filter available')" \
@@ -704,7 +647,10 @@ cmd_list_apps() {
   local PM=pm
   command -v pm >/dev/null 2>&1 || PM=/system/bin/pm
   if command -v "$PM" >/dev/null 2>&1; then
-    "$PM" list packages -3 2>/dev/null | sed 's/^package://' | sort
+    { printf '['
+      "$PM" list packages -3 2>/dev/null | sed 's/^package://' | sort |
+        awk 'NF { printf "%s\"%s\"", (n++ ? "," : ""), $0 }'
+      printf ']\n'; }
   fi
 }
 
@@ -1105,8 +1051,10 @@ cmd_tcp16_status() {
     asns=$(tr '\n' ' ' < "$STATE_DIR/tcp16_asn.txt" 2>/dev/null | sed 's/[[:space:]]*$//')
     [ -z "$asns" ] && asns="none"
   fi
-  [ -f "$STATE_DIR/tcp16_nets.txt" ] && nets=$(grep -c '^[0-9]' "$STATE_DIR/tcp16_nets.txt" 2>/dev/null || echo 0)
-  [ -f "$STATE_DIR/tcp16_sni.txt" ] && snis=$(grep -c '^[0-9]' "$STATE_DIR/tcp16_sni.txt" 2>/dev/null || echo 0)
+  [ -f "$STATE_DIR/tcp16_nets.txt" ] && nets=$(grep -c '^[0-9]' "$STATE_DIR/tcp16_nets.txt" 2>/dev/null || :)
+  [ -n "$nets" ] || nets=0
+  [ -f "$STATE_DIR/tcp16_sni.txt" ] && snis=$(grep -c '^[0-9]' "$STATE_DIR/tcp16_sni.txt" 2>/dev/null || :)
+  [ -n "$snis" ] || snis=0
   printf '{"asns":"%s","nets":%d,"snis":%d}\n' "$asns" "$nets" "$snis"
 }
 
@@ -1376,13 +1324,6 @@ cmd_probe_cancel() {
   echo OK
 }
 
-cmd_check_discord_gateway() {
-  local tool kind bin
-  tool=$(probe_tool); kind="${tool%% *}"; bin="${tool#* }"
-  [ "$kind" = "none" ] && { echo "fail no_tool"; return 1; }
-  probe_attempt "$kind" "$bin" "gateway.discord.gg" 3
-}
-
 cmd_check_domain() {
   local raw="$1" d
   d=$(printf '%s' "$raw" | tr 'A-Z' 'a-z' | sed 's#^[a-z]*://##; s#/.*##; s/:[0-9]*$//; s/^www\.//')
@@ -1400,7 +1341,7 @@ cmd_check_domain() {
     f="$LISTS_DIR/$list_name.list"
     [ -f "$f" ] || continue
 
-    if grep -Eq "^(www\.)?$d_esc\r?$" "$f" 2>/dev/null; then
+    if tr -d '\r' < "$f" 2>/dev/null | grep -Eq "^(www\.)?$d_esc$"; then
       found_lists="$found_lists${found_lists:+,}$list_name"
       continue
     fi
@@ -1412,7 +1353,7 @@ cmd_check_domain() {
         *.*)
           local p_esc
           p_esc=$(printf '%s' "$parent" | sed 's/\./\\./g')
-          if grep -Eq "^(www\.)?$p_esc\r?$" "$f" 2>/dev/null; then
+          if tr -d '\r' < "$f" 2>/dev/null | grep -Eq "^(www\.)?$p_esc$"; then
             found_lists="$found_lists${found_lists:+,}$list_name"
             break
           fi
@@ -1554,7 +1495,7 @@ cmd_smart_status() { # [сеть — чью статистику показат�
     "$act" "$(is_running && echo 1 || echo 0)" "$([ -f "$HOME_PAUSED_FILE" ] && echo 1 || echo 0)" "$(json_str "$net")" "$(json_str "$view")" "$off" "${SMART_LEARN:-1}"
   # фоновое обучение: сколько сайтов открыто и какой последний
   printf '"bg":{'
-  [ -f "$SMART_LEARN_FILE" ] && awk -F= 'NF >= 2 { k = $1; sub(/^[^=]*=/, ""); gsub(/["\\]/, ""); printf "%s\"%s\":\"%s\"", (n++ ? "," : ""), k, $0 }' "$SMART_LEARN_FILE"
+  [ -f "$SMART_LEARN_FILE" ] && awk -F= 'NF >= 2 { k = $1; sub(/^[^=]*=/, ""); gsub(/["\\]/, "", k); gsub(/["\\]/, ""); printf "%s\"%s\":\"%s\"", (n++ ? "," : ""), k, $0 }' "$SMART_LEARN_FILE"
   printf '},"nets":['
   # сети: подпись, сколько сайтов выучено (есть удачи), удачи и ошибки в сумме
   local first=1 id label f
@@ -2095,11 +2036,6 @@ cmd_orchestra_clear() {
   echo OK
 }
 
-cmd_orchestra_dump() {
-  orchestra_memory_init
-  cat "$ORCHESTRA_MEMORY_FILE"
-}
-
 cmd_list_catalogs() {
   local cat label file cnt
   for cat in tcp_tls tcp_http udp_quic udp_voice; do
@@ -2112,7 +2048,8 @@ cmd_list_catalogs() {
     file=$(catalog_file "$cat" 2>/dev/null)
     cnt=0
     if [ -n "$file" ] && [ -f "$file" ]; then
-      cnt=$(grep -cvE '^[[:space:]]*(#|$)' "$file" 2>/dev/null || echo 0)
+      cnt=$(grep -cvE '^[[:space:]]*(#|$)' "$file" 2>/dev/null || :)
+      [ -n "$cnt" ] || cnt=0
     fi
     printf '%s\t%s\t%s\n' "$cat" "$label" "$cnt"
   done
@@ -2242,6 +2179,12 @@ cmd_catalog_apply_module() {
       ;;
   esac
 
+  if cmp -s "$tmp" "$CONFFILE"; then
+    rm -f "$tmp"
+    echo "Модуль не применён: в конфиге нет блока для каталога $cat" >&2
+    return 1
+  fi
+
   local err
   if ! err=$(validate_conf_file "$tmp" 2>&1); then
     echo "Ошибка валидации при подмене модуля: $err" >&2
@@ -2303,11 +2246,10 @@ cmd_restore_replaced_strategy() {
 }
 
 cmd_tg_affinity() {
-  if [ -f "$TG_AFFINITY_FILE" ]; then
-    cat "$TG_AFFINITY_FILE"
-  else
-    cmd_probe_tg
+  if [ ! -s "$TG_AFFINITY_FILE" ]; then
+    cmd_probe_tg >/dev/null 2>&1
   fi
+  if [ -s "$TG_AFFINITY_FILE" ]; then cat "$TG_AFFINITY_FILE"; else echo '{}'; fi
 }
 
 # ---------------------------------------------------------------- цвета системы
@@ -2360,7 +2302,6 @@ case "$1" in
   json-status) cmd_json_status ;;
   is-running) is_running ;;
   start|stop|restart|reload) sh "$SERVICE" "$1" ;;
-  replace) sh "$SERVICE" replace ;;
   rollback) sh "$SERVICE" rollback ;;
   list-catalogs) cmd_list_catalogs ;;
   get-catalog) cmd_get_catalog "$2" ;;
@@ -2369,14 +2310,12 @@ case "$1" in
   restore-replaced-strategy) cmd_restore_replaced_strategy "$2" ;;
   tcp16-status) cmd_tcp16_status ;;
   googlevideo-discovery) cmd_googlevideo_discovery "$2" ;;
-  googlevideo-cdn) cmd_googlevideo_discovery "$2" ;;
   orchestra-status) cmd_orchestra_status ;;
   orchestra-lock) cmd_orchestra_lock "$2" "$3" ;;
   orchestra-unlock) cmd_orchestra_unlock "$2" ;;
   orchestra-block) cmd_orchestra_block "$2" "$3" ;;
   orchestra-unblock) cmd_orchestra_unblock "$2" "$3" ;;
   orchestra-clear) cmd_orchestra_clear ;;
-  orchestra-dump) cmd_orchestra_dump ;;
   tg-affinity) cmd_tg_affinity ;;
   doctor) cmd_doctor ;;
 
@@ -2419,10 +2358,6 @@ case "$1" in
     # в редактор он попадает уже приведённым к виду встроенной стратегии.
     case "$2" in imp:*) normalize_import "$f" ;; *) cat "$f" ;; esac \
       | b64e ;;
-  strategy-path) # файл, который действует для стратегии: правка пользователя или встроенный
-    case "$2" in default) f="$MODDIR/defaults/nfqws2.conf" ;; *) f=$(strategy_file "$2") ;; esac
-    [ -n "$f" ] && [ -f "$f" ] || { echo "Стратегия не найдена" >&2; exit 1; }
-    echo "$f" ;;
   strategy-save-b64)
     n="$2"; t="$STATE_DIR/strat_save.$$.tmp"
     case "$n" in default|'') echo "Стандартную стратегию редактируйте во вкладке «Конфиг»" >&2; exit 1 ;; esac
@@ -2536,14 +2471,6 @@ case "$1" in
   list-line-count)
     f=$(list_file "$2") || { echo 0; exit 1; }
     list_line_count "$f" ;;
-  collect-ports)
-    collect_capture_ports "${2:-tcp}" ;;
-  verify-receipt)
-    if verify_strategy_receipt; then
-      echo "VALID $(cat "$RECEIPT_FILE" 2>/dev/null)"
-    else
-      echo "INVALID $(generate_strategy_receipt 2>/dev/null)"
-    fi ;;
   list-update) cmd_list_update "$2" ;;
   add-domain)
     d=$(printf '%s' "$2" | tr 'A-Z' 'a-z' | sed 's#^[a-z]*://##; s#/.*##; s/^www\.//')
@@ -2613,10 +2540,7 @@ case "$1" in
   backup-restore-b64) cmd_backup_restore_b64 "$2" ;;
   net-info) cmd_net_info ;;
   probe-dpi) cmd_probe_dpi "${2:-all}" "$3" ;;
-  probe-tg) cmd_probe_dpi tg ;;
   bench-strategies) cmd_bench_strategies "$2" ;;
-  probe-bench) cmd_bench_strategies "$2" ;;
-  check-discord-gateway) cmd_check_discord_gateway ;;
   check-domain) cmd_check_domain "$2" ;;
   domain-check) cmd_domain_check "$2" ;;
   home-pause)
@@ -2640,9 +2564,6 @@ EOF
   smart-export) cmd_smart_export "$2" "$3" ;;
   smart-import-b64) cmd_smart_import_b64 "$2" ;;
   smart-learn-once) cmd_smart_learn_once ;;
-  last-strategy) last_strategy ;;
-  bypass-info) cmd_bypass_info ;;
-  live-status) cmd_live_status ;;
   monet-system) cmd_monet_system ;;
   probe-cancel) cmd_probe_cancel ;;
   clear-logs) : > "$SERVICE_LOG"; : > "$NFQWS_LOG"; rm -f "$LOG_DIR/nfqws2-debug.log" "$LOG_DIR/auto.log"; echo OK ;;
@@ -2651,9 +2572,9 @@ EOF
     echo "         list-strategies get-strategy set-strategy strategy-get-b64 strategy-save-b64 strategy-reset" >&2
     echo "         import-add-b64 list-imports get-import-merged-b64 rename-import delete-import" >&2
     echo "         get-list save-list-b64 list-update add-domain clear-auto reset-lists set set-mode list-apps" >&2
-    echo "         get-logs export-logs clear-logs wifi-ssid backup-create backup-list backup-restore backup-restore-b64 probe-dpi probe-cancel net-info bench-strategies check-discord-gateway check-domain domain-check" >&2
-    echo "         smart-status smart-reset smart-train" >&2
-    echo "         home-pause net-recheck upload strategy-path share changelog" >&2
+    echo "         get-logs export-logs clear-logs wifi-ssid backup-create backup-list backup-restore backup-restore-b64 probe-dpi probe-cancel net-info bench-strategies check-domain domain-check" >&2
+    echo "         smart-status smart-sites smart-export-b64 smart-import-b64 smart-learn-once smart-reset" >&2
+    echo "         home-pause net-recheck upload share changelog" >&2
     echo "         current-network list-net-strategies clear-net-strategies googlevideo-discovery orchestra-status orchestra-lock orchestra-unlock orchestra-block orchestra-unblock orchestra-clear tg-affinity" >&2
     echo "         list-catalogs get-catalog catalog-apply-module list-replaced-strategies restore-replaced-strategy" >&2
     exit 1 ;;
