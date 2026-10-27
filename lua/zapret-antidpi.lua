@@ -1288,7 +1288,7 @@ function discord_voice_obfs(ctx, desync)
 	end
 	direction_cutoff_opposite(ctx, desync)
 	if direction_check(desync) and #desync.dis.payload >= 12 then
-		local dport = desync.dis.udp.th_dport or 0
+		local dport = (desync.dis.udp and desync.dis.udp.uh_dport) or 0
 		-- Discord voice UDP servers operate on 50000-65535 or specific RTC ranges
 		if (dport >= 50000 and dport <= 65535) or desync.arg.force then
 			local pad_rnd = tonumber(desync.arg.pad_rnd) or 16

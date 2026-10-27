@@ -81,7 +81,7 @@ function flood_white(ctx, desync)
         if b_debug then
             DLOG("flood_white: fake #"..i)
         end
-        rawsend_dissect(dis, {rawsend = {repeats = 1}})
+        rawsend_dissect(dis, {repeats = 1})
     end
 
     -- Теперь отправляем реальный пакет через multisplit
@@ -162,14 +162,12 @@ function ttl_ladder(ctx, desync)
     for ttl = ttl_min, ttl_max do
         local dis = deepcopy(desync.dis)
         dis.payload = white
-        dis.ip_ttl = ttl
-        if desync.dis.ipv6 then
-            dis.ip6_ttl = ttl
-        end
+        if dis.ip then dis.ip.ip_ttl = ttl end
+        if dis.ip6 then dis.ip6.ip6_hlim = ttl end
         if b_debug then
             DLOG("ttl_ladder: fake TTL="..ttl)
         end
-        rawsend_dissect(dis, {rawsend = {repeats = 1}})
+        rawsend_dissect(dis, {repeats = 1})
     end
 
     -- Отправляем реальный пакет
@@ -250,7 +248,7 @@ function white_sandwich(ctx, desync)
             if b_debug then
                 DLOG("white_sandwich: "..label.." fake #"..i)
             end
-            rawsend_dissect(dis, {rawsend = {repeats = 1}})
+            rawsend_dissect(dis, {repeats = 1})
         end
     end
 
@@ -330,13 +328,15 @@ function seqovl_white(ctx, desync)
     -- Отправляем overlap-пакет с белым содержимым
     local dis_ovl = deepcopy(desync.dis)
     dis_ovl.payload = white_prefix
-    dis_ovl.tcp_seq = desync.dis.tcp_seq - ovl_size  -- Смещаем seq назад
+    if dis_ovl.tcp and desync.dis.tcp then
+        dis_ovl.tcp.th_seq = u32add(desync.dis.tcp.th_seq, -ovl_size)  -- Смещаем seq назад
+    end
     apply_fooling(desync, dis_ovl)
 
     if b_debug then
         DLOG("seqovl_white: sending white overlap")
     end
-    rawsend_dissect(dis_ovl, {rawsend = {repeats = 1}})
+    rawsend_dissect(dis_ovl, {repeats = 1})
 
     -- Теперь отправляем реальный пакет с разрезом
     local spos = desync.arg.pos or "1,midsld"
