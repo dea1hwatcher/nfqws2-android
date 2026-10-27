@@ -510,7 +510,7 @@ netwatch() {
     saw=0
     while :; do
       sleep 2
-      load_conf >/dev/null 2>&1
+      conf_refresh
       watchers_wanted || break 2
       if ! kill -0 "$mon" 2>/dev/null; then
         # died on its own. If it never wrote a byte, ip monitor is unsupported
@@ -664,7 +664,7 @@ network_strategy_check() {
   [ "$NET_STRATEGY" = "1" ] || return 0
   is_running || return 0
   [ -f "$HOME_PAUSED_FILE" ] && return 0 # keep the strategy during a home pause
-  [ -f "$VPN_PAUSED_FILE" ] && return 0  # keep the strategy during a VPN pause
+  [ "$(cat "$HOME_PAUSED_FILE" 2>/dev/null)" = "@vpn" ] && return 0  # keep the strategy during a VPN pause
 
   local cur_net last_net saved cur_strat
   cur_net=$(current_network_key 2>/dev/null)
@@ -757,7 +757,7 @@ case "$1" in
   firewall_apply)     firewall_start ;;
   firewall_stop)      firewall_stop ;;
   *)
-    rm -f "$HOME_PAUSED_FILE" "$HOME_OVERRIDE_FILE" "$VPN_PAUSED_FILE" "$VPN_OVERRIDE_FILE" "$SK_PIDFILE" "$STATE_DIR"/conf_seen.*
+    rm -f "$HOME_PAUSED_FILE" "$HOME_OVERRIDE_FILE" "$SK_PIDFILE" "$STATE_DIR"/conf_seen.*
     rmdir "$STATE_DIR/home.lock" "$STATE_DIR/vpn.lock" 2>/dev/null
     until [ "$(getprop sys.boot_completed 2>/dev/null)" = "1" ]; do sleep 3; done
     sleep 4

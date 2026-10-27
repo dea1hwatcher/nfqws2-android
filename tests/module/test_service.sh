@@ -139,6 +139,14 @@ assert_eq "15" "$(printf '%s\n' "$qout" | grep -c -- '--set-xmark')" "PKT_LIMIT_
 qin=$(ipt_rules nfqws_qin)
 assert_contains "$qin" "/0x000f0000" "the incoming counter uses disjoint mark bits"
 
+section "connmark_out: per-strategy packet limits are honoured"
+
+printf 'NFQWS2_TCP_PKT_OUT=8\n' >> "$CONFFILE"
+svc firewall_apply >/dev/null 2>&1
+assert_rc 0 "$svc_rc" "firewall_apply accepts a per-strategy limit"
+qout=$(ipt_rules nfqws_qout)
+assert_eq "8" "$(printf '%s\n' "$qout" | grep -c -- '--set-xmark')" "the strategy's TCP limit lowers the counter steps"
+
 section "connmark_out: BLOCK_QUIC drops UDP/443"
 
 assert_contains "$(ipt_rules nfqws_post)" "-p udp --dport 443 -j DROP" "QUIC is blocked in the post chain"

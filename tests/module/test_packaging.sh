@@ -32,6 +32,12 @@ if [ -z "$PY" ]; then
   printf 'SKIP  no python interpreter found (set NFQWS_TEST_PYTHON)\n'
   exit 0
 fi
+# tools/ is host-only and deliberately untracked (tests/run.sh enforces it), so
+# a fresh checkout has no builder; the suite is about the local packaging aid
+if [ ! -f "$REPO_DIR/tools/build.py" ]; then
+  printf 'SKIP  tools/build.py is host-only and not present in this checkout\n'
+  exit 0
+fi
 
 # A bare temp dir rather than sandbox_init(): this suite reads the repository
 # directly and does not need the module sandbox. SANDBOX is set so harness_finish

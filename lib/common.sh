@@ -41,14 +41,11 @@ SMART_LEARN_FILE="$STATE_DIR/smart_learn"      # background learning state
 SMART_LEARN_EVERY=120                          # seconds between learning attempts
 SMART_TURBO_FILE="$STATE_DIR/smart_turbo"      # fast learning expiration
 SMART_TURBO_EVERY=15
-SMART_TRAIN_FILE="$STATE_DIR/smart_train"      # legacy training progress
-SMART_TRAIN_PID="$STATE_DIR/smart_train.pid"
 SK_PIDFILE="$STATE_DIR/smartkill.pid"          # обрыв застрявших соединений умного режима
 SMART_KILL_FILE="$STATE_DIR/smart_kill"        # их пишет оркестратор: «4|6 адрес локальный-порт»
 
-# VPN pause: bypass pauses while a VPN interface is active (VPN_PAUSE=1)
-VPN_PAUSED_FILE="$STATE_DIR/vpn_paused"        # paused by active VPN
-VPN_OVERRIDE_FILE="$STATE_DIR/vpn_override"    # user re-enabled while VPN is on
+# VPN pause: bypass pauses while a VPN interface is active (VPN_PAUSE=1);
+# the reason is recorded as @vpn inside HOME_PAUSED_FILE
 
 MARK_EXCLUDE="0x20000000/0x20000000"
 MARK_INCLUDE="0x10000000/0x10000000"
@@ -137,7 +134,7 @@ log_msg() {
 sync_lists_and_blobs() {
   # builtin dir check avoids a fork on every netwatch tick and nfqws2-ctl call
   [ -d "$LISTS_DIR" ] && [ -d "$LOG_DIR" ] && [ -d "$STATE_DIR" ] ||
-    mkdir -p "$LISTS_DIR" "$CONFDIR" "$LOG_DIR" "$STATE_DIR" "$CONFDIR/blobs" "$CONFDIR/lua" "$CONFDIR/strategy-catalogs" "$CONFDIR/strategies/replaced" 2>/dev/null
+    mkdir -p "$LISTS_DIR" "$CONFDIR" "$LOG_DIR" "$STATE_DIR" "$CONFDIR/strategy-catalogs" "$CONFDIR/strategies/replaced" 2>/dev/null
 
   for sdir in "$MODDIR/lists" "$MODDIR/defaults/lists"; do
     if [ -d "$sdir" ]; then
@@ -967,44 +964,38 @@ orchestra_memory_init() {
   fi
 }
 
-orchestra_lock_strategy() { # <host> <strategy_index>
-  local host="$1" idx="$2"
-  if [ -z "$host" ] || [ -z "$idx" ]; then
-    return 1
-  fi
+_orchestra_rewrite_strategy() { # <host> <idx> <locked|blocked> <value as list>
+  local host="$1" idx="$2" section="$3" as_list="$4"
+  if [ -z "$host" ] || [ -z "$idx" ]; then return 1; fi
   orchestra_memory_init
-  if command -v awk >/dev/null 2>&1; then
-    awk -v h="$host" -v idx="$idx" '
-      BEGIN { in_locked=0 }
-      {
-        if ($0 ~ /"locked": \{/) {
-          print $0
-          in_locked=1
-          printf "    \"%s\": %s,\n", h, idx
-          next
-        }
-        if (in_locked && $0 ~ /^\s*\},?/) {
-          in_locked=0
-        }
-        if (in_locked && $0 ~ ("\"" h "\":")) {
-          next
-        }
+  command -v awk >/dev/null 2>&1 || return 0
+  awk -v h="$host" -v idx="$idx" -v sec="$section" -v lst="$as_list" '
+    BEGIN { in_s = 0 }
+    {
+      if ($0 ~ ("\"" sec "\": \{")) {
         print $0
-      }' "$ORCHESTRA_MEMORY_FILE" > "$ORCHESTRA_MEMORY_FILE.tmp"
-    if [ -s "$ORCHESTRA_MEMORY_FILE.tmp" ]; then
-      mv -f "$ORCHESTRA_MEMORY_FILE.tmp" "$ORCHESTRA_MEMORY_FILE"
-    else
-      rm -f "$ORCHESTRA_MEMORY_FILE.tmp"
-    fi
+        in_s = 1
+        if (lst) printf "    \"%s\": [%s],\n", h, idx
+        else printf "    \"%s\": %s,\n", h, idx
+        next
+      }
+      if (in_s && $0 ~ /^[[:space:]]*\},?/) in_s = 0
+      if (in_s && $0 ~ ("\"" h "\":")) next
+      print
+    }' "$ORCHESTRA_MEMORY_FILE" > "$ORCHESTRA_MEMORY_FILE.tmp"
+  if [ -s "$ORCHESTRA_MEMORY_FILE.tmp" ]; then
+    mv -f "$ORCHESTRA_MEMORY_FILE.tmp" "$ORCHESTRA_MEMORY_FILE"
+  else
+    rm -f "$ORCHESTRA_MEMORY_FILE.tmp"
   fi
   return 0
 }
+orchestra_lock_strategy()  { _orchestra_rewrite_strategy "$1" "$2" locked 0; }
+orchestra_block_strategy() { _orchestra_rewrite_strategy "$1" "$2" blocked 1; }
 
-orchestra_unlock_strategy() { # <host>
+_orchestra_drop_strategy() { # <host>
   local host="$1"
-  if [ -z "$host" ]; then
-    return 1
-  fi
+  [ -n "$host" ] || return 1
   orchestra_memory_init
   grep -v "\"$host\":" "$ORCHESTRA_MEMORY_FILE" > "$ORCHESTRA_MEMORY_FILE.tmp"
   if [ -s "$ORCHESTRA_MEMORY_FILE.tmp" ]; then
@@ -1014,54 +1005,8 @@ orchestra_unlock_strategy() { # <host>
   fi
   return 0
 }
-
-orchestra_block_strategy() { # <host> <strategy_index>
-  local host="$1" idx="$2"
-  if [ -z "$host" ] || [ -z "$idx" ]; then
-    return 1
-  fi
-  orchestra_memory_init
-  if command -v awk >/dev/null 2>&1; then
-    awk -v h="$host" -v idx="$idx" '
-      BEGIN { in_blocked=0 }
-      {
-        if ($0 ~ /"blocked": \{/) {
-          print $0
-          in_blocked=1
-          printf "    \"%s\": [%s],\n", h, idx
-          next
-        }
-        if (in_blocked && $0 ~ /^\s*\},?/) {
-          in_blocked=0
-        }
-        if (in_blocked && $0 ~ ("\"" h "\":")) {
-          next
-        }
-        print $0
-      }' "$ORCHESTRA_MEMORY_FILE" > "$ORCHESTRA_MEMORY_FILE.tmp"
-    if [ -s "$ORCHESTRA_MEMORY_FILE.tmp" ]; then
-      mv -f "$ORCHESTRA_MEMORY_FILE.tmp" "$ORCHESTRA_MEMORY_FILE"
-    else
-      rm -f "$ORCHESTRA_MEMORY_FILE.tmp"
-    fi
-  fi
-  return 0
-}
-
-orchestra_unblock_strategy() { # <host> [strategy_index]
-  local host="$1"
-  if [ -z "$host" ]; then
-    return 1
-  fi
-  orchestra_memory_init
-  grep -v "\"$host\":" "$ORCHESTRA_MEMORY_FILE" > "$ORCHESTRA_MEMORY_FILE.tmp"
-  if [ -s "$ORCHESTRA_MEMORY_FILE.tmp" ]; then
-    mv -f "$ORCHESTRA_MEMORY_FILE.tmp" "$ORCHESTRA_MEMORY_FILE"
-  else
-    rm -f "$ORCHESTRA_MEMORY_FILE.tmp"
-  fi
-  return 0
-}
+orchestra_unlock_strategy()  { _orchestra_drop_strategy "$1"; }
+orchestra_unblock_strategy() { _orchestra_drop_strategy "$1"; }
 
 orchestra_status() {
   orchestra_memory_init
@@ -1523,8 +1468,10 @@ _firewall_start() {
   while $CMD -w -t mangle -D PREROUTING -j $IPT_GROUP_PRE 2>/dev/null; do :; done
 
   if [ "$LIMITER" = "connmark_out" ]; then
-    _fw_counter_chain "$CMD" $IPT_GROUP_QOUT $CNT_OUT_MASK $CNT_OUT_STEP "$PKT_LIMIT_OUT"
-    _fw_counter_chain "$CMD" $IPT_GROUP_QIN $CNT_IN_MASK $CNT_IN_STEP "$PKT_LIMIT_IN"
+    # one counter chain serves TCP and UDP, and strategies tune the TCP limits:
+    # follow them, falling back to the globals inside get_strategy_packet_limits
+    _fw_counter_chain "$CMD" $IPT_GROUP_QOUT $CNT_OUT_MASK $CNT_OUT_STEP "$TCP_PKT_OUT"
+    _fw_counter_chain "$CMD" $IPT_GROUP_QIN $CNT_IN_MASK $CNT_IN_STEP "$TCP_PKT_IN"
   fi
 
   if [ "$REAL_CMD" = "iptables" ] && [ "$NAT_FIX" = "1" ]; then

@@ -110,11 +110,12 @@ kill "$BROKEN_PID" 2>/dev/null
 wait "$BROKEN_PID" 2>/dev/null
 rm -f "$CONFDIR/state/nfqws2.pid" "$CONFDIR/state/started_at"
 
-# json-status reports paused=vpn when vpn_paused state file is present
-printf 'vpn' > "$CONFDIR/state/vpn_paused"
+# a VPN pause is recorded as @vpn inside HOME_PAUSED_FILE — there is no separate
+# vpn_paused state file anymore, and json-status reports the reason verbatim
+printf '@vpn' > "$HOME_PAUSED_FILE"
 ctl json-status
-assert_contains "$ctl_out" '"paused":"vpn"' "json-status reports paused=vpn when vpn_paused exists"
-rm -f "$CONFDIR/state/vpn_paused"
+assert_contains "$ctl_out" '"paused":"@vpn"' "json-status reports paused=@vpn for a VPN pause"
+rm -f "$HOME_PAUSED_FILE"
 
 # ── set ───────────────────────────────────────────────────────────────────────
 section "set: value validation"

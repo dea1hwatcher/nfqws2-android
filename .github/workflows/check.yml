@@ -39,6 +39,9 @@ jobs:
         with:
           node-version: 22
 
+      - name: Regression suite (fast)
+        run: sh tests/run.sh --fast
+
       - name: WebUI script syntax
         working-directory: webroot
         run: |

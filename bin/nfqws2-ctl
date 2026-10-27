@@ -187,9 +187,6 @@ cmd_json_status() {
   ver=$(sed -n '/^version=/{s/^version=//p;q;}' "$MODDIR/module.prop")
   if [ -f "$HOME_PAUSED_FILE" ]; then
     paused=$(cat "$HOME_PAUSED_FILE" 2>/dev/null)
-  elif [ -f "$VPN_PAUSED_FILE" ]; then
-    paused=$(cat "$VPN_PAUSED_FILE" 2>/dev/null)
-    [ -n "$paused" ] || paused="vpn"
   fi
   [ -f "$HOME_OVERRIDE_FILE" ] && IFS= read -r override < "$HOME_OVERRIDE_FILE"
   pending=""
@@ -354,7 +351,7 @@ cmd_doctor() {
     fi
     _cg=$(cat "/proc/$_pid/cgroup" 2>/dev/null | tr '\n' ' ')
     row info cgroup "${_cg:-$(M недоступно unavailable)}"
-  elif [ -f "$VPN_PAUSED_FILE" ] || { [ -f "$HOME_PAUSED_FILE" ] && [ "$(cat "$HOME_PAUSED_FILE" 2>/dev/null)" = "@vpn" ]; }; then
+  elif [ "$(cat "$HOME_PAUSED_FILE" 2>/dev/null)" = "@vpn" ]; then
     row info process "$(M "пауза: активен VPN" "paused: VPN active")"
     row info "$(M 'ОЗУ' 'RAM')" "$(M 'пауза' 'paused')"
   elif [ "$(cat "$HOME_PAUSED_FILE" 2>/dev/null)" = "@wl" ]; then
