@@ -161,6 +161,19 @@ assert_contains "$w" "$(printf '#m\ttls_16\t102\t7\t1.repeats=6;4.host=ozon.ru')
 assert_contains "$w" "$(printf 'tls_16\tsoundcloud.com\t102\t7:2.0,102:6.0\t7:1.0\t\t1\te')" "and the sites on it follow it"
 assert_contains "$w" "$(printf 'tls_16\tmine.example\t101')" "the local tuning keeps its number"
 assert_not_contains "$w" "0:4999999999" "«not DPI» of the other network is not carried over"
+
+# Импорт из сборки со старым форматом (#v2/#v3) мигрируется, а не затирается:
+# колонки те же, но «не DPI»-метки (cool 0:*) того формата недостоверны
+printf '#v3 header\ntls\tv3site.example\t1\t2:4.5\t\t0:4999999999\t1\te\n' > "$SANDBOX/old-v3.tsv"
+before=$(grep -c . "$SMART_DIR/wifi-1.tsv")
+ctl smart-import-b64 "$(base64 < "$SANDBOX/old-v3.tsv" | tr -d '\n')"
+assert_rc 0 "$ctl_rc" "a v3 learning file is accepted"
+assert_eq "1" "$ctl_out" "its site is added"
+w=$(cat "$SMART_DIR/wifi-1.tsv")
+assert_contains "$w" "$(printf 'tls\tv3site.example\t1\t2:4.5')" "the v3 site keeps its own counters"
+assert_eq "#v4 header" "$(head -n 1 "$SMART_DIR/wifi-1.tsv")" "the existing v4 header is preserved, not replaced"
+assert_not_contains "$w" "0:4999999999" "the untrustworthy v3 «not DPI» mark is dropped"
+
 printf 'garbage\n' > "$SANDBOX/garbage"
 ctl smart-import-b64 "$(base64 < "$SANDBOX/garbage" | tr -d '\n')"
 assert_rc 1 "$ctl_rc" "a file that is not learned data is refused"

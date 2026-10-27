@@ -64,7 +64,8 @@ set_conf_param() {   # только однострочные значения
     BEGIN { d = 0 }
     $0 ~ "^" k "=" { if (!d) { print k "=\"" v "\""; d = 1 } ; next }
     { print }
-    END { if (!d) print k "=\"" v "\"" }' "$CONFFILE" > "$tmp" && mv -f "$tmp" "$CONFFILE"
+    END { if (!d) print k "=\"" v "\"" }' "$CONFFILE" > "$tmp" || { rm -f "$tmp"; return 1; }
+  mv -f "$tmp" "$CONFFILE" || { rm -f "$tmp"; return 1; }
   chmod 0644 "$CONFFILE"
 }
 
@@ -328,6 +329,22 @@ cmd_doctor() {
   esac
   row ok quota "$(M "квоты пакетов: исх. $PKT_LIMIT_OUT / вх. $PKT_LIMIT_IN ($lim)" "packet quotas: out $PKT_LIMIT_OUT / in $PKT_LIMIT_IN ($lim)")"
   row ok auto_ports "$(M "активные порты: TCP: ${TCP_PORTS:-80,443} | UDP: ${UDP_PORTS:-443}" "active ports: TCP: ${TCP_PORTS:-80,443} | UDP: ${UDP_PORTS:-443}")"
+  if [ "$NAT_FIX" = "1" ]; then
+    local nat_hits
+    nat_hits=$(iptables -w -t nat -L "$IPT_GROUP_NAT" -n -v -x 2>/dev/null | awk '$1 ~ /^[0-9]+$/ && $3 == "MASQUERADE" { n++; total += $1 } END { if (n) printf "%.0f", total }')
+    if [ -n "$nat_hits" ]; then
+      row info nat_fix "$(M "правило NAT fix на месте; пакетов прошло: $nat_hits" "NAT fix rule in place; packets matched: $nat_hits")"
+    else
+      row info nat_fix "$(M 'правило NAT fix не найдено (служба остановлена?)' 'NAT fix rule not found (service stopped?)')"
+    fi
+  fi
+  if [ "$IPV6_ENABLED" = "1" ]; then
+    if _firewall_family_ok ip6tables; then
+      row ok ipv6_rules "$(M 'правила IPv6 установлены' 'IPv6 rules installed')"
+    else
+      row fail ipv6_rules "$(M 'правила IPv6 не установлены — IPv6 не перехватывается' 'IPv6 rules missing — IPv6 traffic is not intercepted')"
+    fi
+  fi
   local orch_doc
   orch_doc=$(grep -c '^[[:space:]]*"[^"]*":' "$ORCHESTRA_MEMORY_FILE" 2>/dev/null || echo 0)
   row ok orchestra "$(M "память оркестратора: $orch_doc хостов" "orchestrator memory: $orch_doc hosts")"
@@ -617,6 +634,9 @@ cmd_export_logs() {
     printf '%s\t%s\t' "$name" "$out_file"
     b64e < "$out_file" | tr -d '\r\n'
     printf '\n'
+    # log exports are regenerable snapshots: keep the newest 10. Backups are the
+    # user's own copies and are never deleted here
+    ls -1t "$BACKUP_DIR"/nfqws2-logs-*.tar 2>/dev/null | tail -n +11 | while IFS= read -r old; do rm -f "$old"; done
   else
     local d="$BACKUP_DIR/nfqws2-logs"
     mkdir -p "$d" 2>/dev/null
@@ -843,6 +863,10 @@ is_block_notice() { # <body_file> -> return 0 if block page/stub, 1 otherwise
   return 1
 }
 
+rand_hex() {
+  od -An -N2 -tx1 /dev/urandom 2>/dev/null | tr -d ' \n' || echo "$$"
+}
+
 probe_attempt() { # <вид> <путь к утилите> <host[/путь]> [proto 1=http, 2=tls1.2, 3=tls1.3, 4=quic] -> "ok <мс>" | "fail <причина>" | "skip <причина>"
   local kind="$1" bin="$2" target="$3" proto="${4:-3}" t0 t1 out rc to=""
   target=$(resolve_probe_target "$target")
@@ -851,8 +875,10 @@ probe_attempt() { # <вид> <путь к утилите> <host[/путь]> [pro
   command -v timeout >/dev/null 2>&1 && to="timeout 10"
   t0=$(uptime_cs)
   local tmp_body jar
-  tmp_body=$(mktemp "${TMPDIR:-/tmp}/probe_body.XXXXXX" 2>/dev/null || echo "$STATE_DIR/probe_body.$$.$RANDOM.tmp")
-  jar=$(mktemp "$STATE_DIR/probe.ck.XXXXXX" 2>/dev/null || echo "$STATE_DIR/probe.ck.$$.$RANDOM.tmp")
+  # $RANDOM is empty in busybox ash, and $$ is shared by every probe subshell,
+  # so the fallback borrows entropy that exists on Android
+  tmp_body=$(mktemp "${TMPDIR:-/tmp}/probe_body.XXXXXX" 2>/dev/null || echo "$STATE_DIR/probe_body.$$.$(rand_hex).tmp")
+  jar=$(mktemp "$STATE_DIR/probe.ck.XXXXXX" 2>/dev/null || echo "$STATE_DIR/probe.ck.$$.$(rand_hex).tmp")
 
   case "$proto" in
     1) # Plain HTTP (порт 80)
@@ -1011,20 +1037,20 @@ cmd_net_info() {
 }
 
 cmd_probe_all_inner() {
-  local kind="$1" bin="$2" target="${3:-}" i=0 h batch=0
-  rm -f "$STATE_DIR/probe.hosts"
+  local kind="$1" bin="$2" target="${3:-}" i=0 h batch=0 probe_hosts_file="$STATE_DIR/probe.hosts.$$"
+  rm -f "$probe_hosts_file"
   if [ -n "$target" ]; then
-    printf '%s\n' "$(resolve_probe_target "$target")" > "$STATE_DIR/probe.hosts"
+    printf '%s\n' "$(resolve_probe_target "$target")" > "$probe_hosts_file"
   else
     grep -v -e '^[[:space:]]*#' -e '^[[:space:]]*$' "$LISTS_DIR/probe_hosts.list" 2>/dev/null | tr -d '\r' | while IFS= read -r h; do
-      [ -n "$h" ] && printf '%s\n' "$(resolve_probe_target "$h")" >> "$STATE_DIR/probe.hosts"
+      [ -n "$h" ] && printf '%s\n' "$(resolve_probe_target "$h")" >> "$probe_hosts_file"
     done
   fi
   while IFS= read -r h; do
     [ -z "$h" ] && continue
     printf 'H\t%s\t%s\n' "$i" "$h"
     i=$((i + 1))
-  done < "$STATE_DIR/probe.hosts"
+  done < "$probe_hosts_file"
   i=0
   while IFS= read -r h; do
     [ -z "$h" ] && continue
@@ -1068,9 +1094,9 @@ cmd_probe_all_inner() {
       batch=0
     fi
     i=$((i + 1))
-  done < "$STATE_DIR/probe.hosts"
+  done < "$probe_hosts_file"
   wait
-  rm -f "$STATE_DIR/probe.hosts"
+  rm -f "$probe_hosts_file"
 }
 
 cmd_tcp16_status() {
@@ -1326,21 +1352,23 @@ DC5|91.108.56.130|443"
   printf 'TG_AFFINITY\t%s\t%s\tprimary_media\t%sms\n' "$best_media_dc" "$best_media_ip" "$min_latency"
 }
 
+kill_descendants() { # <pid> — curl живёт под под-shell пробы, то есть внуком
+  local p="$1" stat cpid comm st ppid rest
+  for stat in /proc/[0-9]*/stat; do
+    [ -r "$stat" ] || continue
+    read -r cpid comm st ppid rest < "$stat" 2>/dev/null || continue
+    [ "$ppid" = "$p" ] && kill_descendants "$cpid"
+  done
+  kill -TERM "$p" 2>/dev/null || true
+}
+
 cmd_probe_cancel() {
   if [ -f "$STATE_DIR/probe.pid" ]; then
     local p
     p=$(cat "$STATE_DIR/probe.pid" 2>/dev/null)
     if [ -n "$p" ]; then
       pkill -TERM -P "$p" 2>/dev/null || true
-      local stat cpid comm st ppid rest
-      for stat in /proc/[0-9]*/stat; do
-        [ -r "$stat" ] || continue
-        read -r cpid comm st ppid rest < "$stat" 2>/dev/null || continue
-        if [ "$ppid" = "$p" ]; then
-          kill -TERM "$cpid" 2>/dev/null || true
-        fi
-      done
-      kill -TERM "$p" 2>/dev/null || true
+      kill_descendants "$p"
     fi
     rm -f "$STATE_DIR/probe.pid"
   fi
@@ -1456,7 +1484,8 @@ cmd_domain_check() {
   d=$(domain_norm "$1")
   case "$d" in ''|*[!a-z0-9.-]*|*..*) echo "Некорректный домен" >&2; return 1 ;; esac
   # домен и все родительские: a.b.c -> a.b.c, b.c, c
-  cand="$STATE_DIR/domain.cand"; mkdir -p "$STATE_DIR"
+  cand="$STATE_DIR/domain.cand.$$"; mkdir -p "$STATE_DIR"
+  trap 'rm -f "$cand"' EXIT INT TERM
   k="$d"; : > "$cand"
   while :; do printf '%s\n' "$k" >> "$cand"; case "$k" in *.*) k=${k#*.} ;; *) break ;; esac; done
 
@@ -1673,7 +1702,23 @@ cmd_smart_import_b64() { # <base64 файла> -> число добавленн�
   mkdir -p "$SMART_DIR" "$STATE_DIR" || return 1
   src="$STATE_DIR/smart_import.$$"; f="$SMART_DIR/$net.tsv"; tmp="$f.imp.$$"
   b64d "$1" | tr -d '\r' > "$src"
-  head -n 1 "$src" | grep -q '^#v4' || { rm -f "$src"; echo "$(M 'Это не файл обучения умного режима' 'Not a smart mode learning file')" >&2; return 1; }
+  case "$(head -n 1 "$src")" in
+    '#v4'*) ;;
+    '#v2'*|'#v3'*)
+      # старые форматы: колонки те же, но метки «не похоже на блокировку»
+      # (cool 0:*) ставились по ложным ошибкам — при миграции отбрасываем
+      { printf '#v4 slot\thost\tcur\tok\terr\tcool\tseen\tflags\n'
+        sed '1d' "$src" | awk -F'\t' -v OFS='\t' '{
+          if ($6 != "") {
+            n = split($6, a, ","); o = ""
+            for (i = 1; i <= n; i++) if (a[i] !~ /^0:/) o = o (o == "" ? "" : ",") a[i]
+            $6 = o
+          }
+          print }'; } > "$src.mig" && mv -f "$src.mig" "$src" ||
+        { rm -f "$src" "$src.mig"; return 1; }
+      ;;
+    *) rm -f "$src"; echo "$(M 'Это не файл обучения умного режима' 'Not a smart mode learning file')" >&2; return 1 ;;
+  esac
   { [ -f "$f" ] && head -n 1 "$f" | grep -q '^#v4'; } || printf '#v4 slot\thost\tcur\tok\terr\tcool\tseen\tflags\n' > "$f"
   awk -F'\t' -v OFS='\t' -v cnt="$tmp.n" '
     function ids(slot, s,   a, k, i, p) { k = split(s, a, ","); for (i = 1; i <= k; i++) { split(a[i], p, ":"); if (p[1] + 0 > mx[slot]) mx[slot] = p[1] + 0 } }
@@ -1729,7 +1774,10 @@ cmd_smart_learn_once() {
   [ -n "$h" ] || return 0
   [ -f "$SMART_LEARN_FILE" ] && { n=$(sed -n 's/^n=//p' "$SMART_LEARN_FILE"); ok=$(sed -n 's/^ok=//p' "$SMART_LEARN_FILE"); }
   setup_probe_app_rule
+  trap 'cleanup_probe_app_rule' EXIT
+  trap 'trap - EXIT; cleanup_probe_app_rule; exit 130' INT TERM
   r=$(probe_attempt "$kind" "$bin" "$h" </dev/null)
+  trap - EXIT INT TERM
   cleanup_probe_app_rule
   n=$((${n:-0} + 1)); case "$r" in ok*) ok=$((${ok:-0} + 1)) ;; esac
   printf 'n=%s\nok=%s\nlast=%s\nt=%s\n' "$n" "${ok:-0}" "$h" "$(date +%s)" > "$SMART_LEARN_FILE.tmp" && mv -f "$SMART_LEARN_FILE.tmp" "$SMART_LEARN_FILE"
@@ -1746,14 +1794,14 @@ cmd_bench_strategies() {
 
   orig_strat=$(get_current_strategy)
   if is_running; then orig_running=true; fi
-  cp -f "$CONFFILE" "$STATE_DIR/bench_orig.conf" 2>/dev/null
+  cp -f "$CONFFILE" "$STATE_DIR/bench_orig.$$.conf" 2>/dev/null
 
   bench_cleanup() {
-    rm -f "$STATE_DIR/probe.pid" "$STATE_DIR/probe_bench_default.list" "$STATE_DIR/probe_bench_custom.$$.list" "$STATE_DIR/bench_res.$$.tmp" "$STATE_DIR/strat_bench.$$.tmp"
+    rm -f "$STATE_DIR/probe.pid" "$STATE_DIR/probe_bench_default.$$.list" "$STATE_DIR/probe_bench_custom.$$.list" "$STATE_DIR/bench_res.$$.tmp" "$STATE_DIR/strat_bench.$$.tmp"
     cleanup_probe_app_rule
-    if [ -f "$STATE_DIR/bench_orig.conf" ]; then
-      cp -f "$STATE_DIR/bench_orig.conf" "$CONFFILE" 2>/dev/null
-      rm -f "$STATE_DIR/bench_orig.conf"
+    if [ -f "$STATE_DIR/bench_orig.$$.conf" ]; then
+      cp -f "$STATE_DIR/bench_orig.$$.conf" "$CONFFILE" 2>/dev/null
+      rm -f "$STATE_DIR/bench_orig.$$.conf"
       echo "$orig_strat" > "$ACTIVE_FILE" 2>/dev/null
       if [ "$orig_running" = "true" ]; then
         sh "$SERVICE" restart >/dev/null 2>&1
@@ -1773,7 +1821,7 @@ cmd_bench_strategies() {
     bench_hosts_file="$STATE_DIR/probe_bench_custom.$$.list"
     printf '%s\n' "$target_domain" > "$bench_hosts_file"
   elif [ ! -f "$bench_hosts_file" ] || [ ! -s "$bench_hosts_file" ]; then
-    bench_hosts_file="$STATE_DIR/probe_bench_default.list"
+    bench_hosts_file="$STATE_DIR/probe_bench_default.$$.list"
     local gv_def
     gv_def=$(resolve_probe_target "googlevideo.com")
     printf '%s\n' \
@@ -1960,8 +2008,8 @@ cmd_probe_dpi() {
   mkdir -p "$STATE_DIR"
   echo "$$" > "$STATE_DIR/probe.pid"
   setup_probe_app_rule
-  trap 'rm -f "$STATE_DIR/probe.pid"; cleanup_probe_app_rule' EXIT
-  trap 'trap - EXIT; rm -f "$STATE_DIR/probe.pid"; cleanup_probe_app_rule; exit 130' INT TERM
+  trap 'rm -f "$STATE_DIR/probe.pid" "$STATE_DIR/probe.hosts.$$"; cleanup_probe_app_rule' EXIT
+  trap 'trap - EXIT; rm -f "$STATE_DIR/probe.pid" "$STATE_DIR/probe.hosts.$$"; cleanup_probe_app_rule; exit 130' INT TERM
 
   case "$mode" in
     net) cmd_net_info ;;
@@ -2376,7 +2424,7 @@ case "$1" in
     [ -n "$f" ] && [ -f "$f" ] || { echo "Стратегия не найдена" >&2; exit 1; }
     echo "$f" ;;
   strategy-save-b64)
-    n="$2"; t="$STATE_DIR/strat_save.tmp"
+    n="$2"; t="$STATE_DIR/strat_save.$$.tmp"
     case "$n" in default|'') echo "Стандартную стратегию редактируйте во вкладке «Конфиг»" >&2; exit 1 ;; esac
     strategy_name_ok "${n#imp:}" || { echo "Некорректное имя" >&2; exit 1; }
     strategy_file "$n" >/dev/null || { echo "Стратегия не найдена" >&2; exit 1; }
@@ -2390,8 +2438,8 @@ case "$1" in
         rm -f "$t" "$test_conf"
         exit 1
       fi
-      rm -f "$test_conf"
     fi
+    rm -f "$test_conf"
     case "$n" in
       imp:*) dst="$IMPORTS_DIR/${n#imp:}.conf" ;;
       *) dst="$USER_STRATEGIES_DIR/$n.conf"
@@ -2406,7 +2454,7 @@ case "$1" in
     rm -f "$USER_STRATEGIES_DIR/$2.conf"; echo OK ;;
 
   import-add-b64)
-    t="$STATE_DIR/imp.in"; b64d "$3" > "$t"
+    t="$STATE_DIR/imp.$$.in"; b64d "$3" > "$t"
     cmd_import_add "$(b64d "$2")" "$t"; rc=$?; rm -f "$t"; exit $rc ;;
   list-imports) list_imports ;;
   get-import-merged-b64)

@@ -386,6 +386,21 @@ fi
 ctl export-logs
 assert_rc 0 "$ctl_rc" "export-logs works"
 
+# Log exports are regenerable snapshots: the newest 10 are kept, older ones do
+# not pile up. User backups are a different story and are never pruned.
+export NFQWS_BACKUP_DIR="$SANDBOX/download"
+mkdir -p "$NFQWS_BACKUP_DIR"
+for i in 1 2 3 4 5 6 7 8 9 10 11 12; do
+  : > "$NFQWS_BACKUP_DIR/nfqws2-logs-2026010${i}-000000.tar"
+  sleep 0.01
+done
+: > "$NFQWS_BACKUP_DIR/nfqws2-backup-20260101-000000.tar"
+ctl export-logs
+assert_rc 0 "$ctl_rc" "export-logs works with an existing archive set"
+assert_eq "10" "$(ls "$NFQWS_BACKUP_DIR"/nfqws2-logs-*.tar 2>/dev/null | wc -l | tr -d ' ')" "only the newest 10 log archives are kept"
+assert_file "$NFQWS_BACKUP_DIR/nfqws2-backup-20260101-000000.tar" "user backups are never pruned"
+unset NFQWS_BACKUP_DIR
+
 # ── doctor / status ───────────────────────────────────────────────────────────
 section "doctor"
 
@@ -395,6 +410,17 @@ assert_match "$ctl_out" "^(ok|warn|fail|info)	" "doctor emits tab-separated seve
 assert_contains "$ctl_out" "NFQUEUE" "doctor checks the NFQUEUE target"
 assert_contains "$ctl_out" "limiter" "doctor reports the limiter in use"
 assert_contains "$ctl_out" "ОЗУ" "doctor reports memory consumption"
+assert_contains "$ctl_out" "$(printf 'info\tnat_fix\t')" "NAT counters are diagnostic, not proof of traffic handling"
+
+MOCK_IPT_NAT_LIST_FILE="$SANDBOX/nat-counters.txt"
+export MOCK_IPT_NAT_LIST_FILE
+printf 'pkts bytes target prot opt in out source destination\n12 960 MASQUERADE udp -- * rmnet+ 0.0.0.0/0 0.0.0.0/0\n3 240 MASQUERADE udp -- * wlan+ 0.0.0.0/0 0.0.0.0/0\n' > "$MOCK_IPT_NAT_LIST_FILE"
+ctl doctor
+assert_contains "$ctl_out" 'пакетов прошло: 15' "doctor sums MASQUERADE counters across interfaces"
+printf '0 0 MASQUERADE udp -- * * 0.0.0.0/0 0.0.0.0/0\n' > "$MOCK_IPT_NAT_LIST_FILE"
+ctl doctor
+assert_contains "$ctl_out" 'пакетов прошло: 0' "zero matches are distinguished from a missing NAT rule"
+unset MOCK_IPT_NAT_LIST_FILE
 
 printf '@vpn' > "$HOME_PAUSED_FILE"
 ctl doctor
