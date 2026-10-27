@@ -1712,9 +1712,22 @@ firewall_start() {
   else
     firewall_ip6tables || rc=1
   fi
+  if [ "$IPV6_ENABLED" = "1" ] && ! _firewall_family_ok ip6tables; then
+    # logged on start, not on every watchdog re-apply; the doctor keeps showing it
+    [ -f "$DESIRED_FILE" ] || log_msg "Error: ip6tables rules failed to apply — IPv6 traffic is not intercepted"
+    rc=1
+  fi
   meta_quic_start
   apply_tether_offload
   return $rc
+}
+
+_firewall_family_ok() {
+  local CMD="$1"
+  "$CMD" -w -t mangle -C POSTROUTING -j "$IPT_GROUP_POST" 2>/dev/null || return 1
+  "$CMD" -w -t mangle -C PREROUTING -j "$IPT_GROUP_PRE" 2>/dev/null || return 1
+  "$CMD" -w -t mangle -S "$IPT_GROUP_POST" 2>/dev/null | grep -qE -- 'NFQUEUE|nfqws_qout' || return 1
+  "$CMD" -w -t mangle -S "$IPT_GROUP_PRE" 2>/dev/null | grep -qE -- 'NFQUEUE|nfqws_qin'
 }
 
 firewall_stop() {
@@ -1727,8 +1740,8 @@ firewall_stop() {
 }
 
 firewall_ok() {
-  iptables -w -t mangle -C POSTROUTING -j $IPT_GROUP_POST 2>/dev/null || return 1
-  iptables -w -t mangle -S $IPT_GROUP_POST 2>/dev/null | grep -qE -- 'NFQUEUE|nfqws_qout'
+  _firewall_family_ok iptables || return 1
+  [ "$IPV6_ENABLED" = "0" ] || _firewall_family_ok ip6tables
 }
 
 # Some ROMs freeze the app cgroup the root process started in; move it to the

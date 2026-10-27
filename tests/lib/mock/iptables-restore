@@ -1,19 +1,62 @@
 #!/bin/sh
 # Mock iptables-restore / ip6tables-restore: разбирает формат restore и
 # выполняет каждую строку мок-командой iptables (ip6tables) той же таблицы.
-# Ошибка любой строки — код 1, как у настоящего restore (он атомарен; здесь
-# хватает того, что вызывающий увидит отказ и пойдёт обычным путём).
+#
+# Семантика повторяет настоящий restore (AOSP android-14.0.0_r1):
+#   * ":chain - [0:0]" с --noflush ОЧИЩАЕТ уже существующую цепочку
+#     (iptables-restore.c: noflush && is_chain -> flush_entries), иначе создаёт;
+#   * строка-команда проверяется и применяется сразу, поэтому провал любой
+#     строки откатывает таблицу целиком (restore атомарен в пределах таблицы);
+#   * сам вызов restore логируется в $MOCK_DIR/restore.log, чтобы тесты могли
+#     отличить успешный быстрый путь от fallback на медленный.
 # MOCK_IPT_RESTORE_FAIL=1 — restore недоступен/падает.
 [ -n "${MOCK_IPT_RESTORE_FAIL:-}" ] && exit 1
 BIN="${0%-restore}"
+NAME="${BIN##*/}"
+STORE="${MOCK_IPT_STORE:?MOCK_IPT_STORE not set}/$NAME"
+SNAP="${MOCK_IPT_STORE:?}/.restore-snap.$$"
 TABLE=mangle
+snapped=0
+
+rollback() {
+  if [ "$snapped" = 1 ]; then
+    rm -rf "$STORE/$TABLE"
+    if [ -d "$SNAP" ]; then
+      mkdir -p "$STORE"
+      cp -R "$SNAP" "$STORE/$TABLE"
+    fi
+    rm -rf "$SNAP"
+    snapped=0
+  fi
+}
+fail() {
+  rollback
+  [ -n "${MOCK_DIR:-}" ] && printf '%s fail\n' "$NAME" >> "$MOCK_DIR/restore.log"
+  exit 1
+}
+
 while IFS= read -r line; do
   case "$line" in
     ''|'#'*|COMMIT) continue ;;
-    '*'*) TABLE="${line#\*}"; continue ;;
-    :*) continue ;;
+    '*'*)
+      TABLE="${line#\*}"
+      rm -rf "$SNAP"
+      snapped=0
+      mkdir -p "$SNAP"
+      if [ -d "$STORE/$TABLE" ]; then cp -R "$STORE/$TABLE/." "$SNAP/" 2>/dev/null; fi
+      snapped=1
+      continue ;;
+    :*)
+      ch="${line%%[[:space:]]*}"; ch="${ch#:}"
+      f="$STORE/$TABLE/$ch"
+      mkdir -p "${f%/*}"
+      : > "$f"
+      continue ;;
   esac
   # shellcheck disable=SC2086
-  "$BIN" -w -t "$TABLE" $line || exit 1
+  "$BIN" -w -t "$TABLE" $line || fail
 done
+
+rm -rf "$SNAP"
+[ -n "${MOCK_DIR:-}" ] && printf '%s success\n' "$NAME" >> "$MOCK_DIR/restore.log"
 exit 0

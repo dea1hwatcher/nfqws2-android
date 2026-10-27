@@ -24,6 +24,7 @@ section "start: the daemon comes up and the arguments are assembled"
 
 svc start
 assert_rc 0 "$svc_rc" "start succeeds with the stub daemon"
+assert_contains "$(cat "$MOCK_DIR/restore.log" 2>/dev/null)" 'iptables success' "the initial ruleset uses restore successfully, not just fallback"
 assert_file "$CONFDIR/state/nfqws2.pid" "the pidfile is written"
 assert_file "$CONFDIR/state/last.args" "the argument file is written"
 assert_file "$CONFDIR/state/desired" "the desired-state marker is written"
@@ -148,6 +149,7 @@ assert_no_file "$MOCK_IPT_STORE/ip6tables/mangle/nfqws_post" "no ip6tables chain
 
 section "firewall_ok"
 
+reload_conf
 firewall_ok
 assert_rc 0 $? "firewall_ok sees the installed rules"
 
@@ -164,8 +166,43 @@ export MOCK_IPT_FEATURES
 ipt_reset
 
 svc firewall_apply
+assert_rc 0 "$svc_rc" "both firewall families apply successfully"
 assert_file "$MOCK_IPT_STORE/iptables/mangle/nfqws_post" "the IPv4 chain exists"
 assert_file "$MOCK_IPT_STORE/ip6tables/mangle/nfqws_post" "the IPv6 chain exists"
+reload_conf
+firewall_ok
+assert_rc 0 $? "firewall_ok checks both installed families"
+ctl doctor
+assert_contains "$ctl_out" "$(printf 'ok\tipv6_rules\t')" "doctor reports healthy IPv6 rules"
+
+ip6tables -w -t mangle -D PREROUTING -j nfqws_pre
+firewall_ok
+assert_rc 1 $? "a missing IPv6 incoming hook is detected"
+IPV6_ENABLED=0
+firewall_ok
+assert_rc 0 $? "disabled IPv6 is not required for firewall health"
+IPV6_ENABLED=1
+svc firewall_apply
+ip6tables -w -t mangle -F nfqws_post
+firewall_ok
+assert_rc 1 $? "an empty IPv6 outgoing chain is detected"
+svc firewall_stop >/dev/null 2>&1
+
+section "a broken ip6tables half is reported, not silent"
+
+: > "$SERVICE_LOG"
+MOCK_IP6_FAIL=1
+export MOCK_IP6_FAIL
+svc firewall_apply
+assert_rc 1 "$svc_rc" "firewall_apply rejects an incomplete dual-stack ruleset"
+assert_contains "$(cat "$SERVICE_LOG")" "IPv6 traffic is not intercepted" "the v6 failure is logged"
+ctl doctor
+assert_contains "$ctl_out" "$(printf 'fail\tipv6_rules\t')" "doctor reports the missing v6 rules as a failure"
+svc start
+assert_rc 1 "$svc_rc" "service start rejects missing IPv6 protection"
+assert_no_file "$PIDFILE" "the daemon is rolled back after IPv6 failure"
+assert_no_file "$DESIRED_FILE" "failed IPv6 start leaves no desired-state marker"
+unset MOCK_IP6_FAIL
 svc firewall_stop >/dev/null 2>&1
 
 section "firewall_start reports a failure in either half"

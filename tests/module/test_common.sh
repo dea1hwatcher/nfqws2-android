@@ -427,5 +427,39 @@ res3=$(resolve_googlevideo_cdn force)
 assert_eq "rr3---sn-from-list.googlevideo.com" "$res3" "falls back to googlevideo.list"
 rm -f "$LISTS_DIR/googlevideo.list" "$GOOGLEVIDEO_CACHE_FILE"
 
+section "batch generation does not mutate installed chains"
+iptables -w -t mangle -N nfqws_batch
+iptables -w -t mangle -A nfqws_batch -j RETURN
+FW_PROBE_CMD=iptables
+FW_BATCH_BUF=""
+_fw_batch_cmd -w -t mangle -N nfqws_batch
+_fw_batch_cmd -w -t mangle -F nfqws_batch
+_fw_batch_cmd -w -t mangle -A nfqws_batch -j NFQUEUE --queue-num 300 --queue-bypass
+_fw_batch_cmd -w -t mangle -I FORWARD 1 -j nfqws_batch
+assert_eq '-j RETURN' "$(ipt_rules nfqws_batch)" "building a batch leaves the live chain intact"
+assert_not_contains "$(ipt_rules FORWARD)" 'nfqws_batch' "building a batch does not attach a live hook"
+assert_contains "$FW_BATCH_BUF" 'mangle|-A nfqws_batch -j NFQUEUE' "NFQUEUE rule is buffered"
+FW_PROBE_CMD=""
+FW_BATCH_BUF=""
+
+section "restore mock commits or rolls back a table"
+restore_input="$SANDBOX/restore.input"
+printf '*mangle\n:nfqws_batch - [0:0]\n-A nfqws_batch -j NFQUEUE --queue-num 300 --queue-bypass\nCOMMIT\n' > "$restore_input"
+MOCK_IPT_FEATURES=owner iptables-restore --noflush < "$restore_input" >/dev/null 2>&1
+assert_rc 1 $? "an unsupported rule rejects the restore transaction"
+assert_eq '-j RETURN' "$(ipt_rules nfqws_batch)" "a failed restore preserves the old rules"
+iptables -w -t mangle -N unrelated_test
+iptables -w -t mangle -A unrelated_test -j RETURN
+iptables-restore --noflush < "$restore_input"
+assert_rc 0 $? "a supported restore transaction commits"
+assert_contains "$(ipt_rules nfqws_batch)" 'NFQUEUE' "restored chain contains the new rule"
+assert_not_contains "$(ipt_rules nfqws_batch)" '-j RETURN' "a declared chain replaces its old rules"
+assert_eq '-j RETURN' "$(ipt_rules unrelated_test)" "noflush preserves unrelated chains"
+printf '*mangle\n-F nfqws_batch\n-X nfqws_batch\nCOMMIT\n' > "$restore_input"
+iptables-restore --noflush < "$restore_input"
+assert_rc 0 $? "batch teardown accepts flush and delete operations"
+assert_no_file "$MOCK_IPT_STORE/iptables/mangle/nfqws_batch" "batch teardown removes its chain"
+assert_eq '-j RETURN' "$(ipt_rules unrelated_test)" "batch teardown leaves unrelated rules intact"
+
 harness_finish
 

@@ -119,10 +119,8 @@ start() {
     date +%s > "$STARTED_FILE"
     awk '{ printf "%d\n", $1 * 100 }' /proc/uptime > "$STARTED_CS_FILE" 2>/dev/null
 
-    # firewall_start can return 0 with no rule in place; without the POSTROUTING
-    # jump the daemon runs but nothing reaches NFQUEUE
-    firewall_start
-    if ! firewall_ok; then
+    # A successful command status alone does not prove both traffic hooks exist.
+    if ! firewall_start || ! firewall_ok; then
       log_msg "Error: iptables rules failed to apply — traffic is not intercepted"
       # a daemon without rules is useless and a stale pidfile would claim it runs
       kill -TERM "$pid" 2>/dev/null
