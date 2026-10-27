@@ -194,7 +194,7 @@ function selectTestTab(tab){
   const showTcp = tab === 'all' || tab === 'tcp16';
   const showDns = tab === 'all' || tab === 'dns';
   const dom = tab === 'domain';
-  ['test-run', 'test-warn', 'test-recommendation', 'test-empty', 'test-quic-status'].forEach(id => {
+  ['tb', 'test-warn', 'test-recommendation', 'test-empty', 'test-quic-status'].forEach(id => {
     const el = $(id);
     if(!el) return;
     if(dom){ if(!el.hidden) el.dataset.domHidden = '1'; el.hidden = true; }
@@ -309,7 +309,7 @@ function renderTcp16Row(i, provider, ip, port, status, detail){
     '<span class="status ' + stClass + '">' + icon(icName, 's16') + '</span>' +
     '<span class="li-text">' +
       '<span class="li-primary truncate">' + esc(provider.replace(/_/g, ' ')) + ' <span class="muted li-mono">(' + esc(ip) + ')</span></span>' +
-      '<span class="li-secondary">' + (isClean ? t('Чисто, передача данных стабильна') : (isDetected ? t('Обрыв сессии ТСПУ после {0}', detail) : t('Хост недоступен'))) + '</span>' +
+      '<span class="li-secondary">' + esc(isClean ? t('Чисто, передача данных стабильна') : (isDetected ? t('Обрыв сессии ТСПУ после {0}', detail) : t('Хост недоступен'))) + '</span>' +
     '</span>' +
     '<span class="li-trail ' + (isDetected ? 't-label-medium bad' : 'li-value') + '">' + esc(trailText) + '</span>' +
   '</div>';
