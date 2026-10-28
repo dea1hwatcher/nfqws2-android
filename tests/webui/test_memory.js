@@ -359,19 +359,24 @@ for (let i = 1; i <= 50000; i++) {
   const hostkey = `host-${i % 25000}.org`;
   const askey = 'live_auto';
 
-  // Exact logic from zapret-auto.lua lines 641-651
+  // Exact logic from zapret-auto.lua live_fallback: the LRU entry carries its
+  // own store and eviction drops the host from that owner, not from the store
+  // of whichever packet happens to arrive next.
   if (!autostate[askey][hostkey]) {
     autostate[askey][hostkey] = { nstrategy: 1, lru_tracked: false };
   }
   const rec = autostate[askey][hostkey];
 
   if (!rec.lru_tracked) {
-    orchestra_lru_keys.push(hostkey);
+    orchestra_lru_keys.push({ k: askey, h: hostkey });
     rec.lru_tracked = true;
     if (orchestra_lru_keys.length > ORCHESTRA_MAX_LRU) {
       const oldest = orchestra_lru_keys.shift();
-      if (autostate[askey] && !orchestra_locked[oldest]) {
-        delete autostate[askey][oldest];
+      const owner = oldest && autostate[oldest.k];
+      if (owner && !orchestra_locked[oldest.h]) {
+        delete owner[oldest.h];
+      } else if (oldest) {
+        orchestra_lru_keys.push(oldest);
       }
     }
   }
@@ -384,6 +389,46 @@ process.stdout.write(`   [Info] autostate.live_auto Retained Records: ${remainin
 
 assert(orchestra_lru_keys.length <= ORCHESTRA_MAX_LRU, `orchestra_lru_keys is strictly capped at ${ORCHESTRA_MAX_LRU} (actual: ${orchestra_lru_keys.length})`);
 assert(remainingHostCount <= ORCHESTRA_MAX_LRU + 50, `autostate host records are strictly evicted with LRU (actual: ${remainingHostCount}, max: ${ORCHESTRA_MAX_LRU})`);
+
+// ==============================================================================
+// 3C. TWO STORES: EVICTION MUST FOLLOW THE OWNING KEY
+// ==============================================================================
+// The old code evicted from autostate[current askey] regardless of which store
+// the oldest entry belonged to: with two keys running, one store grew without
+// bound. The fix tags each entry with its store; this pins that behaviour.
+sect('Lua zapret-auto.lua LRU with two stores');
+
+const autostate2 = { key_a: {}, key_b: {} };
+const lru2 = [];
+const locked2 = {};
+
+for (let i = 0; i < 40000; i++) {
+  const askey = i % 2 ? 'key_a' : 'key_b';
+  const hostkey = `h-${askey}-${i}.example`;
+  if (!autostate2[askey][hostkey]) {
+    autostate2[askey][hostkey] = { nstrategy: 1, lru_tracked: false };
+  }
+  const rec = autostate2[askey][hostkey];
+  if (!rec.lru_tracked) {
+    lru2.push({ k: askey, h: hostkey });
+    rec.lru_tracked = true;
+    if (lru2.length > ORCHESTRA_MAX_LRU) {
+      const oldest = lru2.shift();
+      const owner = oldest && autostate2[oldest.k];
+      if (owner && !locked2[oldest.h]) {
+        delete owner[oldest.h];
+      } else if (oldest) {
+        lru2.push(oldest);
+      }
+    }
+  }
+}
+
+const aCount = Object.keys(autostate2.key_a).length;
+const bCount = Object.keys(autostate2.key_b).length;
+process.stdout.write(`   [Info] Two stores: key_a=${aCount} key_b=${bCount} lru=${lru2.length}\n`);
+assert(aCount <= ORCHESTRA_MAX_LRU + 1, `first store is bounded by the shared LRU (actual: ${aCount})`);
+assert(bCount <= ORCHESTRA_MAX_LRU + 1, `second store is bounded by the shared LRU (actual: ${bCount})`);
 
 
 // ==============================================================================
