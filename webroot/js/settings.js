@@ -429,7 +429,7 @@ function renderBenchBest(name, ok, total, avg_ms, best_yt, best_dc){
 
   el.innerHTML = '<div class="subhead-row" style="margin-top:0;">' +
     '<span class="subhead plain">' + esc(t('Лучшая стратегия по результатам прохода')) + '</span>' +
-    '<span class="pill tonal">' + esc(countBadge) + '</span>' +
+    '<span class="badge number tonal">' + esc(countBadge) + '</span>' +
   '</div>' +
   '<div class="t-body-medium">' +
     esc(descText) +
