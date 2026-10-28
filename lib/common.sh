@@ -276,6 +276,14 @@ is_running() {
   return 0
 }
 
+# Список должен кончаться переводом строки: nfqws2 дописывает выученные домены
+# в auto.list как «домен\n», и без перевода в конце новый домен склеивается с
+# последней строкой («example1.comexample2.com»)
+ensure_eol() {
+  [ -s "$1" ] && [ -n "$(tail -c 1 "$1")" ] && printf '\n' >> "$1"
+  return 0
+}
+
 list_line_count() {
   [ -f "$1" ] || { printf 0; return; }
   local n
