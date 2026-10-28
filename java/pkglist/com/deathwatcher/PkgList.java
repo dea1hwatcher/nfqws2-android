@@ -80,6 +80,10 @@ public class PkgList {
             Field flagsField = appInfoCls.getField("flags");
             Method loadLabel = appInfoCls.getMethod("loadLabel", pmCls);
             Method loadIcon = appInfoCls.getMethod("loadIcon", pmCls);
+            Method loadUnbadgedIcon = null;
+            try {
+                loadUnbadgedIcon = appInfoCls.getMethod("loadUnbadgedIcon", pmCls);
+            } catch (Throwable ignored) {}
 
             for (UserRecord user : users) {
                 Object pm = getPackageManagerForUser(sysCtx, user.id);
@@ -121,7 +125,55 @@ public class PkgList {
                             String label = (cs != null && cs.length() > 0) ? cs.toString().trim() : pkg;
                             String icon = "";
                             try {
-                                Object drawable = loadIcon.invoke(ai, pm);
+                                Object drawable = null;
+                                // 1. Try loadUnbadgedIcon first — critical for work profiles (user.id != 0).
+                                // Android's ApplicationInfo.loadIcon() calls getUserBadgedIcon(), which queries
+                                // DevicePolicyManager / LauncherApps and crashes with NullPointerException
+                                // in headless app_process sessions. loadUnbadgedIcon bypasses badging completely.
+                                if (loadUnbadgedIcon != null) {
+                                    try {
+                                        drawable = loadUnbadgedIcon.invoke(ai, pm);
+                                    } catch (Throwable ignored) {}
+                                }
+                                // 2. For work profile apps, try pm.getApplicationIcon(pkg) — high-level PM lookup
+                                if (drawable == null && user.id != 0) {
+                                    try {
+                                        Method getAppIcon = pm.getClass().getMethod("getApplicationIcon", String.class);
+                                        drawable = getAppIcon.invoke(pm, pkg);
+                                    } catch (Throwable ignored) {}
+                                }
+                                // 3. Fallback: load via per-package context for work profiles
+                                if (drawable == null && user.id != 0 && sysCtx != null) {
+                                    Object appPm = getPackageManagerForUserPkg(sysCtx, pkg, user.id);
+                                    if (appPm != null) {
+                                        if (loadUnbadgedIcon != null) {
+                                            try {
+                                                drawable = loadUnbadgedIcon.invoke(ai, appPm);
+                                            } catch (Throwable ignored) {}
+                                        }
+                                        if (drawable == null) {
+                                            try {
+                                                drawable = loadIcon.invoke(ai, appPm);
+                                            } catch (Throwable ignored) {}
+                                        }
+                                    }
+                                }
+                                // 4. Standard loadIcon fallback
+                                if (drawable == null) {
+                                    try {
+                                        drawable = loadIcon.invoke(ai, pm);
+                                    } catch (Throwable ignored) {}
+                                }
+                                // 5. If still null, try launcher activity icon
+                                if (drawable == null && getLaunchIntent != null) {
+                                    try {
+                                        Object intent = getLaunchIntent.invoke(pm, pkg);
+                                        if (intent != null) {
+                                            Method getActivityIcon = pm.getClass().getMethod("getActivityIcon", intent.getClass());
+                                            drawable = getActivityIcon.invoke(pm, intent);
+                                        }
+                                    } catch (Throwable ignored) {}
+                                }
                                 if (drawable != null) {
                                     icon = drawableToBase64Png(drawable);
                                 }
@@ -285,6 +337,19 @@ public class PkgList {
         return result;
     }
 
+    private static Object getUserHandle(Class<?> uhCls, int userId) {
+        try {
+            Method of = uhCls.getMethod("of", int.class);
+            return of.invoke(null, userId);
+        } catch (Throwable t) {
+            try {
+                Constructor<?> ctor = uhCls.getConstructor(int.class);
+                return ctor.newInstance(userId);
+            } catch (Throwable ignored) {}
+        }
+        return null;
+    }
+
     private static Object getPackageManagerForUser(Object sysCtx, int userId) {
         if (sysCtx == null) return null;
         if (userId == 0) {
@@ -292,19 +357,38 @@ public class PkgList {
                 return sysCtx.getClass().getMethod("getPackageManager").invoke(sysCtx);
             } catch (Throwable ignored) {}
         }
+        // Android 11+ (API 30+): createContextAsUser(UserHandle, int) creates a user-bound
+        // context directly without package name lookup overhead.
         try {
             Class<?> uhCls = Class.forName("android.os.UserHandle");
-            Object userHandle = null;
-            try {
-                Method of = uhCls.getMethod("of", int.class);
-                userHandle = of.invoke(null, userId);
-            } catch (Throwable t) {
-                Constructor<?> ctor = uhCls.getConstructor(int.class);
-                userHandle = ctor.newInstance(userId);
+            Object userHandle = getUserHandle(uhCls, userId);
+            if (userHandle != null) {
+                try {
+                    Method createContextAsUser = sysCtx.getClass().getMethod("createContextAsUser", uhCls, int.class);
+                    Object userCtx = createContextAsUser.invoke(sysCtx, userHandle, 0);
+                    if (userCtx != null) {
+                        return userCtx.getClass().getMethod("getPackageManager").invoke(userCtx);
+                    }
+                } catch (Throwable ignored) {}
             }
+        } catch (Throwable ignored) {}
+
+        // Fallback for Android 8-10: createPackageContextAsUser("android", ...)
+        return getPackageManagerForUserPkg(sysCtx, "android", userId);
+    }
+
+    // Creates a per-package context as the target user and returns its PackageManager.
+    // This is required so that ApplicationInfo.loadUnbadgedIcon(pm) / loadIcon(pm) can resolve
+    // drawable resources from the APK installed in the work profile (user.id != 0).
+    private static Object getPackageManagerForUserPkg(Object sysCtx, String pkg, int userId) {
+        if (sysCtx == null) return null;
+        try {
+            Class<?> uhCls = Class.forName("android.os.UserHandle");
+            Object userHandle = getUserHandle(uhCls, userId);
             if (userHandle != null) {
                 Method createPkgCtx = sysCtx.getClass().getMethod("createPackageContextAsUser", String.class, int.class, uhCls);
-                Object userCtx = createPkgCtx.invoke(sysCtx, "android", 0, userHandle);
+                // CONTEXT_IGNORE_SECURITY = 2
+                Object userCtx = createPkgCtx.invoke(sysCtx, pkg, 2, userHandle);
                 if (userCtx != null) {
                     return userCtx.getClass().getMethod("getPackageManager").invoke(userCtx);
                 }
