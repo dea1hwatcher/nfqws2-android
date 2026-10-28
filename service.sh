@@ -28,7 +28,7 @@ start_failed() {
   log_msg "$1"
   log_msg "Last log lines:"
   tail -n 8 "$NFQWS_LOG" 2>/dev/null | while IFS= read -r l; do log_msg "  $l"; done
-  update_description stopped
+  update_description failed "$1"
   firewall_stop
 }
 
@@ -706,7 +706,7 @@ manual_start() {
 # Boot/autostart respects disable, VPN pause, and Home Wi-Fi pause without
 # setting user override files.
 autostart_service() {
-  [ -f "$CONFDIR/disable" ] && { log_msg "Found $CONFDIR/disable — autostart skipped"; return 0; }
+  [ -f "$CONFDIR/disable" ] && { log_msg "Found $CONFDIR/disable — autostart skipped"; update_description disabled; return 0; }
   local ssid
   if [ "$AUTOSTART" = "1" ] || [ -f "$DESIRED_FILE" ]; then
     if [ "$VPN_PAUSE" = "1" ] && vpn_active; then
@@ -761,6 +761,7 @@ case "$1" in
   *)
     rm -f "$HOME_PAUSED_FILE" "$HOME_OVERRIDE_FILE" "$SK_PIDFILE" "$STATE_DIR"/conf_seen.*
     rmdir "$STATE_DIR/home.lock" "$STATE_DIR/vpn.lock" 2>/dev/null
+    update_description ready
     until [ "$(getprop sys.boot_completed 2>/dev/null)" = "1" ]; do sleep 3; done
     sleep 4
     load_conf >/dev/null 2>&1

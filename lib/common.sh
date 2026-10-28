@@ -1920,34 +1920,67 @@ render_import_merged() {
 M() { if [ "$NFQWS_LANG" = "en" ]; then printf '%s' "$2"; else printf '%s' "$1"; fi; }
 
 # ---------------------------------------------------------------- status in module.prop
-# Managers show description in the module list, so write live state there.
-# cat > (not mv) keeps module.prop owner and mode.
-DESC_BASE="Обход DPI на базе nfqws2."
+# Managers (Magisk, KernelSU, APatch) show description in the module list,
+# so write live state there following the bindhosts standard:
+# status: <state> <emoji> | <key>: <value> <emoji> | ...
+# Flash wear protection: skip disk writes if description line is already identical.
+# cat > (not mv) keeps module.prop inode, owner and mode.
 current_mode() {
   awk '/^NFQWS_EXTRA_ARGS=/ { if (match($0, /MODE_[A-Z]*/)) print tolower(substr($0, RSTART + 5, RLENGTH - 5)); exit }' "$CONFFILE" 2>/dev/null
 }
-update_description() { # running | stopped | paused <ssid>
-  local prop="$MODDIR/module.prop" d strat mode tmp
+update_description() { # running | stopped | paused <reason> | failed <msg> | disabled | ready
+  local prop="$MODDIR/module.prop" d strat strat_icon mode tmp cur err
   if [ ! -f "$prop" ] || [ ! -w "$prop" ]; then return 0; fi
   case "$1" in
     running)
       strat=$(cat "$ACTIVE_FILE" 2>/dev/null); strat="${strat#imp:}"
-      mode=$(current_mode)
-      d="✅ Работает · ${strat:-default}${mode:+ · $mode}" ;;
-    paused)
-      if [ "$2" = "@vpn" ] || [ "$2" = "vpn" ] || [ "$2" = "VPN" ]; then
-        d="⏸ Пауза: активен VPN"
-      elif [ "$2" = "@wl" ]; then
-        d="⏸ Пауза: белые списки оператора"
+      [ -n "$strat" ] || strat="default"
+      if [ "$strat" = "smart" ] || smart_active 2>/dev/null; then
+        strat_icon="🧠"
       else
-        d="⏸ Пауза: домашняя Wi-Fi «$2»"
-      fi ;;
-    *)      d="⛔ Остановлено" ;;
+        strat_icon="🎯"
+      fi
+      mode=$(current_mode)
+      [ -n "$mode" ] || mode="auto"
+      d="status: active ✅ | strategy: $strat $strat_icon | mode: $mode 🌐"
+      ;;
+    paused)
+      case "$2" in
+        @vpn|vpn|VPN) d="status: paused ⏸️ | VPN 🛡️" ;;
+        @wl)          d="status: paused ⏸️ | Whitelist ⚪" ;;
+        "")           d="status: paused ⏸️" ;;
+        *)            d="status: paused ⏸️ | Wi-Fi: $2 📶" ;;
+      esac
+      ;;
+    failed)
+      err="${2:-startup error}"
+      err=$(printf '%s' "$err" | tr '\\' '/' | tr '\n\r' ' ' | sed -e 's/^[Ee]rror: //' -e 's/^[Ee]rror //' -e 's/^[ ]*//' -e 's/[ ]*$//')
+      err=$(printf '%s' "$err" | cut -c 1-50)
+      d="status: failed ❌ | $err"
+      ;;
+    disabled)
+      d="status: disabled ❌"
+      ;;
+    ready)
+      d="status: ready 🚀"
+      ;;
+    stopped)
+      d="status: stopped ⛔"
+      ;;
+    *)
+      d="status: stopped ⛔"
+      ;;
   esac
-  d=$(printf '%s' "$d | $DESC_BASE" | tr -d '\n\r')
+
+  # Flash wear protection: skip disk writes if description line is already identical
+  cur=$(grep "^description=" "$prop" 2>/dev/null | tr -d '\r')
+  d=$(printf '%s' "$d" | tr -d '\r\n')
+  [ "$cur" = "description=$d" ] && return 0
+
   tmp="$STATE_DIR/module.prop.$$"
+  [ -d "$STATE_DIR" ] || tmp="$prop.tmp.$$"
   awk -v d="$d" 'BEGIN { done = 0 } /^description=/ { print "description=" d; done = 1; next } { print }
-    END { if (!done) print "description=" d }' "$prop" > "$tmp" && cat "$tmp" > "$prop"
+    END { if (!done) print "description=" d }' "$prop" > "$tmp" 2>/dev/null && cat "$tmp" > "$prop"
   rm -f "$tmp"
   return 0
 }

@@ -142,6 +142,7 @@ set_strategy() {
   if [ "$NET_STRATEGY" = "1" ]; then
     save_net_strategy "$name" >/dev/null 2>&1
   fi
+  is_running && update_description running
   echo "Применена стратегия: ${name#imp:}"
 }
 
@@ -2547,7 +2548,11 @@ case "$1" in
       *) need_restart_note ;;
     esac ;;
   set-mode)
-    case "$2" in list|auto|all) set_conf_param NFQWS_EXTRA_ARGS "\$MODE_$(printf '%s' "$2" | tr a-z A-Z)"; echo OK; need_restart_note ;;
+    case "$2" in list|auto|all)
+      set_conf_param NFQWS_EXTRA_ARGS "\$MODE_$(printf '%s' "$2" | tr a-z A-Z)"
+      echo OK
+      is_running && update_description running
+      need_restart_note ;;
       *) echo "list|auto|all" >&2; exit 1 ;; esac ;;
   list-apps) cmd_list_apps "$2" ;;
   get-logs) cmd_get_logs "$2" "$3" "$4" ;;

@@ -461,5 +461,72 @@ assert_rc 0 $? "batch teardown accepts flush and delete operations"
 assert_no_file "$MOCK_IPT_STORE/iptables/mangle/nfqws_batch" "batch teardown removes its chain"
 assert_eq '-j RETURN' "$(ipt_rules unrelated_test)" "batch teardown leaves unrelated rules intact"
 
+section "update_description root manager state display"
+prop_test="$SANDBOX/module.prop"
+cat > "$prop_test" <<'EOF'
+id=nfqws2-android
+name=nfqws2 for Android
+version=v2.0.2
+versionCode=2020
+author=deathwatcher
+description=Initial Description
+EOF
+
+old_moddir="$MODDIR"
+MODDIR="$SANDBOX"
+
+# 1. ready state
+update_description ready
+assert_eq 'status: ready 🚀' "$(sed -n 's/^description=//p' "$prop_test")" "update_description ready writes ready emoji"
+
+# 2. running state with default strategy
+rm -f "$ACTIVE_FILE"
+update_description running
+assert_eq 'status: active ✅ | strategy: default 🎯 | mode: auto 🌐' "$(sed -n 's/^description=//p' "$prop_test")" "update_description running with default strategy"
+
+# 3. running state with custom strategy
+echo "alt4" > "$ACTIVE_FILE"
+update_description running
+assert_eq 'status: active ✅ | strategy: alt4 🎯 | mode: auto 🌐' "$(sed -n 's/^description=//p' "$prop_test")" "update_description running with alt4 strategy"
+
+# 4. running state with smart mode (brain emoji)
+echo "smart" > "$ACTIVE_FILE"
+update_description running
+assert_eq 'status: active ✅ | strategy: smart 🧠 | mode: auto 🌐' "$(sed -n 's/^description=//p' "$prop_test")" "update_description running with smart strategy shows brain emoji"
+
+# 5. paused states
+update_description paused "@vpn"
+assert_eq 'status: paused ⏸️ | VPN 🛡️' "$(sed -n 's/^description=//p' "$prop_test")" "update_description paused @vpn"
+
+update_description paused "@wl"
+assert_eq 'status: paused ⏸️ | Whitelist ⚪' "$(sed -n 's/^description=//p' "$prop_test")" "update_description paused @wl"
+
+update_description paused "CoffeeShop_5G"
+assert_eq 'status: paused ⏸️ | Wi-Fi: CoffeeShop_5G 📶' "$(sed -n 's/^description=//p' "$prop_test")" "update_description paused with SSID"
+
+# 6. failed state with sanitized reason
+update_description failed "Error: iptables rules failed to apply."
+assert_eq 'status: failed ❌ | iptables rules failed to apply.' "$(sed -n 's/^description=//p' "$prop_test")" "update_description failed strips Error prefix"
+
+# 7. disabled state
+update_description disabled
+assert_eq 'status: disabled ❌' "$(sed -n 's/^description=//p' "$prop_test")" "update_description disabled"
+
+# 8. stopped state
+update_description stopped
+assert_eq 'status: stopped ⛔' "$(sed -n 's/^description=//p' "$prop_test")" "update_description stopped"
+
+# 9. flash wear protection (no disk write when description unchanged)
+echo "marker" >> "$prop_test"
+update_description stopped
+assert_contains "$(cat "$prop_test")" "marker" "update_description skips rewriting when description matches"
+sed -i '/marker/d' "$prop_test"
+
+# 10. other fields in module.prop preserved
+assert_eq 'nfqws2-android' "$(sed -n 's/^id=//p' "$prop_test")" "module.prop id is preserved"
+assert_eq 'v2.0.2' "$(sed -n 's/^version=//p' "$prop_test")" "module.prop version is preserved"
+
+MODDIR="$old_moddir"
+
 harness_finish
 
