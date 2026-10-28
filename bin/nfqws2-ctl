@@ -137,7 +137,6 @@ set_strategy() {
   mv -f "$tmp" "$CONFFILE"
   chmod 0644 "$CONFFILE"
   echo "$name" > "$ACTIVE_FILE"
-  [ "$name" = smart ] || echo "$name" > "$LAST_STRATEGY_FILE"
   save_strategy_receipt "$CONFFILE" 2>/dev/null || true
   if [ "$NET_STRATEGY" = "1" ]; then
     save_net_strategy "$name" >/dev/null 2>&1
@@ -2618,7 +2617,7 @@ EOF
     echo "         import-add-b64 list-imports get-import-merged-b64 rename-import delete-import" >&2
     echo "         get-list save-list-b64 list-update add-domain clear-auto reset-lists set set-mode list-apps" >&2
     echo "         get-logs export-logs clear-logs wifi-ssid backup-create backup-list backup-restore backup-restore-b64 probe-dpi probe-cancel net-info bench-strategies check-domain domain-check" >&2
-    echo "         smart-status smart-sites smart-export-b64 smart-import-b64 smart-learn-once smart-reset" >&2
+    echo "         smart-status smart-sites smart-export smart-import-b64 smart-learn-once smart-reset" >&2
     echo "         home-pause net-recheck upload share changelog" >&2
     echo "         current-network list-net-strategies clear-net-strategies googlevideo-discovery orchestra-status orchestra-lock orchestra-unlock orchestra-block orchestra-unblock orchestra-clear tg-affinity" >&2
     echo "         list-catalogs get-catalog catalog-apply-module list-replaced-strategies restore-replaced-strategy" >&2

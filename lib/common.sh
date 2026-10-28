@@ -25,8 +25,6 @@ APP_UIDS_FILE="$STATE_DIR/app_uids"
 SERVICE_LOG="$LOG_DIR/service.log"
 NFQWS_LOG="$LOG_DIR/nfqws2.log"
 ACTIVE_FILE="$STATE_DIR/active_strategy"
-LAST_STRATEGY_FILE="$STATE_DIR/last_strategy"   # last non-smart strategy
-FIRST_STRATEGY=hardcorp74                       # default initial strategy
 
 # Release-shipped lists; .pending = newer version kept aside due to user edits
 LISTS_PENDING_DIR="$LISTS_DIR/.pending"
