@@ -647,10 +647,28 @@ cmd_list_apps() {
   local PM=pm
   command -v pm >/dev/null 2>&1 || PM=/system/bin/pm
   if command -v "$PM" >/dev/null 2>&1; then
-    { printf '['
-      "$PM" list packages -3 2>/dev/null | sed 's/^package://' | sort |
-        awk 'NF { printf "%s\"%s\"", (n++ ? "," : ""), $0 }'
-      printf ']\n'; }
+    local users u p pkgs n=0
+    users=$("$PM" list users 2>/dev/null | awk -F'[{:]' '/UserInfo/ { print $2 }')
+    [ -n "$users" ] || users=0
+    printf '[\n'
+    for u in $users; do
+      local is_work=false
+      [ "$u" -gt 0 ] && is_work=true
+      local u_name="Личный"
+      [ "$u" -gt 0 ] && u_name="Рабочий ($u)"
+      pkgs=$("$PM" list packages -3 --user "$u" 2>/dev/null | sed 's/^package://' | sort)
+      if [ -z "$pkgs" ] && [ "$u" = "0" ]; then
+        pkgs=$("$PM" list packages -3 2>/dev/null | sed 's/^package://' | sort)
+      fi
+      for p in $pkgs; do
+        [ -n "$p" ] || continue
+        if [ "$n" -gt 0 ]; then printf ',\n'; fi
+        printf '  {"pkg":"%s","name":"%s","icon":"","system":false,"userId":%s,"userName":"%s","isWork":%s}' \
+          "$p" "$p" "$u" "$u_name" "$is_work"
+        n=$((n + 1))
+      done
+    done
+    printf '\n]\n'
   fi
 }
 

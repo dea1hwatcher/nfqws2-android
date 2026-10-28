@@ -381,7 +381,7 @@ app_mode_active() {
   case "$APP_MODE" in include|exclude) return 0 ;; *) return 1 ;; esac
 }
 
-# apps.list package names -> comma-separated UIDs via pm
+# apps.list package names -> comma-separated UIDs via pm (supports multi-user / Shelter)
 resolve_app_uids() {
   local f="$CONFDIR/apps.list" PM=pm
   [ -f "$f" ] || return 0
@@ -389,17 +389,36 @@ resolve_app_uids() {
   command -v pm >/dev/null 2>&1 || PM=/system/bin/pm
   command -v "$PM" >/dev/null 2>&1 || return 0
   [ -s "$f" ] || return 0
-  "$PM" list packages -U 2>/dev/null | awk '
+
+  local users u out
+  users=$("$PM" list users 2>/dev/null | awk -F'[{:]' '/UserInfo/ { print $2 }')
+  [ -n "$users" ] || users=0
+
+  for u in $users; do
+    out=$("$PM" list packages -U --user "$u" 2>/dev/null)
+    if [ -z "$out" ] && [ "$u" = "0" ]; then
+      out=$("$PM" list packages -U 2>/dev/null)
+    fi
+    printf '%s\n' "$out" | awk -v u="$u" '
+      $1 ~ /^package:/ {
+        p = tolower(substr($1, 9)); uid = $2; sub(/^uid:/, "", uid)
+        if (uid ~ /^[0-9]+$/) print u, p, uid
+      }'
+  done | awk '
     NR == FNR {
       sub(/\r$/, "")
       sub(/^[ \t]+/, "")
       sub(/[ \t]+$/, "")
-      if ($0 != "" && $0 !~ /^#/) w[tolower($0)] = 1
+      if ($0 != "" && $0 !~ /^#/) {
+        val = tolower($0)
+        if (val ~ /^[0-9]+:/) uw[val] = 1
+        else w[val] = 1
+      }
       next
     }
-    $1 ~ /^package:/ {
-      p = tolower(substr($1, 9)); u = $2; sub(/^uid:/, "", u)
-      if ((p in w) && u ~ /^[0-9]+$/) print u
+    NF >= 3 {
+      u = $1; p = $2; uid = $3
+      if ((p in w) || ((u ":" p) in uw)) print uid
     }' "$f" - | sort -n -u | awk '{ printf "%s%s", (NR > 1 ? "," : ""), $0 }'
 }
 

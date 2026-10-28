@@ -202,6 +202,21 @@ assert_eq "10201" "$(resolve_app_uids)" "single package resolves"
 : > "$CONFDIR/apps.list"
 assert_eq "" "$(resolve_app_uids)" "empty apps.list resolves to nothing"
 
+# Multi-user / Shelter profile support
+export MOCK_USERS="0 10"
+printf 'com.termux\n' > "$CONFDIR/apps.list"
+assert_eq "10201,1010201" "$(resolve_app_uids)" "unprefixed package resolves across all active profiles"
+
+printf '10:com.termux\n' > "$CONFDIR/apps.list"
+assert_eq "1010201" "$(resolve_app_uids)" "prefixed package (10:pkg) resolves only for user 10 (Shelter)"
+
+printf '0:com.termux\n' > "$CONFDIR/apps.list"
+assert_eq "10201" "$(resolve_app_uids)" "prefixed package (0:pkg) resolves only for user 0"
+
+printf '10:com.termux\ncom.example.browser\n' > "$CONFDIR/apps.list"
+assert_eq "10123,1010123,1010201" "$(resolve_app_uids)" "mix of global and profile-specific packages resolves correctly"
+unset MOCK_USERS
+
 # ── _startup_args ─────────────────────────────────────────────────────────────
 section "_startup_args"
 
