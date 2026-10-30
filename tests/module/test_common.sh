@@ -481,8 +481,8 @@ prop_test="$SANDBOX/module.prop"
 cat > "$prop_test" <<'EOF'
 id=nfqws2-android
 name=nfqws2 for Android
-version=v2.0.2
-versionCode=2020
+version=v2.0.3
+versionCode=2030
 author=deathwatcher
 description=Initial Description
 EOF
@@ -539,7 +539,7 @@ sed -i '/marker/d' "$prop_test"
 
 # 10. other fields in module.prop preserved
 assert_eq 'nfqws2-android' "$(sed -n 's/^id=//p' "$prop_test")" "module.prop id is preserved"
-assert_eq 'v2.0.2' "$(sed -n 's/^version=//p' "$prop_test")" "module.prop version is preserved"
+assert_eq 'v2.0.3' "$(sed -n 's/^version=//p' "$prop_test")" "module.prop version is preserved"
 
 MODDIR="$old_moddir"
 
