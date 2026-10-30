@@ -106,9 +106,11 @@ sandbox_init() {
   for f in user exclude ipset ipset_exclude auto probe_hosts; do
     cp "$REPO_DIR/lists/$f.list" "$MODDIR/lists/$f.list"
   done
-  # ipset.list in repo is >440KB; truncate in test sandbox so sync_lists and
-  # backup tar archives stay small and do not hit Linux kernel MAX_ARG_STRLEN (128KB)
+  # ipset.list in repo is >440KB; truncate in test sandbox so sync_lists,
+  # reset-lists and backup tar archives stay small and do not hit Linux kernel
+  # MAX_ARG_STRLEN (128KB)
   head -n 50 "$REPO_DIR/lists/ipset.list" > "$MODDIR/lists/ipset.list"
+  head -n 50 "$REPO_DIR/defaults/lists/ipset.list" > "$MODDIR/defaults/lists/ipset.list"
   chmod 0755 "$MODDIR/bin/nfqws2-ctl" "$MODDIR/service.sh" "$MODDIR/boot-completed.sh" "$MODDIR/system/bin/"* 2>/dev/null || true
 
   cp "$TESTS_DIR/lib/mock/iptables"    "$MOCKBIN/iptables"
