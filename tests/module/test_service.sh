@@ -128,6 +128,7 @@ assert_file "$MOCK_IPT_STORE/iptables/mangle/nfqws_app" "an app chain appears on
 assert_contains "$(ipt_rules nfqws_app)" "--uid-owner 10201" "the resolved UID is matched by owner"
 assert_contains "$(ipt_rules nfqws_app)" "--set-xmark 0x10000000/0x10000000" "include mode marks matching traffic"
 assert_contains "$(ipt_rules nfqws_post)" "! --mark 0x10000000/0x10000000 -j RETURN" "unmarked traffic is skipped in include mode"
+assert_contains "$(ipt_rules nfqws_pre)" "! --mark 0x10000000/0x10000000 -j RETURN" "unmarked incoming traffic is skipped in prerouting in include mode"
 assert_contains "$(ipt_rules nfqws_pre)" "-j nfqws_qin" "incoming traffic goes through the counter chain"
 
 # The counter chain walks PKT_LIMIT_OUT down to zero and then queues
@@ -150,6 +151,16 @@ assert_eq "8" "$(printf '%s\n' "$qout" | grep -c -- '--set-xmark')" "the strateg
 section "connmark_out: BLOCK_QUIC drops UDP/443"
 
 assert_contains "$(ipt_rules nfqws_post)" "-p udp --dport 443 -j DROP" "QUIC is blocked in the post chain"
+
+section "app filter: multiple apps and profiles generate separate comma-free rules"
+
+printf 'com.termux\ncom.example.browser\n' > "$CONFDIR/apps.list"
+svc firewall_apply >/dev/null 2>&1
+assert_rc 0 "$svc_rc" "firewall_apply succeeds with multiple apps"
+app_chain=$(ipt_rules nfqws_app)
+assert_contains "$app_chain" "--uid-owner 10123" "first app UID is matched individually"
+assert_contains "$app_chain" "--uid-owner 10201" "second app UID is matched individually"
+assert_not_contains "$app_chain" "," "no comma-separated UIDs in owner rules (xt_owner restriction)"
 
 section "IPv6 disabled"
 

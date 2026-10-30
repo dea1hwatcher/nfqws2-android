@@ -74,6 +74,10 @@ has_rule() { # <file> <rule>
 # connmark/CONNMARK are deliberately never gated: connmark_out mode needs them,
 # so a kernel without them is not a state the module supports anyway.
 gate() {
+  case "$1" in
+    *--uid-owner*[0-9]*,[0-9]*)
+      printf 'iptables: Bad UID\n' >&2; return 1 ;;
+  esac
   for tok in connbytes multiport owner NFQUEUE; do
     case "$1" in
       *"$tok"*)

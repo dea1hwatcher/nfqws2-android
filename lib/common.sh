@@ -75,8 +75,6 @@ GOOGLEVIDEO_CACHE_FILE="$STATE_DIR/googlevideo_cdn.txt"
 ORCHESTRA_MEMORY_FILE="$STATE_DIR/orchestra_memory.json"
 TG_AFFINITY_FILE="$STATE_DIR/tg_affinity.json"
 
-# xt_owner allows max 128 ranges per rule
-APP_UID_MAX=128
 
 CNT_OUT_MASK=0x0f000000
 CNT_OUT_STEP=16777216
@@ -467,19 +465,28 @@ app_rules() {
   # Not a `| while read` pipeline: in the batch path $CMD appends to
   # FW_BATCH_BUF, and a pipeline would run the loop in a subshell and lose
   # every --uid-owner rule on iptables-restore systems.
-  chunks=$(printf '%s\n' "$uids" | tr ',' '\n' | grep -E '^[0-9]+$' | sort -n -u | awk -v mx="$APP_UID_MAX" '
-      { b = int((NR - 1) / mx); a[b] = (b in a ? a[b] "," $0 : $0) }
-      END { for (i = 0; i <= b; i++) if (i in a) print a[i] }')
+  # Collapse contiguous UIDs into ranges (e.g. 10001-10003) and output single UIDs.
+  # Netfilter's xt_owner only accepts a single UID or range (from-to), never comma-separated lists.
+  chunks=$(printf '%s\n' "$uids" | tr ',' '\n' | grep -E '^[0-9]+$' | sort -n -u | awk '
+      {
+        if (NR == 1) { s = p = $1; next }
+        if ($1 == p + 1) { p = $1; next }
+        print (s == p ? s : s "-" p)
+        s = p = $1
+      }
+      END {
+        if (NR > 0 && s != "") print (s == p ? s : s "-" p)
+      }')
   for chunk in $chunks; do
     $CMD -w -t mangle -A $IPT_GROUP_APP -m owner --uid-owner "$chunk" -j CONNMARK --set-xmark "$mark"
   done
   $CMD -w -t mangle -A $IPT_GROUP_POST -j $IPT_GROUP_APP
   if [ "$APP_MODE" = "exclude" ]; then
     $CMD -w -t mangle -A $IPT_GROUP_POST -m connmark --mark "$MARK_EXCLUDE" -j RETURN
-    [ "$LIMITER" = "connbytes" ] && $CMD -w -t mangle -A $IPT_GROUP_PRE -m connmark --mark "$MARK_EXCLUDE" -j RETURN
+    $CMD -w -t mangle -A $IPT_GROUP_PRE -m connmark --mark "$MARK_EXCLUDE" -j RETURN
   else
     $CMD -w -t mangle -A $IPT_GROUP_POST -m connmark ! --mark "$MARK_INCLUDE" -j RETURN
-    [ "$LIMITER" = "connbytes" ] && $CMD -w -t mangle -A $IPT_GROUP_PRE -m connmark ! --mark "$MARK_INCLUDE" -j RETURN
+    $CMD -w -t mangle -A $IPT_GROUP_PRE -m connmark ! --mark "$MARK_INCLUDE" -j RETURN
   fi
   log_msg "App filter ($APP_MODE): $n UIDs"
   return 0
