@@ -13,7 +13,7 @@ log_msg "boot-completed: running hook (sys.boot_completed=1)"
 # restore the service after boot if it should be running
 if [ "$AUTOSTART" = "1" ] || [ -f "$DESIRED_FILE" ]; then
   if ! is_running; then
-    if [ ! -f "$HOME_PAUSED_FILE" ] && [ ! -f "$VPN_PAUSED_FILE" ]; then
+    if [ ! -f "$HOME_PAUSED_FILE" ]; then
       log_msg "boot-completed: nfqws2 is inactive after system boot — restoring..."
       sh "$MODDIR/service.sh" autostart >/dev/null 2>&1
     fi

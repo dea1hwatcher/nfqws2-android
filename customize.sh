@@ -20,7 +20,7 @@ ui_print "- Architecture: $ARCH -> $BIN"
 rm -rf "$MODPATH/tests" "$MODPATH/tools" "$MODPATH/.workbuddy-ai" \
        "$MODPATH/.git" "$MODPATH/.github" "$MODPATH/.gitattributes" \
        "$MODPATH/CONTRIBUTING.md" "$MODPATH/java" \
-       "$MODPATH/docs" "$MODPATH/update.json" "$MODPATH/changelog.md"
+       "$MODPATH/docs" "$MODPATH/update.json"
 rm -f "$MODPATH"/*.zip
 
 for f in \
@@ -122,3 +122,8 @@ for p in /data/adb/ap/bin /data/adb/ksu/bin; do
     ln -sf /data/adb/modules/nfqws2-android/bin/nfqws2-ctl "$p/nfqws2-ctl" 2>/dev/null || true
   fi
 done
+
+# Set initial ready status for root managers
+if [ -f "$MODPATH/module.prop" ]; then
+  sed -i 's/^description=.*/description=status: ready 🚀/g' "$MODPATH/module.prop" 2>/dev/null || true
+fi

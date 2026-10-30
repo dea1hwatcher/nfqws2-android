@@ -45,8 +45,8 @@ jobs:
       - name: Package main module
         run: |
           zip -q -r -9 -X nfqws2-android.zip \
-            module.prop icon.png customize.sh service.sh action.sh boot-completed.sh uninstall.sh README.md LICENSE \
-            bin binaries blobs defaults lib lists lua strategies system webroot
+            module.prop icon.png customize.sh service.sh action.sh boot-completed.sh uninstall.sh README.md LICENSE changelog.md \
+            bin binaries blobs defaults lib lists lua strategies strategy-catalogs system webroot
 
       - name: Verify module packages
         run: |

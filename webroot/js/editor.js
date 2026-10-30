@@ -200,7 +200,7 @@ function highlight(text, lang){
 
 /* A failed save keeps the editor open; highlighting is a <pre> under transparent text, off for large files */
 const HL_LIMIT = 150000;
-let editorCtx = null, editorReturnFocus = null, hlFrame = 0;
+let editorCtx = null, editorReturnFocus = null, hlFrame = 0, editorSaving = false;
 let editorSearchQuery = '', editorMatches = [], editorMatchIndex = -1;
 
 function applySearchHighlights(html, query, curIdx){
@@ -466,8 +466,11 @@ async function closeSlideEditor(force){
   scheduleSync();
 }
 $('panel-save-btn').onclick = async () => {
+  if(editorSaving) return;
   const o = editorCtx;
   if(!o) return;
+  editorSaving = true;
+  try {
   const val = $('panel-editor-text').value;
   // Custom handler: returned text means an error
   if(o.onSave){
@@ -523,6 +526,7 @@ $('panel-save-btn').onclick = async () => {
   // edited by hand outside togglePkg(), so the selected-apps cache is stale
   if(o.key === 'apps') appsCache = null;
   if(o.key === 'apps' && currentPage === 'apps') appsInit();
+  } finally { editorSaving = false; }
 };
 
 const searchInp = $('editor-search-input');

@@ -2295,22 +2295,6 @@ function http_oob_prefix(ctx, desync)
     end
 end
 
--- Безопасный methodeol - только добавляет \r\n в начало, ничего не обрезает
--- Некоторые серверы принимают \r\n перед GET
-function http_methodeol_safe(ctx, desync)
-    if not desync.dis.tcp then
-        instance_cutoff_shim(ctx, desync)
-        return
-    end
-    direction_cutoff_opposite(ctx, desync)
-
-    if desync.l7payload=="http_req" and direction_check(desync) then
-        -- Просто добавляем \r\n в начало (без обрезания User-Agent)
-        desync.dis.payload = "\r\n" .. desync.dis.payload
-        DLOG("http_methodeol_safe: added \\r\\n prefix only")
-        return VERDICT_MODIFY
-    end
-end
 
 -- Ещё безопаснее - добавить пустую строку внутри заголовков (не в начале)
 -- Вставляет пустой X-заголовок который nginx игнорирует

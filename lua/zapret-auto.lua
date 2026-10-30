@@ -637,26 +637,33 @@ function live_fallback(ctx, desync)
 	if not rec then return end
 
 	local hostkey = standard_hostkey(desync)
+	local askey = (desync.arg.key and #desync.arg.key>0) and desync.arg.key or desync.func_instance
 	if hostkey then
 		if not rec.lru_tracked then
-			table.insert(orchestra_lru_keys, hostkey)
+			-- the LRU entry remembers its own store: with several keys running,
+			-- eviction must drop the host from the map that actually owns it
+			table.insert(orchestra_lru_keys, { k = askey, h = hostkey })
 			rec.lru_tracked = true
 			if #orchestra_lru_keys > ORCHESTRA_MAX_LRU then
 				local oldest = table.remove(orchestra_lru_keys, 1)
-				local askey = (desync.arg.key and #desync.arg.key>0) and desync.arg.key or desync.func_instance
-				if autostate and autostate[askey] and not orchestra_locked[oldest] then
-					autostate[askey][oldest] = nil
+				local owner = oldest and autostate and autostate[oldest.k]
+				if owner and not orchestra_locked[oldest.h] then
+					owner[oldest.h] = nil
+				elseif oldest then
+					-- locked hosts are never dropped, but they keep their LRU slot
+					table.insert(orchestra_lru_keys, oldest)
 				end
 			end
 		end
 	end
 
-	-- Check locked strategy for host
+	-- Check locked strategy for host. The instance is taken before plan_clear():
+	-- clearing empties the list and the argument would have been nil.
 	if hostkey and orchestra_locked[hostkey] then
-		local locked_idx = orchestra_locked[hostkey]
-		if locked_idx <= #desync.plan then
+		local locked = desync.plan[orchestra_locked[hostkey]]
+		if locked then
 			plan_clear(desync)
-			return plan_instance_execute(desync, VERDICT_PASS, desync.plan[locked_idx])
+			return plan_instance_execute(desync, VERDICT_PASS, locked)
 		end
 	end
 
@@ -665,9 +672,15 @@ function live_fallback(ctx, desync)
 
 	local max_fails = tonumber(desync.arg.max_fails) or 2
 	local total_strats = tonumber(desync.arg.strategies) or #desync.plan
+	if total_strats < 1 then total_strats = #desync.plan end
 
-	-- check if connection was terminated by RST from remote/DPI
-	if desync.track and desync.track.incoming_rst then
+	-- A reset ends the connection. The engine track table of this build has no
+	-- incoming_rst field (that is a z2k-fork name: the shipped nfqws2 binary
+	-- carries hostname/lua_state, not incoming_rst), so the signal comes from
+	-- the packet itself: reset segments are queued to nfqws by the firewall.
+	local is_rst = desync.dis and desync.dis.tcp and desync.dis.tcp.th_flags
+		and bitand(desync.dis.tcp.th_flags, TH_RST) ~= 0
+	if is_rst then
 		rec.fails = rec.fails + 1
 		DLOG("live_fallback: recorded RST failure for host. fail count: "..rec.fails.."/"..max_fails)
 		if rec.fails >= max_fails then

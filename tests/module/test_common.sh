@@ -202,6 +202,21 @@ assert_eq "10201" "$(resolve_app_uids)" "single package resolves"
 : > "$CONFDIR/apps.list"
 assert_eq "" "$(resolve_app_uids)" "empty apps.list resolves to nothing"
 
+# Multi-user / Shelter profile support
+export MOCK_USERS="0 10"
+printf 'com.termux\n' > "$CONFDIR/apps.list"
+assert_eq "10201,1010201" "$(resolve_app_uids)" "unprefixed package resolves across all active profiles"
+
+printf '10:com.termux\n' > "$CONFDIR/apps.list"
+assert_eq "1010201" "$(resolve_app_uids)" "prefixed package (10:pkg) resolves only for user 10 (Shelter)"
+
+printf '0:com.termux\n' > "$CONFDIR/apps.list"
+assert_eq "10201" "$(resolve_app_uids)" "prefixed package (0:pkg) resolves only for user 0"
+
+printf '10:com.termux\ncom.example.browser\n' > "$CONFDIR/apps.list"
+assert_eq "10123,1010123,1010201" "$(resolve_app_uids)" "mix of global and profile-specific packages resolves correctly"
+unset MOCK_USERS
+
 # ── _startup_args ─────────────────────────────────────────────────────────────
 section "_startup_args"
 
@@ -426,6 +441,107 @@ printf 'rr3---sn-from-list.googlevideo.com\n' > "$LISTS_DIR/googlevideo.list"
 res3=$(resolve_googlevideo_cdn force)
 assert_eq "rr3---sn-from-list.googlevideo.com" "$res3" "falls back to googlevideo.list"
 rm -f "$LISTS_DIR/googlevideo.list" "$GOOGLEVIDEO_CACHE_FILE"
+
+section "batch generation does not mutate installed chains"
+iptables -w -t mangle -N nfqws_batch
+iptables -w -t mangle -A nfqws_batch -j RETURN
+FW_PROBE_CMD=iptables
+FW_BATCH_BUF=""
+_fw_batch_cmd -w -t mangle -N nfqws_batch
+_fw_batch_cmd -w -t mangle -F nfqws_batch
+_fw_batch_cmd -w -t mangle -A nfqws_batch -j NFQUEUE --queue-num 300 --queue-bypass
+_fw_batch_cmd -w -t mangle -I FORWARD 1 -j nfqws_batch
+assert_eq '-j RETURN' "$(ipt_rules nfqws_batch)" "building a batch leaves the live chain intact"
+assert_not_contains "$(ipt_rules FORWARD)" 'nfqws_batch' "building a batch does not attach a live hook"
+assert_contains "$FW_BATCH_BUF" 'mangle|-A nfqws_batch -j NFQUEUE' "NFQUEUE rule is buffered"
+FW_PROBE_CMD=""
+FW_BATCH_BUF=""
+
+section "restore mock commits or rolls back a table"
+restore_input="$SANDBOX/restore.input"
+printf '*mangle\n:nfqws_batch - [0:0]\n-A nfqws_batch -j NFQUEUE --queue-num 300 --queue-bypass\nCOMMIT\n' > "$restore_input"
+MOCK_IPT_FEATURES=owner iptables-restore --noflush < "$restore_input" >/dev/null 2>&1
+assert_rc 1 $? "an unsupported rule rejects the restore transaction"
+assert_eq '-j RETURN' "$(ipt_rules nfqws_batch)" "a failed restore preserves the old rules"
+iptables -w -t mangle -N unrelated_test
+iptables -w -t mangle -A unrelated_test -j RETURN
+iptables-restore --noflush < "$restore_input"
+assert_rc 0 $? "a supported restore transaction commits"
+assert_contains "$(ipt_rules nfqws_batch)" 'NFQUEUE' "restored chain contains the new rule"
+assert_not_contains "$(ipt_rules nfqws_batch)" '-j RETURN' "a declared chain replaces its old rules"
+assert_eq '-j RETURN' "$(ipt_rules unrelated_test)" "noflush preserves unrelated chains"
+printf '*mangle\n-F nfqws_batch\n-X nfqws_batch\nCOMMIT\n' > "$restore_input"
+iptables-restore --noflush < "$restore_input"
+assert_rc 0 $? "batch teardown accepts flush and delete operations"
+assert_no_file "$MOCK_IPT_STORE/iptables/mangle/nfqws_batch" "batch teardown removes its chain"
+assert_eq '-j RETURN' "$(ipt_rules unrelated_test)" "batch teardown leaves unrelated rules intact"
+
+section "update_description root manager state display"
+prop_test="$SANDBOX/module.prop"
+cat > "$prop_test" <<'EOF'
+id=nfqws2-android
+name=nfqws2 for Android
+version=v2.0.3
+versionCode=2030
+author=deathwatcher
+description=Initial Description
+EOF
+
+old_moddir="$MODDIR"
+MODDIR="$SANDBOX"
+
+# 1. ready state
+update_description ready
+assert_eq 'status: ready 🚀' "$(sed -n 's/^description=//p' "$prop_test")" "update_description ready writes ready emoji"
+
+# 2. running state with default strategy
+rm -f "$ACTIVE_FILE"
+update_description running
+assert_eq 'status: active ✅ | strategy: default 🎯 | mode: auto 🌐' "$(sed -n 's/^description=//p' "$prop_test")" "update_description running with default strategy"
+
+# 3. running state with custom strategy
+echo "alt4" > "$ACTIVE_FILE"
+update_description running
+assert_eq 'status: active ✅ | strategy: alt4 🎯 | mode: auto 🌐' "$(sed -n 's/^description=//p' "$prop_test")" "update_description running with alt4 strategy"
+
+# 4. running state with smart mode (brain emoji)
+echo "smart" > "$ACTIVE_FILE"
+update_description running
+assert_eq 'status: active ✅ | strategy: smart 🧠 | mode: auto 🌐' "$(sed -n 's/^description=//p' "$prop_test")" "update_description running with smart strategy shows brain emoji"
+
+# 5. paused states
+update_description paused "@vpn"
+assert_eq 'status: paused ⏸️ | VPN 🛡️' "$(sed -n 's/^description=//p' "$prop_test")" "update_description paused @vpn"
+
+update_description paused "@wl"
+assert_eq 'status: paused ⏸️ | Whitelist ⚪' "$(sed -n 's/^description=//p' "$prop_test")" "update_description paused @wl"
+
+update_description paused "CoffeeShop_5G"
+assert_eq 'status: paused ⏸️ | Wi-Fi: CoffeeShop_5G 📶' "$(sed -n 's/^description=//p' "$prop_test")" "update_description paused with SSID"
+
+# 6. failed state with sanitized reason
+update_description failed "Error: iptables rules failed to apply."
+assert_eq 'status: failed ❌ | iptables rules failed to apply.' "$(sed -n 's/^description=//p' "$prop_test")" "update_description failed strips Error prefix"
+
+# 7. disabled state
+update_description disabled
+assert_eq 'status: disabled ❌' "$(sed -n 's/^description=//p' "$prop_test")" "update_description disabled"
+
+# 8. stopped state
+update_description stopped
+assert_eq 'status: stopped ⛔' "$(sed -n 's/^description=//p' "$prop_test")" "update_description stopped"
+
+# 9. flash wear protection (no disk write when description unchanged)
+echo "marker" >> "$prop_test"
+update_description stopped
+assert_contains "$(cat "$prop_test")" "marker" "update_description skips rewriting when description matches"
+sed -i '/marker/d' "$prop_test"
+
+# 10. other fields in module.prop preserved
+assert_eq 'nfqws2-android' "$(sed -n 's/^id=//p' "$prop_test")" "module.prop id is preserved"
+assert_eq 'v2.0.3' "$(sed -n 's/^version=//p' "$prop_test")" "module.prop version is preserved"
+
+MODDIR="$old_moddir"
 
 harness_finish
 

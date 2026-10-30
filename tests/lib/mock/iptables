@@ -19,7 +19,9 @@ TABLE=mangle
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    -w) shift ;;
+    -w)
+      shift
+      case "${1:-}" in ''|*[!0-9]*) ;; *) shift ;; esac ;;
     -t) TABLE="$2"; shift 2 ;;
     *) break ;;
   esac
@@ -29,6 +31,8 @@ done
 # would. This does not hang the drain loops in firewall_stop(): they are
 # `while iptables -D … ; do :; done`, and a failing -D ends the loop at once.
 if [ "${MOCK_IPT_FAIL:-0}" != "0" ]; then exit 1; fi
+# ip6tables-only failure: the v4 half stays healthy, the v6 half is degraded
+if [ "${0##*/}" = "ip6tables" ] && [ "${MOCK_IP6_FAIL:-0}" != "0" ]; then exit 1; fi
 
 CMD="$1"; shift
 
@@ -70,6 +74,10 @@ has_rule() { # <file> <rule>
 # connmark/CONNMARK are deliberately never gated: connmark_out mode needs them,
 # so a kernel without them is not a state the module supports anyway.
 gate() {
+  case "$1" in
+    *--uid-owner*[0-9]*,[0-9]*)
+      printf 'iptables: Bad UID\n' >&2; return 1 ;;
+  esac
   for tok in connbytes multiport owner NFQUEUE; do
     case "$1" in
       *"$tok"*)
@@ -94,6 +102,13 @@ case "$CMD" in
   -X)
     f=$(chain_file "$1")
     [ -f "$f" ] || { printf 'iptables: No chain/target/match by that name.\n' >&2; exit 1; }
+    [ ! -s "$f" ] || { printf 'iptables: Directory not empty.\n' >&2; exit 1; }
+    for other in "$STORE/$TABLE/"*; do
+      [ -f "$other" ] || continue
+      while IFS= read -r rule; do
+        case " $rule " in *" -j $1 "*|*" -g $1 "*) printf 'iptables: Too many links.\n' >&2; exit 1 ;; esac
+      done < "$other"
+    done
     rm -f "$f"; exit 0 ;;
   -A)
     CH="$1"; shift; RULE="$*"
@@ -144,6 +159,13 @@ case "$CMD" in
     f=$(chain_file "$CH")
     has_rule "$f" "$RULE" || exit 1
     gate "$RULE" || exit 1
+    exit 0 ;;
+  -L)
+    if [ "$TABLE" = nat ] && [ "$1" = nfqws_nat ] && [ -n "${MOCK_IPT_NAT_LIST_FILE:-}" ]; then
+      cat "$MOCK_IPT_NAT_LIST_FILE"
+      exit $?
+    fi
+    [ -z "$1" ] || [ "$1" = -n ] || ensure_chain "$1" || exit 1
     exit 0 ;;
   -S)
     f=$(chain_file "$1")

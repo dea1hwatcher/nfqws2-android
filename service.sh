@@ -28,7 +28,7 @@ start_failed() {
   log_msg "$1"
   log_msg "Last log lines:"
   tail -n 8 "$NFQWS_LOG" 2>/dev/null | while IFS= read -r l; do log_msg "  $l"; done
-  update_description stopped
+  update_description failed "$1"
   firewall_stop
 }
 
@@ -71,6 +71,8 @@ start() {
     log_msg "Starting nfqws2..."
     kernel_modules
     rotate_logs start
+    [ -f "$LISTS_DIR/geoblock.list" ] || : > "$LISTS_DIR/geoblock.list"
+    ensure_eol "$LISTS_DIR/auto.list"
 
     local args
     args=$(_startup_args)
@@ -119,10 +121,8 @@ start() {
     date +%s > "$STARTED_FILE"
     awk '{ printf "%d\n", $1 * 100 }' /proc/uptime > "$STARTED_CS_FILE" 2>/dev/null
 
-    # firewall_start can return 0 with no rule in place; without the POSTROUTING
-    # jump the daemon runs but nothing reaches NFQUEUE
-    firewall_start
-    if ! firewall_ok; then
+    # A successful command status alone does not prove both traffic hooks exist.
+    if ! firewall_start || ! firewall_ok; then
       log_msg "Error: iptables rules failed to apply — traffic is not intercepted"
       # a daemon without rules is useless and a stale pidfile would claim it runs
       kill -TERM "$pid" 2>/dev/null
@@ -512,7 +512,7 @@ netwatch() {
     saw=0
     while :; do
       sleep 2
-      load_conf >/dev/null 2>&1
+      conf_refresh
       watchers_wanted || break 2
       if ! kill -0 "$mon" 2>/dev/null; then
         # died on its own. If it never wrote a byte, ip monitor is unsupported
@@ -666,7 +666,7 @@ network_strategy_check() {
   [ "$NET_STRATEGY" = "1" ] || return 0
   is_running || return 0
   [ -f "$HOME_PAUSED_FILE" ] && return 0 # keep the strategy during a home pause
-  [ -f "$VPN_PAUSED_FILE" ] && return 0  # keep the strategy during a VPN pause
+  [ "$(cat "$HOME_PAUSED_FILE" 2>/dev/null)" = "@vpn" ] && return 0  # keep the strategy during a VPN pause
 
   local cur_net last_net saved cur_strat
   cur_net=$(current_network_key 2>/dev/null)
@@ -706,7 +706,7 @@ manual_start() {
 # Boot/autostart respects disable, VPN pause, and Home Wi-Fi pause without
 # setting user override files.
 autostart_service() {
-  [ -f "$CONFDIR/disable" ] && { log_msg "Found $CONFDIR/disable — autostart skipped"; return 0; }
+  [ -f "$CONFDIR/disable" ] && { log_msg "Found $CONFDIR/disable — autostart skipped"; update_description disabled; return 0; }
   local ssid
   if [ "$AUTOSTART" = "1" ] || [ -f "$DESIRED_FILE" ]; then
     if [ "$VPN_PAUSE" = "1" ] && vpn_active; then
@@ -759,8 +759,9 @@ case "$1" in
   firewall_apply)     firewall_start ;;
   firewall_stop)      firewall_stop ;;
   *)
-    rm -f "$HOME_PAUSED_FILE" "$HOME_OVERRIDE_FILE" "$VPN_PAUSED_FILE" "$VPN_OVERRIDE_FILE" "$SK_PIDFILE" "$STATE_DIR"/conf_seen.*
+    rm -f "$HOME_PAUSED_FILE" "$HOME_OVERRIDE_FILE" "$SK_PIDFILE" "$STATE_DIR"/conf_seen.*
     rmdir "$STATE_DIR/home.lock" "$STATE_DIR/vpn.lock" 2>/dev/null
+    update_description ready
     until [ "$(getprop sys.boot_completed 2>/dev/null)" = "1" ]; do sleep 3; done
     sleep 4
     load_conf >/dev/null 2>&1

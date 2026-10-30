@@ -194,7 +194,7 @@ function selectTestTab(tab){
   const showTcp = tab === 'all' || tab === 'tcp16';
   const showDns = tab === 'all' || tab === 'dns';
   const dom = tab === 'domain';
-  ['test-run', 'test-warn', 'test-recommendation', 'test-empty', 'test-quic-status'].forEach(id => {
+  ['tb', 'test-warn', 'test-recommendation', 'test-empty', 'test-quic-status'].forEach(id => {
     const el = $(id);
     if(!el) return;
     if(dom){ if(!el.hidden) el.dataset.domHidden = '1'; el.hidden = true; }
@@ -309,7 +309,7 @@ function renderTcp16Row(i, provider, ip, port, status, detail){
     '<span class="status ' + stClass + '">' + icon(icName, 's16') + '</span>' +
     '<span class="li-text">' +
       '<span class="li-primary truncate">' + esc(provider.replace(/_/g, ' ')) + ' <span class="muted li-mono">(' + esc(ip) + ')</span></span>' +
-      '<span class="li-secondary">' + (isClean ? t('Чисто, передача данных стабильна') : (isDetected ? t('Обрыв сессии ТСПУ после {0}', detail) : t('Хост недоступен'))) + '</span>' +
+      '<span class="li-secondary">' + esc(isClean ? t('Чисто, передача данных стабильна') : (isDetected ? t('Обрыв сессии ТСПУ после {0}', detail) : t('Хост недоступен'))) + '</span>' +
     '</span>' +
     '<span class="li-trail ' + (isDetected ? 't-label-medium bad' : 'li-value') + '">' + esc(trailText) + '</span>' +
   '</div>';
@@ -880,7 +880,7 @@ async function runDomainCheck(){
   dcRunning = true;
   $('dc-go').disabled = true;
   $('dc-q').blur();
-  const st = {mode: '', lists: [], ip: '', tries: []};
+  const st = {mode: '', lists: [], ip: '', tries: [], keep: ''};
   const paint = done => setHTML('dc-res', dcRender(q, st, done), false);
   paint(false);
   const r = await ctlx(['domain-check', q], 60000, line => {
@@ -889,6 +889,7 @@ async function runDomainCheck(){
     else if(p[0] === 'LIST') st.lists.push({file: p[1], role: p[2], entry: p[3]});
     else if(p[0] === 'IP') st.ip = p[1];
     else if(p[0] === 'R'){ const [ok, v] = (p[2] || '').split(' '); st.tries.push({ok: ok === 'ok', v}); }
+    else if(p[0] === 'K') st.keep = p[1];
     else return;
     paint(false);
   });
@@ -924,6 +925,11 @@ function dcRender(q, st, done){
     else sub = t('Не открылся: {0}', [...new Set(st.tries.map(x => t(PROBE_REASON[x.v] || PROBE_REASON.other)))].join(', '));
     rows.push(dcRow('test', t('Доступность через обход'), sub, n && !done ? '' : (n ? (ok.length === n ? 'ok' : ok.length ? 'warn' : 'bad') : '')));
   } else if(done) rows.push(dcRow('test', t('Доступность через обход'), t('Нет curl или wget — открыть сайт с устройства нечем')));
+  // второй запрос по тому же соединению: так ходят приложения и браузер
+  if(st.keep === 'ok') rows.push(dcRow('refresh', t('Повторный запрос'), t('Проходит по тому же соединению'), 'ok'));
+  else if(st.keep === 'stall') rows.push(dcRow('refresh', t('Повторный запрос'),
+    t('Зависает: первый запрос отвечает, следующий по тому же соединению — нет. Соединение замораживается после первого обмена — приложения покажут ошибку со второго запроса'), 'bad'));
+  else if(n === 3 && ok.length && !done) rows.push(dcRow('refresh', t('Повторный запрос'), t('Проверяю…')));
   if(rows.length) out.push('<div class="list">' + rows.join('') + '</div>');
   if(done && st.mode){
     const acts = [];

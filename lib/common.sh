@@ -25,8 +25,6 @@ APP_UIDS_FILE="$STATE_DIR/app_uids"
 SERVICE_LOG="$LOG_DIR/service.log"
 NFQWS_LOG="$LOG_DIR/nfqws2.log"
 ACTIVE_FILE="$STATE_DIR/active_strategy"
-LAST_STRATEGY_FILE="$STATE_DIR/last_strategy"   # last non-smart strategy
-FIRST_STRATEGY=hardcorp74                       # default initial strategy
 
 # Release-shipped lists; .pending = newer version kept aside due to user edits
 LISTS_PENDING_DIR="$LISTS_DIR/.pending"
@@ -41,14 +39,11 @@ SMART_LEARN_FILE="$STATE_DIR/smart_learn"      # background learning state
 SMART_LEARN_EVERY=120                          # seconds between learning attempts
 SMART_TURBO_FILE="$STATE_DIR/smart_turbo"      # fast learning expiration
 SMART_TURBO_EVERY=15
-SMART_TRAIN_FILE="$STATE_DIR/smart_train"      # legacy training progress
-SMART_TRAIN_PID="$STATE_DIR/smart_train.pid"
 SK_PIDFILE="$STATE_DIR/smartkill.pid"          # обрыв застрявших соединений умного режима
 SMART_KILL_FILE="$STATE_DIR/smart_kill"        # их пишет оркестратор: «4|6 адрес локальный-порт»
 
-# VPN pause: bypass pauses while a VPN interface is active (VPN_PAUSE=1)
-VPN_PAUSED_FILE="$STATE_DIR/vpn_paused"        # paused by active VPN
-VPN_OVERRIDE_FILE="$STATE_DIR/vpn_override"    # user re-enabled while VPN is on
+# VPN pause: bypass pauses while a VPN interface is active (VPN_PAUSE=1);
+# the reason is recorded as @vpn inside HOME_PAUSED_FILE
 
 MARK_EXCLUDE="0x20000000/0x20000000"
 MARK_INCLUDE="0x10000000/0x10000000"
@@ -80,8 +75,6 @@ GOOGLEVIDEO_CACHE_FILE="$STATE_DIR/googlevideo_cdn.txt"
 ORCHESTRA_MEMORY_FILE="$STATE_DIR/orchestra_memory.json"
 TG_AFFINITY_FILE="$STATE_DIR/tg_affinity.json"
 
-# xt_owner allows max 128 ranges per rule
-APP_UID_MAX=128
 
 CNT_OUT_MASK=0x0f000000
 CNT_OUT_STEP=16777216
@@ -119,7 +112,9 @@ set_defaults() {
   : "${CALLS_BYPASS:=0}"
   : "${TCP_MSS_CLAMP:=0}"
   : "${AUTO_PORTS:=0}"
-  : "${WL_PAUSE:=1}"
+  # opt-in: wlwatch probes the network periodically, and WL_PAUSE=1 keeps the
+  # watchdog alive through watchers_wanted() even when WATCHDOG=0
+  : "${WL_PAUSE:=0}"
   : "${SMART_LEARN:=1}"
 }
 
@@ -135,7 +130,7 @@ log_msg() {
 sync_lists_and_blobs() {
   # builtin dir check avoids a fork on every netwatch tick and nfqws2-ctl call
   [ -d "$LISTS_DIR" ] && [ -d "$LOG_DIR" ] && [ -d "$STATE_DIR" ] ||
-    mkdir -p "$LISTS_DIR" "$CONFDIR" "$LOG_DIR" "$STATE_DIR" "$CONFDIR/blobs" "$CONFDIR/lua" "$CONFDIR/strategy-catalogs" "$CONFDIR/strategies/replaced" 2>/dev/null
+    mkdir -p "$LISTS_DIR" "$CONFDIR" "$LOG_DIR" "$STATE_DIR" "$CONFDIR/strategy-catalogs" "$CONFDIR/strategies/replaced" 2>/dev/null
 
   for sdir in "$MODDIR/lists" "$MODDIR/defaults/lists"; do
     if [ -d "$sdir" ]; then
@@ -277,6 +272,14 @@ is_running() {
   return 0
 }
 
+# Список должен кончаться переводом строки: nfqws2 дописывает выученные домены
+# в auto.list как «домен\n», и без перевода в конце новый домен склеивается с
+# последней строкой («example1.comexample2.com»)
+ensure_eol() {
+  [ -s "$1" ] && [ -n "$(tail -c 1 "$1")" ] && printf '\n' >> "$1"
+  return 0
+}
+
 list_line_count() {
   [ -f "$1" ] || { printf 0; return; }
   local n
@@ -374,7 +377,7 @@ app_mode_active() {
   case "$APP_MODE" in include|exclude) return 0 ;; *) return 1 ;; esac
 }
 
-# apps.list package names -> comma-separated UIDs via pm
+# apps.list package names -> comma-separated UIDs via pm (supports multi-user / Shelter)
 resolve_app_uids() {
   local f="$CONFDIR/apps.list" PM=pm
   [ -f "$f" ] || return 0
@@ -382,17 +385,36 @@ resolve_app_uids() {
   command -v pm >/dev/null 2>&1 || PM=/system/bin/pm
   command -v "$PM" >/dev/null 2>&1 || return 0
   [ -s "$f" ] || return 0
-  "$PM" list packages -U 2>/dev/null | awk '
+
+  local users u out
+  users=$("$PM" list users 2>/dev/null | awk -F'[{:]' '/UserInfo/ { print $2 }')
+  [ -n "$users" ] || users=0
+
+  for u in $users; do
+    out=$("$PM" list packages -U --user "$u" 2>/dev/null)
+    if [ -z "$out" ] && [ "$u" = "0" ]; then
+      out=$("$PM" list packages -U 2>/dev/null)
+    fi
+    printf '%s\n' "$out" | awk -v u="$u" '
+      $1 ~ /^package:/ {
+        p = tolower(substr($1, 9)); uid = $2; sub(/^uid:/, "", uid)
+        if (uid ~ /^[0-9]+$/) print u, p, uid
+      }'
+  done | awk '
     NR == FNR {
       sub(/\r$/, "")
       sub(/^[ \t]+/, "")
       sub(/[ \t]+$/, "")
-      if ($0 != "" && $0 !~ /^#/) w[tolower($0)] = 1
+      if ($0 != "" && $0 !~ /^#/) {
+        val = tolower($0)
+        if (val ~ /^[0-9]+:/) uw[val] = 1
+        else w[val] = 1
+      }
       next
     }
-    $1 ~ /^package:/ {
-      p = tolower(substr($1, 9)); u = $2; sub(/^uid:/, "", u)
-      if ((p in w) && u ~ /^[0-9]+$/) print u
+    NF >= 3 {
+      u = $1; p = $2; uid = $3
+      if ((p in w) || ((u ":" p) in uw)) print uid
     }' "$f" - | sort -n -u | awk '{ printf "%s%s", (NR > 1 ? "," : ""), $0 }'
 }
 
@@ -411,7 +433,7 @@ app_uid_count() {
 
 # 0 = app filter applied, 1 = off/not applicable, 2 = error
 app_rules() {
-  local CMD="$1" REAL_CMD="${FW_PROBE_CMD:-$1}" uids n chunk mark
+  local CMD="$1" REAL_CMD="${FW_PROBE_CMD:-$1}" uids n chunk chunks mark
   if ! app_mode_active; then
     if [ "$CMD" != "_fw_batch_cmd" ]; then
       $CMD -w -t mangle -F $IPT_GROUP_APP 2>/dev/null
@@ -440,19 +462,31 @@ app_rules() {
   [ "$APP_MODE" = "exclude" ] && mark="$MARK_EXCLUDE"
   $CMD -w -t mangle -N $IPT_GROUP_APP 2>/dev/null
   $CMD -w -t mangle -F $IPT_GROUP_APP
-  printf '%s\n' "$uids" | tr ',' '\n' | grep -E '^[0-9]+$' | sort -n -u | awk -v mx="$APP_UID_MAX" '
-      { b = int((NR - 1) / mx); a[b] = (b in a ? a[b] "," $0 : $0) }
-      END { for (i = 0; i <= b; i++) if (i in a) print a[i] }' | while IFS= read -r chunk; do
-    [ -n "$chunk" ] || continue
+  # Not a `| while read` pipeline: in the batch path $CMD appends to
+  # FW_BATCH_BUF, and a pipeline would run the loop in a subshell and lose
+  # every --uid-owner rule on iptables-restore systems.
+  # Collapse contiguous UIDs into ranges (e.g. 10001-10003) and output single UIDs.
+  # Netfilter's xt_owner only accepts a single UID or range (from-to), never comma-separated lists.
+  chunks=$(printf '%s\n' "$uids" | tr ',' '\n' | grep -E '^[0-9]+$' | sort -n -u | awk '
+      {
+        if (NR == 1) { s = p = $1; next }
+        if ($1 == p + 1) { p = $1; next }
+        print (s == p ? s : s "-" p)
+        s = p = $1
+      }
+      END {
+        if (NR > 0 && s != "") print (s == p ? s : s "-" p)
+      }')
+  for chunk in $chunks; do
     $CMD -w -t mangle -A $IPT_GROUP_APP -m owner --uid-owner "$chunk" -j CONNMARK --set-xmark "$mark"
   done
   $CMD -w -t mangle -A $IPT_GROUP_POST -j $IPT_GROUP_APP
   if [ "$APP_MODE" = "exclude" ]; then
     $CMD -w -t mangle -A $IPT_GROUP_POST -m connmark --mark "$MARK_EXCLUDE" -j RETURN
-    [ "$LIMITER" = "connbytes" ] && $CMD -w -t mangle -A $IPT_GROUP_PRE -m connmark --mark "$MARK_EXCLUDE" -j RETURN
+    $CMD -w -t mangle -A $IPT_GROUP_PRE -m connmark --mark "$MARK_EXCLUDE" -j RETURN
   else
     $CMD -w -t mangle -A $IPT_GROUP_POST -m connmark ! --mark "$MARK_INCLUDE" -j RETURN
-    [ "$LIMITER" = "connbytes" ] && $CMD -w -t mangle -A $IPT_GROUP_PRE -m connmark ! --mark "$MARK_INCLUDE" -j RETURN
+    $CMD -w -t mangle -A $IPT_GROUP_PRE -m connmark ! --mark "$MARK_INCLUDE" -j RETURN
   fi
   log_msg "App filter ($APP_MODE): $n UIDs"
   return 0
@@ -962,44 +996,38 @@ orchestra_memory_init() {
   fi
 }
 
-orchestra_lock_strategy() { # <host> <strategy_index>
-  local host="$1" idx="$2"
-  if [ -z "$host" ] || [ -z "$idx" ]; then
-    return 1
-  fi
+_orchestra_rewrite_strategy() { # <host> <idx> <locked|blocked> <value as list>
+  local host="$1" idx="$2" section="$3" as_list="$4"
+  if [ -z "$host" ] || [ -z "$idx" ]; then return 1; fi
   orchestra_memory_init
-  if command -v awk >/dev/null 2>&1; then
-    awk -v h="$host" -v idx="$idx" '
-      BEGIN { in_locked=0 }
-      {
-        if ($0 ~ /"locked": \{/) {
-          print $0
-          in_locked=1
-          printf "    \"%s\": %s,\n", h, idx
-          next
-        }
-        if (in_locked && $0 ~ /^\s*\},?/) {
-          in_locked=0
-        }
-        if (in_locked && $0 ~ ("\"" h "\":")) {
-          next
-        }
+  command -v awk >/dev/null 2>&1 || return 0
+  awk -v h="$host" -v idx="$idx" -v sec="$section" -v lst="$as_list" '
+    BEGIN { in_s = 0 }
+    {
+      if ($0 ~ ("\"" sec "\": \{")) {
         print $0
-      }' "$ORCHESTRA_MEMORY_FILE" > "$ORCHESTRA_MEMORY_FILE.tmp"
-    if [ -s "$ORCHESTRA_MEMORY_FILE.tmp" ]; then
-      mv -f "$ORCHESTRA_MEMORY_FILE.tmp" "$ORCHESTRA_MEMORY_FILE"
-    else
-      rm -f "$ORCHESTRA_MEMORY_FILE.tmp"
-    fi
+        in_s = 1
+        if (lst) printf "    \"%s\": [%s],\n", h, idx
+        else printf "    \"%s\": %s,\n", h, idx
+        next
+      }
+      if (in_s && $0 ~ /^[[:space:]]*\},?/) in_s = 0
+      if (in_s && $0 ~ ("\"" h "\":")) next
+      print
+    }' "$ORCHESTRA_MEMORY_FILE" > "$ORCHESTRA_MEMORY_FILE.tmp"
+  if [ -s "$ORCHESTRA_MEMORY_FILE.tmp" ]; then
+    mv -f "$ORCHESTRA_MEMORY_FILE.tmp" "$ORCHESTRA_MEMORY_FILE"
+  else
+    rm -f "$ORCHESTRA_MEMORY_FILE.tmp"
   fi
   return 0
 }
+orchestra_lock_strategy()  { _orchestra_rewrite_strategy "$1" "$2" locked 0; }
+orchestra_block_strategy() { _orchestra_rewrite_strategy "$1" "$2" blocked 1; }
 
-orchestra_unlock_strategy() { # <host>
+_orchestra_drop_strategy() { # <host>
   local host="$1"
-  if [ -z "$host" ]; then
-    return 1
-  fi
+  [ -n "$host" ] || return 1
   orchestra_memory_init
   grep -v "\"$host\":" "$ORCHESTRA_MEMORY_FILE" > "$ORCHESTRA_MEMORY_FILE.tmp"
   if [ -s "$ORCHESTRA_MEMORY_FILE.tmp" ]; then
@@ -1009,54 +1037,8 @@ orchestra_unlock_strategy() { # <host>
   fi
   return 0
 }
-
-orchestra_block_strategy() { # <host> <strategy_index>
-  local host="$1" idx="$2"
-  if [ -z "$host" ] || [ -z "$idx" ]; then
-    return 1
-  fi
-  orchestra_memory_init
-  if command -v awk >/dev/null 2>&1; then
-    awk -v h="$host" -v idx="$idx" '
-      BEGIN { in_blocked=0 }
-      {
-        if ($0 ~ /"blocked": \{/) {
-          print $0
-          in_blocked=1
-          printf "    \"%s\": [%s],\n", h, idx
-          next
-        }
-        if (in_blocked && $0 ~ /^\s*\},?/) {
-          in_blocked=0
-        }
-        if (in_blocked && $0 ~ ("\"" h "\":")) {
-          next
-        }
-        print $0
-      }' "$ORCHESTRA_MEMORY_FILE" > "$ORCHESTRA_MEMORY_FILE.tmp"
-    if [ -s "$ORCHESTRA_MEMORY_FILE.tmp" ]; then
-      mv -f "$ORCHESTRA_MEMORY_FILE.tmp" "$ORCHESTRA_MEMORY_FILE"
-    else
-      rm -f "$ORCHESTRA_MEMORY_FILE.tmp"
-    fi
-  fi
-  return 0
-}
-
-orchestra_unblock_strategy() { # <host> [strategy_index]
-  local host="$1"
-  if [ -z "$host" ]; then
-    return 1
-  fi
-  orchestra_memory_init
-  grep -v "\"$host\":" "$ORCHESTRA_MEMORY_FILE" > "$ORCHESTRA_MEMORY_FILE.tmp"
-  if [ -s "$ORCHESTRA_MEMORY_FILE.tmp" ]; then
-    mv -f "$ORCHESTRA_MEMORY_FILE.tmp" "$ORCHESTRA_MEMORY_FILE"
-  else
-    rm -f "$ORCHESTRA_MEMORY_FILE.tmp"
-  fi
-  return 0
-}
+orchestra_unlock_strategy()  { _orchestra_drop_strategy "$1"; }
+orchestra_unblock_strategy() { _orchestra_drop_strategy "$1"; }
 
 orchestra_status() {
   orchestra_memory_init
@@ -1518,8 +1500,10 @@ _firewall_start() {
   while $CMD -w -t mangle -D PREROUTING -j $IPT_GROUP_PRE 2>/dev/null; do :; done
 
   if [ "$LIMITER" = "connmark_out" ]; then
-    _fw_counter_chain "$CMD" $IPT_GROUP_QOUT $CNT_OUT_MASK $CNT_OUT_STEP "$PKT_LIMIT_OUT"
-    _fw_counter_chain "$CMD" $IPT_GROUP_QIN $CNT_IN_MASK $CNT_IN_STEP "$PKT_LIMIT_IN"
+    # one counter chain serves TCP and UDP, and strategies tune the TCP limits:
+    # follow them, falling back to the globals inside get_strategy_packet_limits
+    _fw_counter_chain "$CMD" $IPT_GROUP_QOUT $CNT_OUT_MASK $CNT_OUT_STEP "$TCP_PKT_OUT"
+    _fw_counter_chain "$CMD" $IPT_GROUP_QIN $CNT_IN_MASK $CNT_IN_STEP "$TCP_PKT_IN"
   fi
 
   if [ "$REAL_CMD" = "iptables" ] && [ "$NAT_FIX" = "1" ]; then
@@ -1707,9 +1691,22 @@ firewall_start() {
   else
     firewall_ip6tables || rc=1
   fi
+  if [ "$IPV6_ENABLED" = "1" ] && ! _firewall_family_ok ip6tables; then
+    # logged on start, not on every watchdog re-apply; the doctor keeps showing it
+    [ -f "$DESIRED_FILE" ] || log_msg "Error: ip6tables rules failed to apply — IPv6 traffic is not intercepted"
+    rc=1
+  fi
   meta_quic_start
   apply_tether_offload
   return $rc
+}
+
+_firewall_family_ok() {
+  local CMD="$1"
+  "$CMD" -w -t mangle -C POSTROUTING -j "$IPT_GROUP_POST" 2>/dev/null || return 1
+  "$CMD" -w -t mangle -C PREROUTING -j "$IPT_GROUP_PRE" 2>/dev/null || return 1
+  "$CMD" -w -t mangle -S "$IPT_GROUP_POST" 2>/dev/null | grep -qE -- 'NFQUEUE|nfqws_qout' || return 1
+  "$CMD" -w -t mangle -S "$IPT_GROUP_PRE" 2>/dev/null | grep -qE -- 'NFQUEUE|nfqws_qin'
 }
 
 firewall_stop() {
@@ -1722,8 +1719,8 @@ firewall_stop() {
 }
 
 firewall_ok() {
-  iptables -w -t mangle -C POSTROUTING -j $IPT_GROUP_POST 2>/dev/null || return 1
-  iptables -w -t mangle -S $IPT_GROUP_POST 2>/dev/null | grep -qE -- 'NFQUEUE|nfqws_qout'
+  _firewall_family_ok iptables || return 1
+  [ "$IPV6_ENABLED" = "0" ] || _firewall_family_ok ip6tables
 }
 
 # Some ROMs freeze the app cgroup the root process started in; move it to the
@@ -1947,34 +1944,67 @@ render_import_merged() {
 M() { if [ "$NFQWS_LANG" = "en" ]; then printf '%s' "$2"; else printf '%s' "$1"; fi; }
 
 # ---------------------------------------------------------------- status in module.prop
-# Managers show description in the module list, so write live state there.
-# cat > (not mv) keeps module.prop owner and mode.
-DESC_BASE="Обход DPI на базе nfqws2."
+# Managers (Magisk, KernelSU, APatch) show description in the module list,
+# so write live state there following the bindhosts standard:
+# status: <state> <emoji> | <key>: <value> <emoji> | ...
+# Flash wear protection: skip disk writes if description line is already identical.
+# cat > (not mv) keeps module.prop inode, owner and mode.
 current_mode() {
   awk '/^NFQWS_EXTRA_ARGS=/ { if (match($0, /MODE_[A-Z]*/)) print tolower(substr($0, RSTART + 5, RLENGTH - 5)); exit }' "$CONFFILE" 2>/dev/null
 }
-update_description() { # running | stopped | paused <ssid>
-  local prop="$MODDIR/module.prop" d strat mode tmp
+update_description() { # running | stopped | paused <reason> | failed <msg> | disabled | ready
+  local prop="$MODDIR/module.prop" d strat strat_icon mode tmp cur err
   if [ ! -f "$prop" ] || [ ! -w "$prop" ]; then return 0; fi
   case "$1" in
     running)
       strat=$(cat "$ACTIVE_FILE" 2>/dev/null); strat="${strat#imp:}"
-      mode=$(current_mode)
-      d="✅ Работает · ${strat:-default}${mode:+ · $mode}" ;;
-    paused)
-      if [ "$2" = "@vpn" ] || [ "$2" = "vpn" ] || [ "$2" = "VPN" ]; then
-        d="⏸ Пауза: активен VPN"
-      elif [ "$2" = "@wl" ]; then
-        d="⏸ Пауза: белые списки оператора"
+      [ -n "$strat" ] || strat="default"
+      if [ "$strat" = "smart" ] || smart_active 2>/dev/null; then
+        strat_icon="🧠"
       else
-        d="⏸ Пауза: домашняя Wi-Fi «$2»"
-      fi ;;
-    *)      d="⛔ Остановлено" ;;
+        strat_icon="🎯"
+      fi
+      mode=$(current_mode)
+      [ -n "$mode" ] || mode="auto"
+      d="status: active ✅ | strategy: $strat $strat_icon | mode: $mode 🌐"
+      ;;
+    paused)
+      case "$2" in
+        @vpn|vpn|VPN) d="status: paused ⏸️ | VPN 🛡️" ;;
+        @wl)          d="status: paused ⏸️ | Whitelist ⚪" ;;
+        "")           d="status: paused ⏸️" ;;
+        *)            d="status: paused ⏸️ | Wi-Fi: $2 📶" ;;
+      esac
+      ;;
+    failed)
+      err="${2:-startup error}"
+      err=$(printf '%s' "$err" | tr '\\' '/' | tr '\n\r' ' ' | sed -e 's/^[Ee]rror: //' -e 's/^[Ee]rror //' -e 's/^[ ]*//' -e 's/[ ]*$//')
+      err=$(printf '%s' "$err" | cut -c 1-50)
+      d="status: failed ❌ | $err"
+      ;;
+    disabled)
+      d="status: disabled ❌"
+      ;;
+    ready)
+      d="status: ready 🚀"
+      ;;
+    stopped)
+      d="status: stopped ⛔"
+      ;;
+    *)
+      d="status: stopped ⛔"
+      ;;
   esac
-  d=$(printf '%s' "$d | $DESC_BASE" | tr -d '\n\r')
+
+  # Flash wear protection: skip disk writes if description line is already identical
+  cur=$(grep "^description=" "$prop" 2>/dev/null | tr -d '\r')
+  d=$(printf '%s' "$d" | tr -d '\r\n')
+  [ "$cur" = "description=$d" ] && return 0
+
   tmp="$STATE_DIR/module.prop.$$"
+  [ -d "$STATE_DIR" ] || tmp="$prop.tmp.$$"
   awk -v d="$d" 'BEGIN { done = 0 } /^description=/ { print "description=" d; done = 1; next } { print }
-    END { if (!done) print "description=" d }' "$prop" > "$tmp" && cat "$tmp" > "$prop"
+    END { if (!done) print "description=" d }' "$prop" > "$tmp" 2>/dev/null && cat "$tmp" > "$prop"
   rm -f "$tmp"
   return 0
 }

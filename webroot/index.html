@@ -78,6 +78,7 @@
   <div class="bar-actions" id="bar-actions"></div>
   <button class="icon-btn state" id="settings-btn" aria-label="Настройки" data-ta="aria-label,title" title="Настройки">
     <svg aria-hidden="true" class="icon"><use href="#i-settings"/></svg>
+    <span class="badge dot" hidden id="settings-badge" aria-hidden="true"></span>
   </button>
 </header>
 
@@ -245,14 +246,14 @@
 
     <div class="pcol">
       <h2 class="subhead" data-t>Импорт конфигов nfqws2-keenetic</h2>
-      <div class="group">
+      <div class="group card filled">
         <div class="t-body-medium muted" data-t>Файлы .txt, .conf, .bat, .ini или вставленный текст. Можно выбрать несколько файлов сразу.</div>
         <input type="file" id="impFile" multiple hidden onchange="importFiles(this.files)">
         <div class="row">
           <button class="btn tonal with-icon state" onclick="$('impFile').click()">
             <svg aria-hidden="true" class="icon s18"><use href="#i-upload"/></svg><span data-t>Выбрать файлы</span>
           </button>
-          <button class="btn text with-icon state" onclick="importPaste()">
+          <button class="btn outlined with-icon state" onclick="importPaste()">
             <svg aria-hidden="true" class="icon s18"><use href="#i-edit"/></svg><span data-t>Вставить текст</span>
           </button>
         </div>
@@ -310,7 +311,7 @@
       <h2 class="subhead" data-t>Домашние сети</h2>
       <div class="list" id="wifi-list"></div>
       <div class="row">
-        <button class="btn text with-icon state" onclick="addHomeManual()">
+        <button class="btn outlined with-icon state" onclick="addHomeManual()">
           <svg aria-hidden="true" class="icon s18"><use href="#i-add"/></svg><span data-t>Добавить сеть вручную</span>
         </button>
       </div>
@@ -341,6 +342,10 @@
       <button type="button" class="chip filter state" data-type="system" aria-pressed="false" onclick="setAppTypeFilter('system')">
         <span class="chip-check"><svg class="icon s18" aria-hidden="true"><use href="#i-check"/></svg></span>
         <span data-t>Системные</span>
+      </button>
+      <button type="button" class="chip filter state" data-type="work" id="pk-chip-work" aria-pressed="false" onclick="setAppTypeFilter('work')" style="display:none">
+        <span class="chip-check"><svg class="icon s18" aria-hidden="true"><use href="#i-check"/></svg></span>
+        <span>💼 <span data-t="Рабочие">Рабочие</span></span>
       </button>
       <button type="button" class="chip filter state" data-type="selected" aria-pressed="false" onclick="setAppTypeFilter('selected')">
         <span class="chip-check"><svg class="icon s18" aria-hidden="true"><use href="#i-check"/></svg></span>
@@ -402,8 +407,8 @@
 
     <div id="test-warn" class="stack"></div>
 
-    <div id="test-recommendation" class="group" hidden></div>
-    <div id="test-quic-status" class="group" hidden></div>
+    <div id="test-recommendation" class="group card outlined" hidden></div>
+    <div id="test-quic-status" class="group card outlined" hidden></div>
 
     <div id="test-sec-web">
       <h2 class="subhead" data-t>Сайты и сервисы</h2>
@@ -607,10 +612,11 @@
   <div class="sheet-desc" data-t>Выберите архив .tar через проводник или сохранённую копию из списка ниже. Текущие настройки, списки и стратегии будут заменены.</div>
   <input type="file" id="backupFile" accept=".tar,application/x-tar" hidden onchange="restoreBackupFromFile(this.files[0])">
   <div class="row" style="margin-bottom:8px">
-    <button class="btn tonal with-icon state" onclick="$('backupFile').click()">
+    <button class="btn elevated with-icon state" onclick="$('backupFile').click()">
       <svg aria-hidden="true" class="icon s18"><use href="#i-upload"/></svg><span data-t>Выбрать файл архива</span>
     </button>
   </div>
+  <hr class="divider">
   <div class="list sheet-scroll" id="backup-list"></div>
   <div class="sheet-actions">
     <button class="btn text state" onclick="closeSheet()"><span data-t>Закрыть</span></button>
@@ -641,6 +647,8 @@
     </div>
     <div class="tp-roles" id="tp-roles"></div>
   </div>
+
+  <hr class="divider inset">
 
   <div class="segmented" id="theme-mode" role="group" aria-label="Режим цвета" data-ta="aria-label"></div>
 
