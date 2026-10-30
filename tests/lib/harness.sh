@@ -77,9 +77,10 @@ sandbox_init() {
   CONFDIR="$SANDBOX/conf"
   MOCKBIN="$SANDBOX/bin"
   MOCK_DIR="$SANDBOX/mock"
+  NFQWS_BACKUP_DIR="$SANDBOX/download"
 
   mkdir -p "$MODDIR/bin" "$MODDIR/system/bin" "$MODDIR/lib" "$MODDIR/strategies" "$MODDIR/strategy-catalogs" "$MODDIR/defaults/lists" \
-           "$MODDIR/lists" "$MODDIR/blobs" "$MODDIR/lua" "$CONFDIR" "$MOCKBIN" "$MOCK_DIR"
+           "$MODDIR/lists" "$MODDIR/blobs" "$MODDIR/lua" "$CONFDIR" "$MOCKBIN" "$MOCK_DIR" "$NFQWS_BACKUP_DIR"
 
   cp "$REPO_DIR/bin/nfqws2-ctl"        "$MODDIR/bin/nfqws2-ctl"
   cp "$REPO_DIR/system/bin/"*          "$MODDIR/system/bin/" 2>/dev/null || true
@@ -147,7 +148,7 @@ EOF_NODE
   MOCK_IPT_FEATURES="connbytes multiport owner NFQUEUE"
   unset MOCK_NFQWS_FAIL MOCK_ABI
   export MOCK_IPT_STORE MOCK_NFQWS_ARGS_FILE MOCK_PM_FILE MOCK_IPT_FEATURES MOCK_DIR
-  export MODDIR CONFDIR
+  export MODDIR CONFDIR NFQWS_BACKUP_DIR
   PATH="$MOCKBIN:$PATH"; export PATH
 }
 

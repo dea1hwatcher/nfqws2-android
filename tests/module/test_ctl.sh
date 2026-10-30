@@ -389,8 +389,6 @@ assert_rc 0 "$ctl_rc" "export-logs works"
 
 # Log exports are regenerable snapshots: the newest 10 are kept, older ones do
 # not pile up. User backups are a different story and are never pruned.
-export NFQWS_BACKUP_DIR="$SANDBOX/download"
-mkdir -p "$NFQWS_BACKUP_DIR"
 for i in 1 2 3 4 5 6 7 8 9 10 11 12; do
   : > "$NFQWS_BACKUP_DIR/nfqws2-logs-2026010${i}-000000.tar"
   sleep 0.01
@@ -400,7 +398,7 @@ ctl export-logs
 assert_rc 0 "$ctl_rc" "export-logs works with an existing archive set"
 assert_eq "10" "$(ls "$NFQWS_BACKUP_DIR"/nfqws2-logs-*.tar 2>/dev/null | wc -l | tr -d ' ')" "only the newest 10 log archives are kept"
 assert_file "$NFQWS_BACKUP_DIR/nfqws2-backup-20260101-000000.tar" "user backups are never pruned"
-unset NFQWS_BACKUP_DIR
+rm -f "$NFQWS_BACKUP_DIR"/nfqws2-logs-*.tar "$NFQWS_BACKUP_DIR"/nfqws2-backup-*.tar
 
 # ── doctor / status ───────────────────────────────────────────────────────────
 section "doctor"
