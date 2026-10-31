@@ -121,7 +121,8 @@ git -C "$SRC_CACHE/zapret2" fetch -q --depth 1 "$ZAPRET2_REPO" "$ZAPRET2_SHA"
 git -C "$SRC_CACHE/zapret2" checkout -q FETCH_HEAD
 
 echo "==> Applying nfqws2-keenetic 001-tls-reasm-fastpath.patch..."
-patch --batch --fuzz=0 -p1 -d "$SRC_CACHE/zapret2" < "$PATCHES_DIR/001-tls-reasm-fastpath.patch"
+git -C "$SRC_CACHE/zapret2" apply "$PATCHES_DIR/001-tls-reasm-fastpath.patch" || \
+  patch --batch --fuzz=0 -p1 -d "$SRC_CACHE/zapret2" < "$PATCHES_DIR/001-tls-reasm-fastpath.patch"
 
 # ── 4. Architecture build function ───────────────────────────────────────────
 READELF="$TOOLCHAIN/bin/llvm-readelf"
