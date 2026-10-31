@@ -5,29 +5,34 @@ const APP_MODES = [
   ['include', 'Только выбранные', 'Трафик остальных приложений идёт напрямую'],
   ['exclude', 'Все, кроме выбранных', 'Выбранные приложения идут напрямую']
 ];
+let pkgsCheckedAt = 0;
 async function appsInit(){
-  renderAppModes();
   if(pkgs.length){
     drawPk();
-    // Фоновая проверка: если на устройстве изменились пакеты, обновляем без спиннера
-    ctlx(['list-apps']).then(r => {
-      if(!r.code && r.out){
-        const raw = r.out.trim();
-        if(raw.startsWith('[')){
-          try {
-            const next = JSON.parse(raw);
-            if(JSON.stringify(next) !== JSON.stringify(pkgs)){
-              pkgs = next;
-              drawPk(false);
-            }
-          } catch(_){}
+    // Background check for package changes. The full list carries base64 icons,
+    // so opening the page repeatedly must not re-download it every time.
+    if(Date.now() - pkgsCheckedAt > 60000){
+      pkgsCheckedAt = Date.now();
+      ctlx(['list-apps']).then(r => {
+        if(!r.code && r.out){
+          const raw = r.out.trim();
+          if(raw.startsWith('[')){
+            try {
+              const next = JSON.parse(raw);
+              if(next.length !== pkgs.length || JSON.stringify(next) !== JSON.stringify(pkgs)){
+                pkgs = next;
+                drawPk(false);
+              }
+            } catch(_){}
+          }
         }
-      }
-    });
+      });
+    }
   } else {
     loadPk();
   }
   await stat(true);
+  // one render, with the counts stat() has just refreshed
   renderAppModes();
 }
 function renderAppModes(){
