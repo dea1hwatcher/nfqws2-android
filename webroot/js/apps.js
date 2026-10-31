@@ -92,13 +92,18 @@ function isAppSystem(item){
 
 function isAppWork(item){
   if(typeof item !== 'object' || !item) return false;
-  return !!item.isWork || (item.userId != null && Number(item.userId) > 0);
+  // the generator knows which profile is a work one; a guest or second user has
+  // an id above zero too and must not be labelled as a work profile
+  if(item.isWork != null) return item.isWork === true || item.isWork === 1 || item.isWork === 'true';
+  return item.userId != null && Number(item.userId) > 0;
 }
 
 function appKey(item){
   if(typeof item === 'string') return item;
   const uid = (item && item.userId != null) ? Number(item.userId) : 0;
-  return uid > 0 ? (uid + ':' + item.pkg) : (item ? item.pkg : '');
+  // always name the profile: a bare package in apps.list means «every profile»
+  // to resolve_app_uids(), so selecting one copy would enable all of them
+  return item ? (uid + ':' + item.pkg) : '';
 }
 
 function isAppSelected(s, item){
@@ -143,6 +148,15 @@ async function drawPk(animate){
   const hasWork = pkgs.some(isAppWork);
   const workChip = $('pk-chip-work');
   if(workChip) workChip.style.display = hasWork ? '' : 'none';
+  if(!hasWork && appTypeFilter === 'work'){
+    appTypeFilter = 'all';
+    const wrap = $('pk-filter-chips');
+    if(wrap) wrap.querySelectorAll('.chip').forEach(c => {
+      const on = c.getAttribute('data-type') === 'all';
+      c.classList.toggle('selected', on);
+      c.setAttribute('aria-pressed', on ? 'true' : 'false');
+    });
+  }
 
   const shown = pkgs.filter(item => {
     const p = typeof item === 'string' ? item : (item.pkg || '');
@@ -169,7 +183,11 @@ async function drawPk(animate){
     const ub = (typeof b === 'object' && b && b.userId != null) ? Number(b.userId) : 0;
     return ua - ub;
   });
-  $('pk-count').textContent = t('Найдено {0} из {1}, выбрано {2}', shown.length, pkgs.length, s.size) +
+  const selectedPkgs = new Set([...s].map(k => {
+    const i = k.indexOf(':');
+    return i > 0 ? k.slice(i + 1) : k;
+  })).size;
+  $('pk-count').textContent = t('Найдено {0} из {1}, выбрано {2}', shown.length, pkgs.length, selectedPkgs) +
     (shown.length > 120 ? '. ' + t('Показаны первые 120, уточните поиск') : '');
   const slice = shown.slice(0, 120);
   setHTML('pk', slice.map((item, idx) => {

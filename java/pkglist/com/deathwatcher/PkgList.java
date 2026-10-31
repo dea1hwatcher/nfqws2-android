@@ -214,9 +214,12 @@ public class PkgList {
                 File parent = out.getParentFile();
                 if (parent != null && !parent.exists()) parent.mkdirs();
                 FileOutputStream fos = new FileOutputStream(out);
-                fos.write(json.getBytes("UTF-8"));
-                fos.flush();
-                fos.close();
+                try {
+                    fos.write(json.getBytes("UTF-8"));
+                    fos.flush();
+                } finally {
+                    fos.close();
+                }
             } catch (Throwable t) {
                 System.out.print(json);
                 return;
@@ -304,28 +307,30 @@ public class PkgList {
 
                         for (Object u : list) {
                             if (u == null) continue;
-                            int id = fId.getInt(u);
-                            String name = (fName != null) ? (String) fName.get(u) : "";
-                            int flags = (fFlags != null) ? fFlags.getInt(u) : 0;
-                            boolean isWork = false;
-                            if (isManagedProfile != null) {
-                                try {
-                                    Object res = isManagedProfile.invoke(u);
-                                    if (res instanceof Boolean) isWork = (Boolean) res;
-                                } catch (Throwable ignored) {}
-                            }
-                            if (!isWork && (flags & 0x00000020) != 0) { // FLAG_MANAGED_PROFILE = 0x20
-                                isWork = true;
-                            }
-                            if (id == 999 || (flags & 0x10000000) != 0) { // Dual apps / clone
-                                isWork = true;
-                            }
-                            if (name == null || name.trim().isEmpty()) {
-                                if (id == 0) name = "Личный";
-                                else if (isWork) name = "Рабочий (" + id + ")";
-                                else name = "Пользователь " + id;
-                            }
-                            result.add(new UserRecord(id, name, isWork));
+                            // one malformed user must not hide all the others
+                            try {
+                                int id = fId.getInt(u);
+                                String name = (fName != null) ? (String) fName.get(u) : "";
+                                int flags = (fFlags != null) ? fFlags.getInt(u) : 0;
+                                // authoritative signal only: isManagedProfile() or FLAG_MANAGED_PROFILE.
+                                // A guest or second user also has id > 0 but is not a work profile.
+                                boolean isWork = false;
+                                if (isManagedProfile != null) {
+                                    try {
+                                        Object res = isManagedProfile.invoke(u);
+                                        if (res instanceof Boolean) isWork = (Boolean) res;
+                                    } catch (Throwable ignored) {}
+                                }
+                                if (!isWork && (flags & 0x00000020) != 0) { // FLAG_MANAGED_PROFILE = 0x20
+                                    isWork = true;
+                                }
+                                if (name == null || name.trim().isEmpty()) {
+                                    if (id == 0) name = "Личный";
+                                    else if (isWork) name = "Рабочий (" + id + ")";
+                                    else name = "Пользователь " + id;
+                                }
+                                result.add(new UserRecord(id, name, isWork));
+                            } catch (Throwable ignored) {}
                         }
                     }
                 }
@@ -433,21 +438,28 @@ public class PkgList {
             Field argb8888Field = configCls.getField("ARGB_8888");
             Object argb8888 = argb8888Field.get(null);
             Method createBitmap = bitmapCls.getMethod("createBitmap", int.class, int.class, configCls);
-            Object bitmap = createBitmap.invoke(null, size, size, argb8888);
-            Constructor<?> canvasCtor = canvasCls.getConstructor(bitmapCls);
-            Object canvas = canvasCtor.newInstance(bitmap);
-            Method setBounds = drawableCls.getMethod("setBounds", int.class, int.class, int.class, int.class);
-            setBounds.invoke(drawable, 0, 0, size, size);
-            Method draw = drawableCls.getMethod("draw", canvasCls);
-            draw.invoke(drawable, canvas);
-            ByteArrayOutputStream baos = new ByteArrayOutputStream();
-            Field pngField = compressFormatCls.getField("PNG");
-            Object pngFormat = pngField.get(null);
-            Method compress = bitmapCls.getMethod("compress", compressFormatCls, int.class, OutputStream.class);
-            compress.invoke(bitmap, pngFormat, 100, baos);
             Method recycle = bitmapCls.getMethod("recycle");
-            recycle.invoke(bitmap);
-            byte[] bytes = baos.toByteArray();
+            Object bitmap = createBitmap.invoke(null, size, size, argb8888);
+            ByteArrayOutputStream baos = new ByteArrayOutputStream();
+            byte[] bytes;
+            try {
+                Constructor<?> canvasCtor = canvasCls.getConstructor(bitmapCls);
+                Object canvas = canvasCtor.newInstance(bitmap);
+                Method setBounds = drawableCls.getMethod("setBounds", int.class, int.class, int.class, int.class);
+                setBounds.invoke(drawable, 0, 0, size, size);
+                Method draw = drawableCls.getMethod("draw", canvasCls);
+                draw.invoke(drawable, canvas);
+                Field pngField = compressFormatCls.getField("PNG");
+                Object pngFormat = pngField.get(null);
+                Method compress = bitmapCls.getMethod("compress", compressFormatCls, int.class, OutputStream.class);
+                compress.invoke(bitmap, pngFormat, 100, baos);
+                bytes = baos.toByteArray();
+            } finally {
+                // the bitmap is native memory: release it even when drawing or
+                // compression throws, and never leave the stream to the GC
+                try { recycle.invoke(bitmap); } catch (Throwable ignored) {}
+                try { baos.close(); } catch (Throwable ignored) {}
+            }
             Method encodeToString = base64Cls.getMethod("encodeToString", byte[].class, int.class);
             Field noWrapField = base64Cls.getField("NO_WRAP");
             int noWrap = noWrapField.getInt(null);

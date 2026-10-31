@@ -593,6 +593,9 @@ cmd_list_apps() {
   local refresh=0
   case "${1:-}" in refresh|--refresh|-f) refresh=1 ;; esac
   [ -f "$cache" ] || refresh=1
+  # schema version: a cache written before multi-user support has no profile
+  # fields, so it must be rebuilt once after an update
+  [ "$(cat "$cache.version" 2>/dev/null)" = "2" ] || refresh=1
 
   # Автоматическая проверка актуальности кэша при установке/удалении приложений
   if [ "$refresh" = "0" ] && [ -s "$cache" ]; then
@@ -621,7 +624,7 @@ cmd_list_apps() {
     CLASSPATH="$target" app_process /system/bin com.deathwatcher.PkgList --out "$tmp" --apps-list "$CONFDIR/apps.list" >/dev/null 2>&1
     # an empty "[]" from a failed reflection run must not replace a valid cache
     if [ -s "$tmp" ] && grep -q '^\[' "$tmp" 2>/dev/null && grep -q '"pkg"' "$tmp" 2>/dev/null; then
-      mv -f "$tmp" "$cache"
+      mv -f "$tmp" "$cache" && printf '2\n' > "$cache.version" 2>/dev/null
       cat "$cache"
       return 0
     fi
@@ -630,7 +633,11 @@ cmd_list_apps() {
     local out
     out=$(CLASSPATH="$target" app_process /system/bin com.deathwatcher.PkgList --apps-list "$CONFDIR/apps.list" 2>/dev/null)
     if [ -n "$out" ] && [ "${out#\[}" != "$out" ]; then
-      printf '%s\n' "$out" > "$tmp" 2>/dev/null && mv -f "$tmp" "$cache" || rm -f "$tmp"
+      if printf '%s\n' "$out" > "$tmp" 2>/dev/null && mv -f "$tmp" "$cache"; then
+        printf '2\n' > "$cache.version" 2>/dev/null
+      else
+        rm -f "$tmp"
+      fi
       printf '%s\n' "$out"
       return 0
     fi

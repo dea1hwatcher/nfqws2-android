@@ -140,6 +140,10 @@ truthy(sandbox.isAppWork({ pkg: 'com.slack', userId: 10 }),
   'item with userId > 0 is work profile');
 truthy(!sandbox.isAppWork({ pkg: 'com.slack', userId: 0, isWork: false }),
   'item with userId: 0 is not work profile');
+truthy(!sandbox.isAppWork({ pkg: 'com.slack', userId: 11, isWork: false }),
+  'a guest or second user is not a work profile');
+truthy(!sandbox.isAppWork({ pkg: 'com.slack', userId: 12, isWork: 'false' }),
+  'the generator isWork flag wins over the bare user id');
 truthy(!sandbox.isAppWork({ pkg: 'com.slack' }),
   'item without userId is not work profile');
 truthy(!sandbox.isAppWork('com.slack'),
@@ -147,8 +151,11 @@ truthy(!sandbox.isAppWork('com.slack'),
 
 eq('10:org.telegram.messenger', sandbox.appKey({ pkg: 'org.telegram.messenger', userId: 10 }),
   'appKey generates prefixed key for secondary profile');
-eq('org.telegram.messenger', sandbox.appKey({ pkg: 'org.telegram.messenger', userId: 0 }),
-  'appKey generates unprefixed key for user 0');
+// a bare package in apps.list means «every profile» to resolve_app_uids(), so
+// the personal copy must be named explicitly too, otherwise selecting it also
+// enables the work copy
+eq('0:org.telegram.messenger', sandbox.appKey({ pkg: 'org.telegram.messenger', userId: 0 }),
+  'appKey names the personal profile explicitly');
 eq('org.telegram.messenger', sandbox.appKey('org.telegram.messenger'),
   'appKey preserves plain string');
 
