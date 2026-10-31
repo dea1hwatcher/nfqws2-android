@@ -619,7 +619,8 @@ cmd_list_apps() {
     local tmp="$cache.tmp.$$"
     rm -f "$tmp" 2>/dev/null
     CLASSPATH="$target" app_process /system/bin com.deathwatcher.PkgList --out "$tmp" --apps-list "$CONFDIR/apps.list" >/dev/null 2>&1
-    if [ -s "$tmp" ] && grep -q '^\[' "$tmp" 2>/dev/null; then
+    # an empty "[]" from a failed reflection run must not replace a valid cache
+    if [ -s "$tmp" ] && grep -q '^\[' "$tmp" 2>/dev/null && grep -q '"pkg"' "$tmp" 2>/dev/null; then
       mv -f "$tmp" "$cache"
       cat "$cache"
       return 0
@@ -629,7 +630,7 @@ cmd_list_apps() {
     local out
     out=$(CLASSPATH="$target" app_process /system/bin com.deathwatcher.PkgList --apps-list "$CONFDIR/apps.list" 2>/dev/null)
     if [ -n "$out" ] && [ "${out#\[}" != "$out" ]; then
-      printf '%s\n' "$out" > "$cache" 2>/dev/null
+      printf '%s\n' "$out" > "$tmp" 2>/dev/null && mv -f "$tmp" "$cache" || rm -f "$tmp"
       printf '%s\n' "$out"
       return 0
     fi
