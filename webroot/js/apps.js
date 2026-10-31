@@ -229,7 +229,7 @@ async function drawPk(animate){
       '</span>' +
     '</label>';
   }).join('') ||
-    '<div class="list-item"><span class="li-text"><span class="li-secondary">' + esc(t('Ничего не найдено')) + '</span></span></div>', !!animate);
+    '<div class="list-item"><span class="li-text"><span class="li-secondary">' + esc(t('Ничего не найдено')) + '</span></span></div>', !!animate, false);
   $('pk').querySelectorAll('input[data-key]').forEach(cb => {
     cb.onchange = () => togglePkgKey(cb.getAttribute('data-key'), cb.getAttribute('data-pkg'), cb.checked);
   });

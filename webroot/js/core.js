@@ -464,10 +464,12 @@ async function shareFile(how, path){
 }
 
 /* Repaint only when the content really differs */
-function setHTML(el, html, animate){
+function setHTML(el, html, animate, keep){
   if(typeof el === 'string') el = $(el);
-  if(!el || el._html === html) return false;
-  el._html = html;
+  if(!el || (keep !== false && el._html === html)) return false;
+  // keep=false for markup holding base64 images: the DOM has parsed them
+  // already, and a copy would sit next to the same strings in the model
+  el._html = keep === false ? null : html;
   el.innerHTML = html;
   if(animate !== false){ el.classList.remove('appear'); void el.offsetWidth; el.classList.add('appear'); }
   return true;
