@@ -1371,7 +1371,8 @@ cmd_probe_cancel() {
 
 cmd_check_domain() {
   local raw="$1" d
-  d=$(printf '%s' "$raw" | tr 'A-Z' 'a-z' | sed 's#^[a-z]*://##; s#/.*##; s/:[0-9]*$//; s/^www\.//')
+  d=$(domain_norm "$raw")
+  d="${d#www.}"
   case "$d" in
     ''|*[!a-z0-9.-]*)
       echo "INVALID"

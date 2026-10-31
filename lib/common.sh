@@ -1404,8 +1404,8 @@ _fw_iface_rules() {
   $CMD -w -t mangle -A $IPT_GROUP_PRE $IN -m mark --mark $MARK_PROCESSED -j RETURN
 
   # outgoing (POSTROUTING)
-  [ -n "$UP" ] && _fw_add_rule "$CMD" $IPT_GROUP_POST "$OUT" udp dports "$UP" "" "$TARGET_OUT"
-  [ -n "$TP" ] && _fw_add_rule "$CMD" $IPT_GROUP_POST "$OUT" tcp dports "$TP" "" "$TARGET_OUT"
+  [ -n "$UP" ] && _fw_add_rule "$CMD" $IPT_GROUP_POST "$OUT" udp dports "$UP" "" "$TARGET_OUT_UDP"
+  [ -n "$TP" ] && _fw_add_rule "$CMD" $IPT_GROUP_POST "$OUT" tcp dports "$TP" "" "$TARGET_OUT_TCP"
 
   # FIN/RST go to nfqws for clean conntrack
   if [ -n "$TP" ]; then

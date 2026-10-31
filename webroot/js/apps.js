@@ -253,8 +253,10 @@ async function togglePkgKey(key, p, want){
     if(key === p) s.delete('0:' + p);
   }
   const r = await withBusy(['save-list-b64', 'apps', b64([...s].join('\n'))], 30000);
-  if(r.code) toast(errText(r, 'Не удалось сохранить'), {label: t('Повторить'), fn: () => togglePkgKey(key, p, want)});
-  else toast((want ? t('Добавлено: {0}', key) : t('Убрано: {0}', key)));
+  if(r.code){
+    appsCache = null;
+    toast(errText(r, 'Не удалось сохранить'), {label: t('Повторить'), fn: () => togglePkgKey(key, p, want)});
+  } else toast((want ? t('Добавлено: {0}', key) : t('Убрано: {0}', key)));
   await drawPk(false);
   await stat(true);
   renderAppModes();

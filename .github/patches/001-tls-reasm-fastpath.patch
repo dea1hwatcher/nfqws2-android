@@ -158,14 +158,10 @@ index 10deecde295173b38cbe2885b1068389be368a8d..4916f7b16ecde5955d5c89f4e063be2a
  					if (rawpacket_queue(&ps.ctrack->delayed, &ps.dst, fwmark, desync_fwmark, ifin, ifout, dis->data_pkt, dis->len_pkt, dis->len_payload, &ps.ctrack->pos, false))
  					{
  						DLOG("DELAY desync until reasm is complete (#%u)\n", rawpacket_queue_count(&ps.ctrack->delayed));
-@@ -1628,13 +1700,37 @@ static uint8_t dpi_desync_tcp_packet_play(
+@@ -1628,11 +1700,33 @@ static uint8_t dpi_desync_tcp_packet_play(
  						// likely exceeded packet limit or unlikely out of memory
  						DLOG_ERR("rawpacket_queue failed !\n");
- 						reasm_client_cancel(ps.ctrack);
-+						rdata_payload = dis->data_payload;
-+						rlen_payload = dis->len_payload;
- 						ps.l7payload = L7P_UNKNOWN; // middle packet may be not L7P_TLS_CLIENT_HELLO
- 						goto rediscover;
+ 						goto reasm_cancel_rediscover;
  					}
  					if (ReasmIsFull(&ps.ctrack->reasm_client))
  					{
