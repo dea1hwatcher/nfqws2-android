@@ -48,6 +48,9 @@ SMART_KILL_FILE="$STATE_DIR/smart_kill"        # их пишет оркестр�
 MARK_EXCLUDE="0x20000000/0x20000000"
 MARK_INCLUDE="0x10000000/0x10000000"
 MARK_PROCESSED="0x40000000/0x40000000"
+# NAT fix: the packet mark is cleared in mangle before nat runs, so the fact
+# "this connection was desynced" has to be saved to the connmark (bit 31)
+MARK_RENAT="0x80000000/0x80000000"
 
 IPT_GROUP_POST="nfqws_post"
 IPT_GROUP_PRE="nfqws_pre"
@@ -1377,13 +1380,16 @@ _firewall_start_restore() {
       ipt_exec "$CMD" -t mangle -I POSTROUTING 1 -j "$IPT_GROUP_POST"
     ipt_exec "$CMD" -t mangle -C PREROUTING -j "$IPT_GROUP_PRE" 2>/dev/null || \
       ipt_exec "$CMD" -t mangle -I PREROUTING 1 -j "$IPT_GROUP_PRE"
-    ipt_exec "$CMD" -t mangle -C POSTROUTING -m mark --mark "$MARK_PROCESSED" -j MARK --set-xmark 0x0/0x40000000 2>/dev/null || \
-      ipt_exec "$CMD" -t mangle -I POSTROUTING 2 -m mark --mark "$MARK_PROCESSED" -j MARK --set-xmark 0x0/0x40000000 2>/dev/null
-    if [ "$CMD" = "iptables" ]; then
-      if [ "$NAT_FIX" = "1" ]; then
-        ipt_exec "$CMD" -t nat -C POSTROUTING -j "$IPT_GROUP_NAT" 2>/dev/null || \
-          ipt_exec "$CMD" -t nat -I POSTROUTING 1 -j "$IPT_GROUP_NAT"
-      fi
+    if [ "$CMD" = "iptables" ] && [ "$NAT_FIX" = "1" ]; then
+      ipt_exec "$CMD" -t mangle -C POSTROUTING -m mark --mark "$MARK_PROCESSED" -j CONNMARK --set-xmark "$MARK_RENAT" 2>/dev/null || \
+        ipt_exec "$CMD" -t mangle -I POSTROUTING 2 -m mark --mark "$MARK_PROCESSED" -j CONNMARK --set-xmark "$MARK_RENAT" 2>/dev/null
+      ipt_exec "$CMD" -t mangle -C POSTROUTING -m mark --mark "$MARK_PROCESSED" -j MARK --set-xmark 0x0/0x40000000 2>/dev/null || \
+        ipt_exec "$CMD" -t mangle -I POSTROUTING 3 -m mark --mark "$MARK_PROCESSED" -j MARK --set-xmark 0x0/0x40000000 2>/dev/null
+      ipt_exec "$CMD" -t nat -C POSTROUTING -j "$IPT_GROUP_NAT" 2>/dev/null || \
+        ipt_exec "$CMD" -t nat -I POSTROUTING 1 -j "$IPT_GROUP_NAT"
+    else
+      ipt_exec "$CMD" -t mangle -C POSTROUTING -m mark --mark "$MARK_PROCESSED" -j MARK --set-xmark 0x0/0x40000000 2>/dev/null || \
+        ipt_exec "$CMD" -t mangle -I POSTROUTING 2 -m mark --mark "$MARK_PROCESSED" -j MARK --set-xmark 0x0/0x40000000 2>/dev/null
     fi
   fi
   return "$rc"
@@ -1416,9 +1422,9 @@ _fw_iface_rules() {
     fi
   fi
 
-  # NAT fix for UDP
+  # NAT fix for UDP (matches the connmark saved in mangle POSTROUTING)
   if [ "$REAL_CMD" = "iptables" ] && [ "$NAT_FIX" = "1" ]; then
-    $CMD -w -t nat -A $IPT_GROUP_NAT $OUT -p udp -m mark --mark $MARK_PROCESSED -j MASQUERADE
+    $CMD -w -t nat -A $IPT_GROUP_NAT $OUT -p udp -m connmark --mark $MARK_RENAT -j MASQUERADE
   fi
 
   # incoming (PREROUTING)
@@ -1535,9 +1541,14 @@ _firewall_start() {
 
   $CMD -w -t mangle -I POSTROUTING 1 -j $IPT_GROUP_POST
   $CMD -w -t mangle -I PREROUTING 1 -j $IPT_GROUP_PRE
-  $CMD -w -t mangle -I POSTROUTING 2 -m mark --mark $MARK_PROCESSED -j MARK --set-xmark 0x0/0x40000000 2>/dev/null || true
   if [ "$REAL_CMD" = "iptables" ] && [ "$NAT_FIX" = "1" ]; then
+    # save the desync mark for the whole connection before the packet mark is
+    # cleared: nat POSTROUTING runs after mangle, so MASQUERADE needs connmark
+    $CMD -w -t mangle -I POSTROUTING 2 -m mark --mark $MARK_PROCESSED -j CONNMARK --set-xmark $MARK_RENAT 2>/dev/null || true
+    $CMD -w -t mangle -I POSTROUTING 3 -m mark --mark $MARK_PROCESSED -j MARK --set-xmark 0x0/0x40000000 2>/dev/null || true
     $CMD -w -t nat -I POSTROUTING 1 -j $IPT_GROUP_NAT
+  else
+    $CMD -w -t mangle -I POSTROUTING 2 -m mark --mark $MARK_PROCESSED -j MARK --set-xmark 0x0/0x40000000 2>/dev/null || true
   fi
 
   if [ "$ENABLE_HOTSPOT" = "1" ]; then
@@ -1597,6 +1608,7 @@ _firewall_stop_batch() { # <iptables|ip6tables>
 
 _firewall_stop() {
   local CMD="$1"
+  while $CMD -w -t mangle -D POSTROUTING -m mark --mark $MARK_PROCESSED -j CONNMARK --set-xmark $MARK_RENAT 2>/dev/null; do :; done
   while $CMD -w -t mangle -D POSTROUTING -m mark --mark $MARK_PROCESSED -j MARK --set-xmark 0x0/0x40000000 2>/dev/null; do :; done
   _firewall_stop_batch "$CMD" && return 0
   while $CMD -w -t mangle -D POSTROUTING -j $IPT_GROUP_POST 2>/dev/null; do :; done

@@ -51,7 +51,7 @@ assert_contains "$(ipt_rules nfqws_pre)" "--tcp-flags syn,ack syn,ack" "SYN/ACK 
 assert_contains "$(ipt_rules nfqws_post)" "-m connbytes" "connbytes is used when the kernel has it"
 assert_not_contains "$(ipt_rules nfqws_post)" "-j nfqws_qout" "no counter chain is used in connbytes mode"
 assert_contains "$(ipt_rules nfqws_post)" "-o lo -j RETURN" "loopback is excluded"
-assert_contains "$(ipt_rules nfqws_nat nat)" "-j MASQUERADE" "the NAT fix is installed"
+assert_contains "$(ipt_rules nfqws_nat nat)" "-m connmark --mark 0x80000000/0x80000000 -j MASQUERADE" "the NAT fix matches the saved connmark, not the packet mark that mangle clears first"
 
 post=$(ipt_count nfqws_post)
 assert_ge "$post" 10 "the postrouting chain has a substantial rule set ($post rules)"
@@ -364,6 +364,7 @@ svc start >/dev/null 2>&1
 assert_file "$PIDFILE" "service is running for firewall helpers check"
 post_rules=$(ipt_rules POSTROUTING)
 assert_contains "$post_rules" "MARK --set-xmark 0x0/0x40000000" "POSTROUTING contains desync mark cleaner"
+assert_contains "$post_rules" "-j CONNMARK --set-xmark 0x80000000/0x80000000" "POSTROUTING saves the desync mark for nat before clearing it"
 
 post_chain=$(ipt_rules nfqws_post)
 assert_contains "$post_chain" "-m mark --mark 0x40000000/0x40000000 -j RETURN" "nfqws_post avoids requeuing desync packets"
