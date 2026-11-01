@@ -8,10 +8,14 @@ const PROBE_REASON = {
   tls_alert: 'TLS Alert (SNI блок)',
   tls_spoof: 'Подмена ответа (Spoof)',
   tls_mitm: 'Подмена сертификата (MITM)',
+  ru_ca: 'Сертификат УЦ Минцифры (RU CA)',
   drop: 'Тихий сброс (Drop)',
   timeout: 'Нет ответа (Timeout)',
   isp_redir: 'Заглушка провайдера (RKN)',
   ws_blocked: 'WebSocket Gateway заблокирован (ТСПУ)',
+  not_http: 'Некорректный ответ HTTP',
+  tls_block: 'Блокировка протокола TLS',
+  peer_incompat: 'Несовместимость параметров TLS',
   refused: 'Соединение отклонено',
   tls: 'Ошибка TLS',
   quic_unsupported: 'QUIC не поддерживается',
@@ -174,6 +178,8 @@ function updateTestDesc(){
   if(!d) return;
   if(currentTestTab === 'web'){
     d.textContent = t('Каждый адрес из probe_hosts.list проверяется по 4 протоколам (HTTP, TLS 1.2, TLS 1.3, QUIC). Анализируются активные сбросы (TLS RST), инжекции TLS Alert, тихий дроп и блокировки UDP/QUIC.');
+  } else if(currentTestTab === 'ru'){
+    d.textContent = t('Проверка доступности популярных российских сервисов (банки, Госуслуги, VK, маркетплейсы) для выявления подмены TLS и региональных ограничений.');
   } else if(currentTestTab === 'tcp16'){
     d.textContent = t('Тестирование соединений к зарубежным CDN и хостингам (Cloudflare, Hetzner, DO, OVH) с нарастающим объёмом данных до 32 КБ для выявления фильтра TCP 16-20KB.');
   } else if(currentTestTab === 'dns'){
@@ -190,7 +196,7 @@ function selectTestTab(tab){
   document.querySelectorAll('#test-tabs .seg').forEach(btn => {
     btn.classList.toggle('on', btn.dataset.tab === tab);
   });
-  const showWeb = tab === 'all' || tab === 'web';
+  const showWeb = tab === 'all' || tab === 'web' || tab === 'ru';
   const showTcp = tab === 'all' || tab === 'tcp16';
   const showDns = tab === 'all' || tab === 'dns';
   const dom = tab === 'domain';
@@ -545,7 +551,8 @@ async function runTestWebView(targetDomain){
   if(targetDomain){
     hosts = [targetDomain];
   } else {
-    const r = await ctlx(['get-list', 'probe_hosts']);
+    const listName = currentTestTab === 'ru' ? 'probe_ru' : 'probe_hosts';
+    const r = await ctlx(['get-list', listName]);
     hosts = (r.code ? '' : r.out).split('\n').map(s => s.trim()).filter(s => s && s[0] !== '#');
   }
   setHTML('tr', hosts.map((h, i) => testRow(i, h)).join(''), false);

@@ -1,0 +1,130 @@
+# Пресет «русские домены»: сервисы, которые ведут себя иначе при зарубежном
+# адресе - гео-ограничения, блокировки по IP, лимиты.
+#
+# Список собран по двум топам русскоязычных сайтов по аудитории (октябрь 2026) и
+# намеренно не пересекается с domains.txt и domains-youtube.txt: тест на полноту
+# пресетов этого требует, а хост, попавший в два пресета, измерялся бы дважды под
+# разными именами. Зарубежные сервисы из тех же топов (Google, YouTube, Wikipedia,
+# TikTok, WhatsApp, Telegram, Twitch, Reddit, Booking) сюда не входят - они не
+# русские; взрослые сайты исключены, потому что дерево публичное.
+#
+# Остались только хосты, чей адрес отвечает из России: проверено 2026-10-15 по
+# регистрации адреса (ip-api) и по пути (mtr с этой линии). Хосты за Cloudflare
+# убраны по тому же признаку - у них видна страна края, и ни один замер отсюда не
+# говорит, где их origin. У двух хостов, `www.nalog.gov.ru` и `wink.ru`, ip-api
+# назвал германский адрес NGENIX, но трейс дошёл до российского узла (15-31 мс),
+# поэтому они остались.
+
+# Поиск, порталы, почта
+ya.ru
+mail.ru
+rambler.ru
+dzen.ru
+market.yandex.ru
+travel.yandex.ru
+eda.yandex.ru
+music.yandex.ru
+pochta.ru
+
+# Соцсети, блоги, сообщества
+vk.ru
+ok.ru
+vkvideo.ru
+pikabu.ru
+drive2.ru
+irecommend.ru
+habr.com
+woman.ru
+azbyka.ru
+livejournal.com
+
+# Медиа, новости, спорт
+ria.ru
+lenta.ru
+rbc.ru
+kp.ru
+mk.ru
+gazeta.ru
+iz.ru
+aif.ru
+vedomosti.ru
+kommersant.ru
+life.ru
+fontanka.ru
+e1.ru
+ura.news
+sport-express.ru
+sports.ru
+championat.com
+sportbox.ru
+stopgame.ru
+playground.ru
+ixbt.com
+1tv.ru
+
+# Госуслуги, финансы, право
+gosuslugi.ru
+mos.ru
+www.nalog.gov.ru
+fias.nalog.ru
+nalog.gov.ru
+sberbank.ru
+online.sberbank.ru
+sberbank.com
+tbank.ru
+tinkoff.ru
+alfabank.ru
+banki.ru
+sravni.ru
+nspk.ru
+consultant.ru
+garant.ru
+cdek.ru
+rzd.ru
+
+# Магазины, доставка, сервисы
+ozon.ru
+wildberries.ru
+avito.ru
+dns-shop.ru
+citilink.ru
+eldorado.ru
+mvideo.ru
+lemanapro.ru
+lamoda.ru
+www.detmir.ru
+vprok.ru
+kuper.ru
+samokat.ru
+vseinstrumenti.ru
+aliexpress.ru
+rustore.ru
+2gis.ru
+cian.ru
+domclick.ru
+tutu.ru
+ostrovok.ru
+hh.ru
+
+# Развлечения, видео, музыка, обучение
+kinopoisk.ru
+ivi.ru
+wink.ru
+rutube.ru
+gismeteo.ru
+muzofond.fm
+knigavuhe.org
+litres.ru
+stepik.org
+skyeng.ru
+gb.ru
+skillbox.ru
+uchi.ru
+gdz.ru
+maximonline.ru
+anime-bit.ru
+
+# Телеком
+mts.ru
+megafon.ru
+beeline.ru

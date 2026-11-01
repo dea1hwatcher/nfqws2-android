@@ -48,10 +48,12 @@ list_file() {
     ipset_exclude|ipset_exclude.list) echo "$LISTS_DIR/ipset_exclude.list" ;;
     auto|auto.list) echo "$LISTS_DIR/auto.list" ;;
     probe_hosts|probe_hosts.list) echo "$LISTS_DIR/probe_hosts.list" ;;
+    probe_ru|probe_ru.list) echo "$LISTS_DIR/probe_ru.list" ;;
     tcp16|tcp16.list) echo "$LISTS_DIR/tcp16.list" ;;
     probe_dns|probe_dns.list) echo "$LISTS_DIR/probe_dns.list" ;;
     probe_tg|probe_tg.list) echo "$LISTS_DIR/probe_tg.list" ;;
     probe_bench|probe_bench.list) echo "$LISTS_DIR/probe_bench.list" ;;
+    quic_unsupported|quic_unsupported.list) echo "$LISTS_DIR/quic_unsupported.list" ;;
     geoblock|geoblock.list) echo "$LISTS_DIR/geoblock.list" ;;
     apps|apps.list) echo "$CONFDIR/apps.list" ;;
     home|home_wifi.list) echo "$HOME_FILE" ;;
@@ -684,7 +686,7 @@ cmd_list_apps() {
 # релизом и в копию не входят), apps.list, домашние сети, правки стратегий,
 # импорты, активная стратегия и настройки WebUI (ui.json, их передаёт WebUI).
 BACKUP_DIR="${NFQWS_BACKUP_DIR:-/sdcard/Download}"
-BACKUP_LISTS="user exclude ipset ipset_exclude auto probe_hosts tcp16 probe_dns probe_tg probe_bench"
+BACKUP_LISTS="user exclude ipset ipset_exclude auto probe_hosts probe_ru tcp16 probe_dns probe_tg probe_bench"
 tar_cmd() {
   if command -v tar >/dev/null 2>&1; then tar "$@"; else busybox tar "$@"; fi
 }
@@ -921,7 +923,7 @@ probe_attempt() { # <вид> <путь к утилите> <host[/путь]> [pro
   redir=$(printf '%s\n' "$out" | sed -n 's/^REDIRECT_URL://p')
   http_code=$(printf '%s\n' "$out" | sed -n 's/^HTTP_CODE://p')
   case "$redir" in
-    *rkn.gov.ru*|*eais.*|*warning.rt.ru*|*blackhole*|*zapret*)
+    *rkn.gov.ru*|*eais.*|*warning.rt.ru*|*blackhole*|*zapret*|https:///*)
       rm -f "$tmp_body" "$jar"
       echo "fail isp_redir"
       return ;;
@@ -954,12 +956,19 @@ probe_attempt() { # <вид> <путь к утилите> <host[/путь]> [pro
       case "$out" in
         *alert*|*Alert*|*unrecognized_name*|*handshake_failure*) echo "fail tls_alert" ;;
         *wrong\ version*|*record\ overflow*|*illegal\ parameter*) echo "fail tls_spoof" ;;
+        *Russian\ Trusted*|*Ministry\ of\ Digital*) echo "fail ru_ca" ;;
         *certificate*|*self-signed*|*expired*) echo "fail tls_mitm" ;;
         *) echo "fail tls" ;;
+      esac ;;
+    curl:60:*)
+      case "$out" in
+        *Russian\ Trusted*|*Ministry\ of\ Digital*) echo "fail ru_ca" ;;
+        *) echo "fail tls_mitm" ;;
       esac ;;
     curl:52:*|curl:56:*)
       case "$out" in
         *reset*|*Reset*|*connection\ reset*|*broken\ pipe*) echo "fail tls_rst" ;;
+        *invalid\ HTTP*|*Invalid\ HTTP*) echo "fail not_http" ;;
         *) echo "fail reset" ;;
       esac ;;
     curl:28:*|*:124:*|*:143:*)
@@ -1028,12 +1037,12 @@ cmd_net_info() {
 }
 
 cmd_probe_all_inner() {
-  local kind="$1" bin="$2" target="${3:-}" i=0 h batch=0 probe_hosts_file="$STATE_DIR/probe.hosts.$$"
+  local kind="$1" bin="$2" target="${3:-}" custom_list="${4:-$LISTS_DIR/probe_hosts.list}" i=0 h batch=0 probe_hosts_file="$STATE_DIR/probe.hosts.$$"
   rm -f "$probe_hosts_file"
   if [ -n "$target" ]; then
     printf '%s\n' "$(resolve_probe_target "$target")" > "$probe_hosts_file"
   else
-    grep -v -e '^[[:space:]]*#' -e '^[[:space:]]*$' "$LISTS_DIR/probe_hosts.list" 2>/dev/null | tr -d '\r' | while IFS= read -r h; do
+    grep -v -e '^[[:space:]]*#' -e '^[[:space:]]*$' "$custom_list" 2>/dev/null | tr -d '\r' | while IFS= read -r h; do
       [ -n "$h" ] && printf '%s\n' "$(resolve_probe_target "$h")" >> "$probe_hosts_file"
     done
   fi
@@ -2003,6 +2012,7 @@ cmd_probe_dpi() {
   case "$mode" in
     net) cmd_net_info ;;
     web) cmd_probe_all_inner "$kind" "$bin" "$target_domain" ;;
+    ru) cmd_probe_all_inner "$kind" "$bin" "$target_domain" "$LISTS_DIR/probe_ru.list" ;;
     tcp16) cmd_probe_tcp16 ;;
     dns) cmd_probe_dns ;;
     tg) cmd_probe_tg ;;

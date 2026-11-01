@@ -56,7 +56,7 @@ const sandbox = {
     body: { appendChild: () => {}, removeChild: () => {} }
   },
   navigator: {},
-  $: id => (sandbox._els = sandbox._els || {}, sandbox._els[id] = sandbox._els[id] || { textContent: '', innerHTML: '', hidden: false, disabled: false, insertAdjacentHTML: () => {} })
+  $: id => (sandbox._els = sandbox._els || {}, sandbox._els[id] = sandbox._els[id] || { textContent: '', innerHTML: '', hidden: false, disabled: false, dataset: {}, classList: { toggle: () => {}, add: () => {}, remove: () => {} }, insertAdjacentHTML: () => {} })
 };
 
 vm.createContext(sandbox);
@@ -73,6 +73,10 @@ eq('Тихий сброс (Drop)', probeReason.drop, 'drop maps to silent TSPU d
 eq('Заглушка провайдера (RKN)', probeReason.isp_redir, 'isp_redir maps to RKN block page');
 eq('WebSocket Gateway заблокирован (ТСПУ)', probeReason.ws_blocked, 'ws_blocked maps to Discord WebSocket block');
 eq('Подмена сертификата (MITM)', probeReason.tls_mitm, 'tls_mitm maps to MITM');
+eq('Сертификат УЦ Минцифры (RU CA)', probeReason.ru_ca, 'ru_ca maps to Russian Trusted CA');
+eq('Некорректный ответ HTTP', probeReason.not_http, 'not_http maps to non-HTTP response');
+eq('Блокировка протокола TLS', probeReason.tls_block, 'tls_block maps to TLS protocol block');
+eq('Несовместимость параметров TLS', probeReason.peer_incompat, 'peer_incompat maps to peer incompatibility');
 eq('Подмена ответа (Spoof)', probeReason.tls_spoof, 'tls_spoof maps to response spoof');
 eq('Ошибка DNS', probeReason.dns_fail, 'dns_fail maps to DNS failure');
 
@@ -175,6 +179,10 @@ const recDnsHijack = sandbox.analyzeProbeResults(
   { 0: { name: 'ISP', udp: 'ok', doh: 'none', hijacked: 'yes', detail: 'Заглушка' } }
 );
 truthy(recDnsHijack.dnsWarning.length > 0, 'hijacked DNS emits dnsWarning');
+
+// 3.8: Tab selection
+sandbox.selectTestTab('ru');
+eq('ru', vm.runInContext('currentTestTab', sandbox), 'selectTestTab switches to ru tab');
 
 // ── net-info ──────────────────────────────────────────────────────────────
 sect('net-info parsing');
