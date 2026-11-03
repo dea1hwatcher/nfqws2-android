@@ -500,8 +500,8 @@ assert(commonSh.includes('rotate_logs()') && commonSh.includes('LOG_MAX_KB'), 'r
 // Invariant 2: Watchdog invokes rotate_logs periodically
 assert(serviceSh.includes('rotate_logs'), 'watchdog() in service.sh periodically calls rotate_logs');
 
-// Invariant 3: netwatch monitors route events without unbounded file growth
-assert(serviceSh.includes('[ "$sz" -gt 262144 ] && { kill -TERM "$mon" 2>/dev/null; : > "$EVFILE"'), 'netwatch caps netwatch_events at 256 KB to prevent disk/RAM leak');
+// Invariant 3: netwatch monitors route events via kernel FIFO without disk growth
+assert(serviceSh.includes('netwatch.fifo') || serviceSh.includes('mkfifo'), 'netwatch streams route events via FIFO without unbounded disk growth');
 
 // Invariant 4: smartkill flushes rules and clears temp file
 assert(serviceSh.includes('smartkill_chain') && serviceSh.includes('rm -f "$SMART_KILL_FILE"'), 'smartkill cleans pending queue and flushes iptables reset rules');
