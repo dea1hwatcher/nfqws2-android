@@ -1673,11 +1673,11 @@ firewall_iptables_restore()  { _firewall_start_restore iptables; }
 firewall_ip6tables_restore() { [ "$IPV6_ENABLED" = "0" ] && return 0; _firewall_start_restore ip6tables; }
 
 apply_tether_offload() {
-  command -v settings >/dev/null 2>&1 || return 0
   if [ "$ENABLE_HOTSPOT" = "1" ]; then
+    command -v settings >/dev/null 2>&1 || return 0
     settings put global tether_offload_disabled 1 2>/dev/null || true
   else
-    settings put global tether_offload_disabled 0 2>/dev/null || true
+    restore_tether_offload
   fi
 }
 

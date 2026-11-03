@@ -384,6 +384,16 @@ ctl add-domain example.org
 assert_contains "$(cat "$CONFDIR/logs/service.log")" "действие пользователя: добавлен домен example.org" "a domain added by hand"
 ctl set SMART_LEARN 1
 
+section "smart-turbo"
+ctl smart-turbo 300
+assert_rc 0 "$ctl_rc" "smart-turbo enables"
+assert_file "$SMART_TURBO_FILE" "turbo file created"
+assert_contains "$ctl_out" "300" "turbo output confirms duration"
+assert_contains "$(cat "$CONFDIR/logs/service.log")" "турбо-обучение" "user action logged"
+ctl smart-turbo off
+assert_rc 0 "$ctl_rc" "smart-turbo turns off"
+assert_no_file "$SMART_TURBO_FILE" "turbo file removed"
+
 # ── backup & export ───────────────────────────────────────────────────────────
 section "backup and export"
 

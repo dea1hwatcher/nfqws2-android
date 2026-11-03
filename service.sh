@@ -432,6 +432,8 @@ smartkill() {
   smartkill_exit
 }
 smartkill_exit() {
+  [ -n "$lp_pid" ] && kill "$lp_pid" 2>/dev/null
+  smartkill_chain del 2>/dev/null
   [ "$(cat "$SK_PIDFILE" 2>/dev/null)" = "$$" ] && rm -f "$SK_PIDFILE"
   rm -f "$STATE_DIR/conf_seen.$$"
 }
@@ -581,8 +583,8 @@ netwatch() {
       fi
     fi
   done
-  kill -TERM "$mon" "$reader" 2>/dev/null
-  rm -f "$WN_PIDFILE" "$fifo"
+  kill -TERM "$mon" "$reader" "$sp" 2>/dev/null
+  rm -f "$WN_PIDFILE" "$fifo" "$STATE_DIR/conf_seen.$$"
 }
 
 watchdog() {
@@ -696,8 +698,7 @@ home_check() {
 network_strategy_check() {
   [ "$NET_STRATEGY" = "1" ] || return 0
   is_running || return 0
-  [ -f "$HOME_PAUSED_FILE" ] && return 0 # keep the strategy during a home pause
-  [ "$(cat "$HOME_PAUSED_FILE" 2>/dev/null)" = "@vpn" ] && return 0  # keep the strategy during a VPN pause
+  [ -f "$HOME_PAUSED_FILE" ] && return 0 # keep the strategy during a home, VPN, or whitelist pause
 
   local cur_net last_net saved cur_strat
   cur_net=$(current_network_key 2>/dev/null)
@@ -734,7 +735,7 @@ manual_start() {
   start
 }
 
-# Boot/autostart respects disable, VPN pause, and Home Wi-Fi pause without
+# Boot/autostart respects disable, VPN pause, carrier whitelist pause, and Home Wi-Fi pause without
 # setting user override files.
 autostart_service() {
   [ -f "$CONFDIR/disable" ] && { log_msg "Found $CONFDIR/disable — autostart skipped"; update_description disabled; return 0; }
@@ -744,6 +745,10 @@ autostart_service() {
       log_msg "VPN active — autostart deferred until disconnected"
       printf '@vpn' > "$HOME_PAUSED_FILE"
       update_description paused "@vpn"
+    elif [ "$WL_PAUSE" = "1" ] && [ -f "$WL_FILE" ]; then
+      log_msg "Carrier whitelist active (белые списки) — autostart deferred until ended"
+      printf '@wl' > "$HOME_PAUSED_FILE"
+      update_description paused "@wl"
     elif [ "$HOME_WIFI" = "1" ] && ssid=$(current_ssid) && ssid_is_home "$ssid"; then
       log_msg "Home Wi-Fi «$ssid» — autostart deferred until disconnected"
       printf '%s' "$ssid" > "$HOME_PAUSED_FILE"
@@ -791,7 +796,7 @@ case "$1" in
   firewall_stop)      firewall_stop ;;
   *)
     rm -f "$HOME_PAUSED_FILE" "$HOME_OVERRIDE_FILE" "$SK_PIDFILE" "$STATE_DIR"/conf_seen.*
-    rmdir "$STATE_DIR/home.lock" "$STATE_DIR/vpn.lock" 2>/dev/null
+    rmdir "$STATE_DIR/home.lock" 2>/dev/null
     update_description ready
     until [ "$(getprop sys.boot_completed 2>/dev/null)" = "1" ]; do sleep 3; done
     sleep 4

@@ -113,6 +113,7 @@ fi
 # set perms to nfwqws2
 busybox chmod +x "$MODPATH/bin/nfqws2"
 busybox chmod +x "$MODPATH/bin/nfqws2-ctl"
+busybox chmod +x "$MODPATH/service.sh" "$MODPATH/action.sh" "$MODPATH/uninstall.sh" 2>/dev/null || chmod +x "$MODPATH/service.sh" "$MODPATH/action.sh" "$MODPATH/uninstall.sh" 2>/dev/null
 busybox chmod +x "$MODPATH/boot-completed.sh" 2>/dev/null || chmod +x "$MODPATH/boot-completed.sh" 2>/dev/null
 busybox chmod +x "$MODPATH/system/bin/nfqws2-ctl" 2>/dev/null || chmod +x "$MODPATH/system/bin/nfqws2-ctl" 2>/dev/null
 

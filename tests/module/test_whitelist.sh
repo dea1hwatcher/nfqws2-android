@@ -73,6 +73,16 @@ assert_rc 0 "$ctl_rc" "it can be turned off"
 assert_no_file "$WL_FILE" "turning it off forgets the white lists"
 assert_file "$PIDFILE" "and resumes the bypass"
 ctl set WL_PAUSE 1
+
+section "autostart under white lists"
+date +%s > "$WL_FILE"
+svc stop >/dev/null 2>&1
+rm -f "$HOME_PAUSED_FILE"
+svc autostart >/dev/null 2>&1
+assert_no_file "$PIDFILE" "autostart does not run nfqws2 under white lists"
+assert_eq "@wl" "$(cat "$HOME_PAUSED_FILE" 2>/dev/null)" "autostart pauses with reason @wl"
+rm -f "$WL_FILE" "$HOME_PAUSED_FILE"
+
 svc stop >/dev/null 2>&1
 for f in "$WL_PIDFILE" "$WD_PIDFILE" "$WN_PIDFILE" "$SK_PIDFILE"; do [ -f "$f" ] && kill "$(cat "$f")" 2>/dev/null; done
 unset NFQWS_SYSNET MOCK_WL
