@@ -111,17 +111,11 @@ async function exportBlobFile(blob, filename, mimeType, localFilePath, targetDir
   } catch(e) {}
   if(localFilePath && typeof window !== 'undefined' && window.ksu){
     try {
-      const safUri = 'content://com.android.externalstorage.documents/document/primary%3ADownload%2F' + encodeURIComponent(filename);
       const cmd =
         'f=' + q(localFilePath) + '; tf=' + q(targetFile) + '; td=' + q(destFolder) + '; ' +
         'mkdir -p "$td" 2>/dev/null; ' +
         'if [ "$f" != "$tf" ]; then cp -f "$f" "$tf" 2>/dev/null; chmod 666 "$tf" 2>/dev/null; fi; ' +
-        'case "$tf" in /sdcard/*) rf="/storage/emulated/0/${tf#/sdcard/}" ;; *) rf="$tf" ;; esac; ' +
-        'am broadcast -a android.intent.action.MEDIA_SCANNER_SCAN_FILE -d "file://$rf" >/dev/null 2>&1; ' +
-        'u=$(content insert --uri content://media/external/file --bind _data:s:"$rf" --bind mime_type:s:"application/octet-stream" 2>/dev/null | grep -o \'content://[^ ]*\'); ' +
-        '[ -z "$u" ] && u=$(content query --uri content://media/external/file --projection _id --where "_data=\'$tf\' OR _data=\'$rf\'" 2>/dev/null | grep -o \'_id=[0-9]*\' | head -n1 | sed \'s/_id=/content:\\/\\/media\\/external\\/file\\//\'); ' +
-        '[ -z "$u" ] && u=' + q(safUri) + '; ' +
-        'am start -a android.intent.action.SEND --user 0 -t "*/*" --eu android.intent.extra.STREAM "$u" --es android.intent.extra.SUBJECT ' + q(filename) + ' --es android.intent.extra.TITLE ' + q(filename) + ' -f 0x10000001 >/dev/null 2>&1';
+        q(CTL) + ' share-saved "$tf" >/dev/null 2>&1';
       await sh(cmd);
     } catch(e) {}
     toast(t('Архив сохранён: {0}', targetFile));

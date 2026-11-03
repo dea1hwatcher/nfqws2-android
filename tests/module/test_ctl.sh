@@ -364,7 +364,25 @@ assert_contains "$ctl_out" "пусто" "an empty log reports (пусто) rathe
 
 ctl clear-logs
 assert_rc 0 "$ctl_rc" "clear-logs works"
-assert_eq "0" "$(wc -c < "$CONFDIR/logs/service.log" | tr -d ' ')" "service.log is truncated"
+assert_eq "1" "$(grep -c . "$CONFDIR/logs/service.log")" "service.log is truncated"
+assert_contains "$(cat "$CONFDIR/logs/service.log")" "действие пользователя: журналы очищены" "keeping one line: who cleared it"
+
+# Действия пользователя — в журнал службы: кто остановил, что забыто, что
+# отключено. Чтение (состояние, списки) — нет
+section "user actions are logged"
+: > "$CONFDIR/logs/service.log"
+ctl status >/dev/null; ctl get-list user >/dev/null; ctl smart-status >/dev/null
+assert_eq "0" "$(grep -c 'действие пользователя' "$CONFDIR/logs/service.log")" "reading the state is not an action"
+ctl set SMART_LEARN 0
+assert_contains "$(cat "$CONFDIR/logs/service.log")" "действие пользователя: настройка SMART_LEARN=0" "a setting change is logged with its value"
+ctl smart-reset all
+assert_contains "$(cat "$CONFDIR/logs/service.log")" "действие пользователя: умный режим: забыто всё выученное (все сети)" "forgetting everything learned is logged"
+assert_contains "$(cat "$CONFDIR/logs/smart.log")" "действие пользователя: умный режим: забыто всё выученное" "in the smart mode log too, where it will be looked for"
+ctl smart-reset mobile-25001
+assert_contains "$(cat "$CONFDIR/logs/service.log")" "забыто выученное сети mobile-25001" "forgetting one network names it"
+ctl add-domain example.org
+assert_contains "$(cat "$CONFDIR/logs/service.log")" "действие пользователя: добавлен домен example.org" "a domain added by hand"
+ctl set SMART_LEARN 1
 
 # ── backup & export ───────────────────────────────────────────────────────────
 section "backup and export"
@@ -758,5 +776,44 @@ assert_not_contains "$ctl_out" "^exact.example" "but not its subdomains, as nfqw
 ctl domain-check 'bad host'
 assert_rc 1 "$ctl_rc" "a malformed domain is refused"
 rm -f "$MOCKBIN/ping" "$MOCKBIN/curl"
+
+# ── share ────────────────────────────────────────────────────────────────────
+section "share"
+printf '#!/bin/sh\necho "$*" >> "$MOCK_DIR/am.log"\ncase "$*" in *start*) ;; esac\n' > "$MOCKBIN/am"
+chmod 0755 "$MOCKBIN/am"; : > "$MOCK_DIR/am.log"
+printf '#!/bin/sh\necho "$*" >> "$MOCK_DIR/content.log"\ncase "$*" in *scan_file*) [ -f "$MOCK_DIR/noscan" ] || echo "Result: Bundle[{android.intent.extra.STREAM=content://media/external_primary/file/42}]" ;; esac\n' > "$MOCKBIN/content"
+chmod 0755 "$MOCKBIN/content"; : > "$MOCK_DIR/content.log"
+EXP_OLD2="${NFQWS_BACKUP_DIR:-}"; export NFQWS_BACKUP_DIR="$SANDBOX/shared"
+ctl share file "$CONFFILE"
+assert_rc 0 "$ctl_rc" "the config is shared as a file"
+assert_eq "$(cat "$CONFFILE")" "$(cat "$SANDBOX/shared/.share/nfqws2.conf" 2>/dev/null)" "a copy goes to shared storage: apps cannot read /data/adb"
+assert_contains "$(cat "$MOCK_DIR/content.log")" "--method scan_file --arg $SANDBOX/shared/.share/nfqws2.conf" "MediaStore scans the copy at once"
+assert_match "$(cat "$MOCK_DIR/am.log")" "SEND --user 0 -d content://media/external_primary/file/42 -t text/plain" "and the link it answers with is shared, as plain text"
+assert_not_contains "$(cat "$MOCK_DIR/am.log")" "file://" "no file:// link: other apps (Telegram, ChatGPT, Quick Share) cannot read it"
+assert_contains "$(cat "$LOG_DIR/service.log")" "поделиться: nfqws2.conf — content://media/external_primary/file/42 (scan)" "which link was shared goes to the log"
+# без ответа scan_file и MediaStore — ссылка DocumentsProvider на файл в общей памяти
+touch "$MOCK_DIR/noscan"; : > "$MOCK_DIR/am.log"
+mkdir -p "$SANDBOX/sd"
+echo "a	b" > "$SANDBOX/sd/learn.tsv"
+ctl share-saved "$SANDBOX/sd/learn.tsv"
+assert_rc 1 "$ctl_rc" "share-saved takes only files in shared storage"
+ctl share-saved /storage/emulated/0/Download/../../../etc/passwd
+assert_rc 1 "$ctl_rc" "and no path that climbs out of it"
+# запасные пути share_uri: поиск в MediaStore по пути, затем ссылка DocumentsProvider
+sed -n '/^share_uri() {/,/^}/p' "$MODDIR/bin/nfqws2-ctl" > "$SANDBOX/share_uri.sh"
+printf '#!/bin/sh\ncase "$*" in *query*) echo "Row: 0 _id=7" ;; esac\n' > "$MOCKBIN/content"
+uri=$(sh -c '. "$1"; share_uri /storage/emulated/0/Download/nfqws2/learn-wifi.tsv text/plain' _ "$SANDBOX/share_uri.sh")
+assert_eq "content://media/external/file/7	query" "$uri" "no answer from scan_file: the file is looked up in MediaStore by its path"
+printf '#!/bin/sh\ntrue\n' > "$MOCKBIN/content"
+uri=$(sh -c '. "$1"; share_uri /storage/emulated/0/Download/nfqws2/learn-wifi.tsv text/plain' _ "$SANDBOX/share_uri.sh")
+assert_eq "content://com.android.externalstorage.documents/document/primary%3ADownload%2Fnfqws2%2Flearn-wifi.tsv	documents" "$uri" "MediaStore silent: a DocumentsProvider link to the same file"
+rm -f "$MOCK_DIR/noscan" "$MOCKBIN/content"
+if [ -n "$EXP_OLD2" ]; then NFQWS_BACKUP_DIR="$EXP_OLD2"; else unset NFQWS_BACKUP_DIR; fi
+ctl share text "$CONFFILE"
+assert_contains "$(cat "$MOCK_DIR/am.log")" "android.intent.extra.TEXT" "or as text"
+ctl share file /etc/passwd
+assert_rc 1 "$ctl_rc" "an external path is refused"
+ctl share file "$CONFFILE/../../../etc/passwd"
+assert_rc 1 "$ctl_rc" "a climbing path is refused"
 
 harness_finish

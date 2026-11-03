@@ -493,65 +493,96 @@ ensure_netwatch() {
   ensure_helper "$WN_PIDFILE" netwatch command -v ip || return 0
 }
 
+# Network signature: outgoing interface dev and VPN/Wi-Fi flags.
+# Changes immediately signal netwatch to update smart mode and firewall rules.
+net_signature() {
+  local dev
+  dev=$(ip route get 1.1.1.1 2>/dev/null | awk '{for (i = 1; i < NF; i++) if ($i == "dev") { print $(i + 1); exit }}')
+  printf '%s|%s|%s' "$dev" "$(vpn_active && echo vpn)" "$(on_wifi && echo wifi)"
+}
+
+# Network change handling: DNS, smart mode, firewall rules, home/carrier check.
+netwatch_apply() { # <reason for log>
+  local sig
+  sig=$(net_signature)
+  # connection returned (no route before -> route present): phone is not idle
+  case "$netsig" in '|'*) case "$sig" in '|'*) ;; *)
+    rm -f "$IDLE_FILE" 2>/dev/null
+    log_msg "netwatch: connection returned ($1)" ;; esac ;; esac
+  netsig="$sig"
+  smart_net_update
+  if [ -f "$DESIRED_FILE" ] && is_running; then
+    if [ -n "$ISP_INTERFACE" ] || [ "$ENABLE_HOTSPOT" = "1" ] || ! firewall_ok; then
+      log_msg "netwatch: network changed ($1) — rebuilding rules"
+      firewall_start
+    else
+      log_msg "netwatch: network changed ($1) — rules intact"
+    fi
+  fi
+  home_check
+  network_strategy_check
+}
+
 netwatch() {
   echo $$ > "$WN_PIDFILE"
   protect_process
   command -v ip >/dev/null 2>&1 || { rm -f "$WN_PIDFILE"; return 0; }
 
-  EVFILE="$STATE_DIR/netwatch_events"
-  rm -f "$EVFILE"
-  local prev="" acted="" backoff=2 saw=0 sz mon=""
-  trap 'kill -TERM "$mon" 2>/dev/null; rm -f "$WN_PIDFILE" "$EVFILE"; exit 0' INT TERM EXIT
-  # The monitor writes events to a file, reaction is on its size changing
-  # A file, not a pipe, so kill -TERM reaps ip monitor itself instead of a
-  # wrapper that would leave an orphan. Poll every 2s to spare battery
-  # through the night
+  local wake=0 mon="" reader="" sp="" netsig rq="" base=0 d backoff=2 started up me=$$
+  local fifo="$STATE_DIR/netwatch.fifo"
+  netsig=$(net_signature)
+  trap 'wake=1' USR1
+  trap 'kill -TERM "$mon" "$reader" "$sp" 2>/dev/null; rm -f "$WN_PIDFILE" "$fifo" "$STATE_DIR/conf_seen.$$"; exit 0' TERM INT HUP
+  read -r up _ < /proc/uptime; base=${up%.*}; rq="${NW_RECHECK:-3 10 30}"
   while :; do
-    ip monitor route link 2>/dev/null >> "$EVFILE" &
-    mon=$!
-    saw=0
-    while :; do
-      sleep 2
-      conf_refresh
-      watchers_wanted || break 2
-      if ! kill -0 "$mon" 2>/dev/null; then
-        # died on its own. If it never wrote a byte, ip monitor is unsupported
-        # here: grow the pause instead of restarting it in a loop
-        if [ "$saw" = 0 ]; then
-          sleep "$backoff"
-          [ "$backoff" -lt 60 ] && backoff=$((backoff * 2))
+    if [ -z "$mon" ] || ! kill -0 "$mon" 2>/dev/null; then
+      if [ -n "$mon" ]; then
+        kill -TERM "$reader" 2>/dev/null
+        read -r up _ < /proc/uptime
+        if [ $(( ${up%.*} - started )) -lt 10 ]; then
+          sleep "$backoff"; [ "$backoff" -lt 60 ] && backoff=$((backoff * 2))
+        else backoff=2; fi
+      fi
+      rm -f "$fifo"; mkfifo "$fifo" 2>/dev/null || { sleep 60; continue; }
+      while IFS= read -r _; do kill -USR1 "$me" 2>/dev/null || exit 0; done < "$fifo" &
+      reader=$!
+      ip monitor route link > "$fifo" 2>/dev/null &
+      mon=$!
+      read -r up _ < /proc/uptime; started=${up%.*}
+    fi
+    if [ "$wake" = 0 ]; then
+      d=60
+      if [ -n "$rq" ]; then
+        read -r up _ < /proc/uptime; set -- $rq
+        d=$(( base + $1 - ${up%.*} )); [ "$d" -lt 1 ] && d=1
+      fi
+      sleep "$d" & sp=$!
+      [ "$wake" = 1 ] || wait "$sp"
+      kill "$sp" 2>/dev/null; sp=""
+    fi
+    conf_refresh
+    watchers_wanted || break
+    if [ "$wake" = 1 ]; then
+      while [ "$wake" = 1 ]; do wake=0; sleep 1; done
+      netwatch_apply "ip monitor"
+      read -r up _ < /proc/uptime; base=${up%.*}; rq="${NW_RECHECK:-3 10 30}"
+      continue
+    fi
+    if [ -n "$rq" ]; then
+      read -r up _ < /proc/uptime
+      set -- $rq
+      if [ $(( ${up%.*} - base )) -ge "$1" ]; then
+        shift; rq="$*"
+        if [ "$(net_signature)" != "$netsig" ]; then netwatch_apply "recheck"
         else
-          backoff=2
+          smart_net_update
+          [ -z "$rq" ] && { home_check; network_strategy_check; }
         fi
-        break
       fi
-      sz=$(wc -c < "$EVFILE" 2>/dev/null)
-      case "$sz" in ''|*[!0-9]*) sz=0 ;; esac
-      if [ "$sz" != "$prev" ]; then
-        # events still arriving; wait one quiet tick so a burst from a single
-        # network change does not rebuild the rules per packet
-        prev="$sz"
-        saw=1
-        continue
-      fi
-      if [ "$sz" != "$acted" ] && [ "$sz" != 0 ]; then
-        smart_net_update
-        if [ -f "$DESIRED_FILE" ] && is_running; then
-          log_msg "netwatch: network changed (ip monitor) — rebuilding rules"
-          firewall_start
-        fi
-        home_check
-        network_strategy_check
-        acted="$sz"
-      fi
-      [ "$sz" -gt 262144 ] && { kill -TERM "$mon" 2>/dev/null; : > "$EVFILE"; prev=""; acted=""; }
-    done
-    kill -TERM "$mon" 2>/dev/null
-    wait "$mon" 2>/dev/null
+    fi
   done
-  kill -TERM "$mon" 2>/dev/null
-  rm -f "$WN_PIDFILE" "$EVFILE"
-  trap - INT TERM EXIT
+  kill -TERM "$mon" "$reader" 2>/dev/null
+  rm -f "$WN_PIDFILE" "$fifo"
 }
 
 watchdog() {
