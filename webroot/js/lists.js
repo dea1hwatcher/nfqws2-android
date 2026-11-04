@@ -1,10 +1,15 @@
 /* nfqws2 WebUI - lists screen */
 
-const MODE_INFO = {
-  auto: 'Обходит домены из user.list и сам добавляет в auto.list те, что оказались заблокированы.',
-  list: 'Обходит только домены из user.list.',
-  all: 'Обходит всё, кроме доменов из exclude.list.'
-};
+const MODES = ['auto', 'list', 'all'];
+
+function openModeMenu(anchor){
+  openMenu(anchor, MODES.map(m => ({
+    label: m,
+    icon: (S.mode || 'auto') === m ? 'check' : '',
+    onClick: () => setMode(m)
+  })));
+}
+
 /* Only shared lists here; service lists belong to strategies and come with the release */
 const LIST_FILES = [
   ['auto', 'auto.list', 'Выученные автоматически', 'list'],
@@ -18,25 +23,28 @@ const LIST_FILES = [
 const pendingLists = () => String(S.pending || '').split(',').filter(Boolean);
 
 function renderMode(){
-  setHTML('mode', ['auto', 'list', 'all'].map(m =>
-    '<button class="seg state' + (S.mode === m ? ' on' : '') + '" aria-pressed="' + (S.mode === m) + '"' +
-    ' onclick="setMode(' + jsArg(m) + ')"><span class="check">' + icon('check', 's18') + '</span>' + m + '</button>').join(''), false);
-  $('mode-desc').textContent = MODE_INFO[S.mode] ? t(MODE_INFO[S.mode]) : '';
+  const m = S.mode || 'auto';
+  const lbl = $('mode-label');
+  if(lbl) lbl.textContent = t('Режим: {0}', m);
+  const sel = $('mode-select');
+  if(sel) sel.setAttribute('aria-label', t('Режим: {0}', m));
 }
 function renderListFiles(){
   const c = S.counts || {}, pend = pendingLists();
-  setHTML('list-files', LIST_FILES.map(([key, file, desc, ic]) =>
-    '<div class="list-item two-line clickable state" role="button" tabindex="0"' +
+  setHTML('list-files', LIST_FILES.map(([key, file, desc, ic]) => {
+    const isPend = pend.includes(key);
+    return '<div class="list-item' + (isPend ? ' two-line' : '') + ' clickable state" role="button" tabindex="0"' +
       ' onclick="openSlideEditor(' + jsArg('list') + ', ' + jsArg(key) + ')">' +
       '<span class="li-icon">' + icon(ic, 's24') + '</span>' +
       '<span class="li-text"><span class="li-primary li-mono">' + file + '</span>' +
-        '<span class="li-secondary">' + esc(pend.includes(key) ? t('Доступна новая версия из релиза') : t(desc)) + '</span></span>' +
+        (isPend ? '<span class="li-secondary">' + esc(t('Доступна новая версия из релиза')) + '</span>' : '') + '</span>' +
       '<span class="li-trail">' +
-        (pend.includes(key) ? '<button type="button" class="icon-btn sm state pending-btn" aria-label="' + esc(t('Доступна новая версия списка')) + '"' +
+        (isPend ? '<button type="button" class="icon-btn sm state pending-btn" aria-label="' + esc(t('Доступна новая версия списка')) + '"' +
           ' onclick="event.stopPropagation(); offerListUpdate(' + jsArg(key) + ')">' + icon('warn', 's20') + '</button>' : '') +
         (c[key] != null ? '<span class="li-value">' + fmtCount(c[key]) + '</span>' : '') +
         icon('chevron-right', 's24') + '</span>' +
-    '</div>').join(''), false);
+    '</div>';
+  }).join(''), false);
 }
 /* A newer release version waits for the user; the installer never touches their edits */
 async function offerListUpdate(key){

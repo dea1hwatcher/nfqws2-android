@@ -173,13 +173,9 @@ const VIEWPORTS = [
         out.fieldHeight = searchBar ? parseFloat(cs(searchBar).height) : 0;
         out.fieldRadius = radii(searchBar);
 
-        const segs = [...document.querySelectorAll('#mode .seg')];
-        out.segCount = segs.length;
-        if (segs.length) {
-          out.segFirst = radii(segs[0]);
-          out.segLast = radii(segs[segs.length - 1]);
-          out.segGap = segs.length > 1 ? box(segs[1]).left - box(segs[0]).right : 0;
-        }
+        const modeChip = q('#mode-select');
+        out.modeChipRadius = radii(modeChip)[0];
+        out.modeChipExists = !!modeChip;
 
         const icons = [...document.querySelectorAll('svg.icon')];
         out.iconCount = icons.length;
@@ -240,10 +236,8 @@ const VIEWPORTS = [
       // which is the M3 search-bar spec rather than the filled-field one.
       eq(56, geo.fieldHeight, 'the search bar is 56dp tall');
       eq('9999,9999,9999,9999', geo.fieldRadius.join(','), 'the search bar is a pill (M3 search bar)');
-      truthy(geo.segCount === 3, 'the mode control renders three segments');
-      eq('9999,0,0,9999', geo.segFirst.join(','), 'the first segment is pill-shaped on the outside');
-      eq('0,9999,9999,0', geo.segLast.join(','), 'the last segment is pill-shaped on the outside');
-      truthy(Math.abs(geo.segGap) <= 1, 'segments are joined, not separated by a gap');
+      truthy(geo.modeChipExists, 'the mode control renders as an MD3 dropdown chip');
+      truthy(geo.modeChipRadius >= 8, 'the mode dropdown chip is rounded (--shape-small / --shape-corner-full)');
 
       // ── icons ──
       truthy(geo.iconCount > 10, `${geo.iconCount} icons are rendered`);

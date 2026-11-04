@@ -685,33 +685,10 @@ html[data-containers="true"] .list > .list-item:active {
 .list-item.selected .li-icon { background: color-mix(in srgb, var(--md-sys-color-on-secondary-container) 18%, transparent);
   color: var(--md-sys-color-on-secondary-container); }
 
-/* Text fields */
-.field { display: flex; flex-direction: column; gap: 4px; }
-.field > label { font-size: var(--ts-label-medium); line-height: var(--lh-label-medium); font-weight: var(--w-emph);
-  color: var(--md-sys-color-on-surface-variant); padding-left: 4px; }
-.field input, .field select, .field textarea {
-  width: 100%; height: 56px; padding: 0 16px;
-  background: var(--md-sys-color-surface-container-highest); color: var(--md-sys-color-on-surface);
-  border: none; border-bottom: 1px solid var(--md-sys-color-outline);
-  border-top-left-radius: var(--shape-extra-small);
-  border-top-right-radius: var(--shape-extra-small);
-  font-size: var(--ts-body-large); line-height: var(--lh-body-large);
-  outline: none; appearance: none; -webkit-appearance: none;
-  caret-color: var(--md-sys-color-primary);
-  transition: border-color var(--dur-short) var(--standard), box-shadow var(--dur-short) var(--standard),
-              background-color var(--dur-short) var(--standard);
-}
-/* Indicator 1dp at rest, 2dp on focus, without shifting the layout */
-.field input:focus, .field select:focus, .field textarea:focus {
-  border-bottom-color: var(--md-sys-color-primary);
-  box-shadow: inset 0 -1px 0 var(--md-sys-color-primary), inset 0 -1px 0 0 var(--md-sys-color-primary);
-  background: color-mix(in srgb, var(--md-sys-color-primary) 6%, var(--md-sys-color-surface-container-highest));
-}
 .helper { font-size: var(--ts-body-small); line-height: var(--lh-body-small);
   letter-spacing: var(--tr-body-small);
   color: var(--md-sys-color-on-surface-variant); padding-left: 4px; }
 .helper.err { color: var(--md-sys-color-error); }
-.field ::placeholder { color: var(--md-sys-color-on-surface-variant); opacity: .7; }
 /* Code and logs */
 .code-block, .log-view {
   background: var(--md-sys-color-surface-container-lowest);

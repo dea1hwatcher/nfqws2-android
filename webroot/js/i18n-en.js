@@ -109,6 +109,7 @@ EN = {
  "{0}.list обновлён": "{0}.list updated",
  "Не удалось сменить режим": "Could not change the mode",
  "Режим: {0}": "Mode: {0}",
+ "Режим: auto": "Mode: auto",
  "Очистить auto.list?": "Clear auto.list?",
  "Выученные автоматически домены будут удалены.": "Automatically learned domains will be removed.",
  "Очистить": "Clear",

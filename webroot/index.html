@@ -145,47 +145,37 @@
   <!-- Lists -->
   <section class="page split" data-page="lists" aria-label="Списки" data-ta="aria-label">
     <div class="pcol">
-      <h2 class="subhead" data-t>Режим обработки</h2>
-      <div class="group">
-        <div class="segmented" id="mode" role="group" aria-label="Режим обработки доменов" data-ta="aria-label"></div>
-        <div class="helper" id="mode-desc"></div>
+      <div class="chips" id="mode" role="group" aria-label="Режим обработки" data-ta="aria-label" style="margin-bottom:12px;">
+        <button class="chip dropdown state" id="mode-select" type="button" aria-haspopup="menu" aria-expanded="false" onclick="openModeMenu(this)">
+          <span id="mode-label" data-t>Режим: auto</span>
+          <svg aria-hidden="true" class="icon s18"><use href="#i-caret"/></svg>
+        </button>
       </div>
 
-      <h2 class="subhead" data-t>Добавить домен</h2>
-      <div class="group">
-        <div class="field">
-          <div class="tf">
-            <input type="text" id="dom" placeholder="например, youtube.com" data-ta="placeholder" autocapitalize="off" autocorrect="off"
-                   spellcheck="false" enterkeyhint="done" onkeydown="if(event.key==='Enter')addDom()"
-                   aria-describedby="dom-help">
-            <label for="dom" data-t>Домен</label>
-            <button class="icon-btn state tone-primary" aria-label="Добавить домен" data-ta="aria-label" onclick="addDom()">
-              <svg aria-hidden="true" class="icon s24"><use href="#i-add"/></svg>
-            </button>
-          </div>
-          <div class="helper" id="dom-help" data-t>Домен попадёт в user.list.</div>
-        </div>
+      <div class="search-bar" style="margin-bottom:12px;">
+        <svg aria-hidden="true" class="icon"><use href="#i-globe"/></svg>
+        <input type="text" id="dom" placeholder="Добавить домен" aria-label="Добавить домен" data-ta="placeholder,aria-label" autocapitalize="off" autocorrect="off"
+               spellcheck="false" enterkeyhint="done" onkeydown="if(event.key==='Enter')addDom()">
+        <button class="icon-btn state tone-primary" aria-label="Добавить домен" data-ta="aria-label" onclick="addDom()">
+          <svg aria-hidden="true" class="icon s24"><use href="#i-add"/></svg>
+        </button>
       </div>
     </div>
 
     <div class="pcol">
-      <h2 class="subhead" data-t>Файлы</h2>
       <div class="list" id="list-files"></div>
 
-      <h2 class="subhead" data-t>Обслуживание</h2>
-      <div class="list">
-        <div class="list-item two-line clickable state danger" role="button" tabindex="0" onclick="clearAuto()">
+      <div class="list" style="margin-top:12px;">
+        <div class="list-item clickable state danger" role="button" tabindex="0" onclick="clearAuto()">
           <span class="li-icon"><svg aria-hidden="true" class="icon s24"><use href="#i-trash"/></svg></span>
           <span class="li-text">
             <span class="li-primary" data-t>Очистить auto.list</span>
-            <span class="li-secondary" data-t>Удалить домены, выученные автоматически</span>
           </span>
         </div>
-        <div class="list-item two-line clickable state danger" role="button" tabindex="0" onclick="resetLists()">
+        <div class="list-item clickable state danger" role="button" tabindex="0" onclick="resetLists()">
           <span class="li-icon"><svg aria-hidden="true" class="icon s24"><use href="#i-restart"/></svg></span>
           <span class="li-text">
             <span class="li-primary" data-t>Вернуть стандартные списки</span>
-            <span class="li-secondary" data-t>Правки в user, exclude, ipset и probe_hosts будут удалены</span>
           </span>
         </div>
       </div>
