@@ -256,15 +256,19 @@
   <!-- Settings -->
   <section class="page" data-page="settings" aria-label="Настройки" data-ta="aria-label">
     <div class="settings-grid" id="settings-body"></div>
+  </section>
 
-    <div class="stack" id="bench-block">
+  <!-- Smart mode -->
+  <section class="page" data-page="smart" aria-label="Умный режим" data-ta="aria-label">
+    <div id="smart-body" class="stack"></div>
+
+    <div class="stack" id="bench-block" style="margin-top:16px;">
       <div class="subhead-row">
         <h2 class="subhead" data-t>Тестирование стратегий</h2>
         <span class="pill tonal" id="bench-badge" hidden></span>
       </div>
 
       <div class="group" id="bench-sec-all">
-        <div class="t-body-medium muted" data-t>Последовательное тестирование всех доступных стратегий через контрольный набор сайтов (probe_bench.list). Определяет стратегию с наивысшей проходимостью и минимальной задержкой.</div>
         <div class="row">
           <button class="btn with-icon state" id="bench-btn" onclick="runBench()">
             <svg aria-hidden="true" class="icon s18"><use href="#i-play"/></svg><span data-t>Запустить тестирование</span>
@@ -278,11 +282,7 @@
       <div id="bench-best" class="group" hidden></div>
       <div class="list" id="bench-list"></div>
     </div>
-  </section>
 
-  <!-- Smart mode -->
-  <section class="page" data-page="smart" aria-label="Умный режим" data-ta="aria-label">
-    <div id="smart-body" class="stack"></div>
     <input type="file" id="smart-imp" accept=".tsv,text/tab-separated-values,text/plain" hidden onchange="smartImport(this.files)">
   </section>
 

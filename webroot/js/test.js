@@ -341,7 +341,7 @@ function renderDnsRow(i, name, ip, udp, doh, hijacked, detail){
 }
 
 function startBenchFromRec(){
-  navigate('settings');
+  navigate('smart');
   setTimeout(() => {
     const el = $('bench-block');
     if(el) el.scrollIntoView({ behavior: 'smooth' });
