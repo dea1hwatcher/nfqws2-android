@@ -1,9 +1,9 @@
 /* nfqws2 WebUI - app filter */
 
 const APP_MODES = [
-  ['off', 'Выключен', 'Обрабатывается трафик всех приложений'],
-  ['include', 'Только выбранные', 'Трафик остальных приложений идёт напрямую'],
-  ['exclude', 'Все, кроме выбранных', 'Выбранные приложения идут напрямую']
+  ['off', 'Выключен'],
+  ['include', 'Только выбранные'],
+  ['exclude', 'Все, кроме выбранных']
 ];
 let pkgsCheckedAt = 0;
 async function appsInit(){
@@ -37,16 +37,12 @@ async function appsInit(){
 }
 function renderAppModes(){
   const cur = S.app_mode || 'off';
-  setHTML('amode-list', APP_MODES.map(([v, label, hint]) =>
-    '<label class="list-item two-line clickable state' + (v === cur ? ' selected' : '') + '">' +
+  setHTML('amode-list', APP_MODES.map(([v, label]) =>
+    '<label class="list-item clickable state' + (v === cur ? ' selected' : '') + '">' +
       '<input type="radio" class="radio" name="amode" value="' + v + '"' + (v === cur ? ' checked' : '') +
         ' onchange="setAppMode(this.value)">' +
-      '<span class="li-text"><span class="li-primary">' + esc(t(label)) + '</span><span class="li-secondary">' + esc(t(hint)) + '</span></span>' +
+      '<span class="li-text"><span class="li-primary">' + esc(t(label)) + '</span></span>' +
     '</label>').join(''), false);
-  const n = (S.counts || {}).apps || 0;
-  $('apps-info').textContent = cur === 'off'
-    ? t('Фильтр выключен. Выбрано приложений: {0}.', n)
-    : t('Фильтр включён. Выбрано приложений: {0}.', n) + (S.app_uids > 0 ? ' ' + t('UID найдено: {0}.', S.app_uids) : '');
 }
 async function setAppMode(v){
   const r = await withBusy(['set', 'APP_MODE', v], 30000);
