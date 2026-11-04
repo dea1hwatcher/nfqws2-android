@@ -9,7 +9,7 @@ let SMS = null, smartTimer = null, smartView = null;
 let smartBenchRunning = false, smartBenchCancelled = false;
 let smartBenchSlot = 'tls', smartBenchDomain = '';
 let smartBenchResults = {}, smartBenchBest = null, smartBenchBadgeText = '';
-const isSmartMode = () => (typeof currentStrategy !== 'undefined' ? currentStrategy === 'smart' : (SMS && SMS.active == 1));
+const isSmartMode = () => (typeof S !== 'undefined' && S.smart == 1) || (typeof currentStrategy !== 'undefined' ? currentStrategy === 'smart' : (SMS && SMS.active == 1));
 
 const SMART_GROUPS = [
   ['tls', 'Сайты (TLS)', ['tls', 'tls_cf', 'tls_16', 'tls_as']],

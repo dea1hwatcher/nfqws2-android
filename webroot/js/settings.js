@@ -22,33 +22,32 @@ function settingsRow(o){
   '</div>';
 }
 function renderSettings(){
-  const homeN = S.home_wifi == 1 ? t('Включено') : t('Выключено');
   const groups = [
     ['Работа', [
-      {icon: 'home', title: 'Домашняя Wi‑Fi', sub: t('Пауза обхода в домашних сетях') + ' · ' + homeN, on: "navigate('wifi')", chevron: true},
-      {icon: 'refresh', title: 'Стратегии по сетям', sub: t('Запоминать стратегию отдельно для каждой сети'), sw: true, checked: S.net_strategy == 1, on: 'toggleNetStrategy(this.checked)'},
-      {icon: 'shield', title: 'Пауза при VPN', sub: t('Пауза обхода при включённом VPN'), sw: true, checked: S.vpn_pause == 1, on: 'toggleVpnPause(this.checked)'}
+      {icon: 'home', title: 'Домашняя Wi‑Fi', on: "navigate('wifi')", chevron: true},
+      {icon: 'refresh', title: 'Стратегии по сетям', sw: true, checked: S.net_strategy == 1, on: 'toggleNetStrategy(this.checked)'},
+      {icon: 'shield', title: 'Пауза при VPN', sw: true, checked: S.vpn_pause == 1, on: 'toggleVpnPause(this.checked)'}
     ]],
     ['Инструменты', [
-      {icon: 'auto', title: 'Умный режим', sub: S.smart == 1 ? t('Включён · сам подбирает обход для каждого сайта и сети') : t('Сам подбирает обход для каждого сайта и сети'), on: "navigate('smart')", chevron: true},
-      {icon: 'apps', title: 'Фильтр приложений', sub: t('Обход только для выбранных приложений или для всех, кроме них'), on: "navigate('apps')", chevron: true},
+      {icon: 'auto', title: 'Умный режим', on: "navigate('smart')", chevron: true},
+      {icon: 'apps', title: 'Фильтр приложений', on: "navigate('apps')", chevron: true},
       {icon: 'status', title: 'nfqws2 Helper', sub: t('Плитка быстрых настроек и уведомление о состоянии'), on: 'openHelperApp()', chevron: true},
-      {icon: 'test', title: 'Проверка доступности', sub: t('Открывает адреса из probe_hosts.list через обход'), on: "navigate('test')", chevron: true},
-      {icon: 'medical', title: 'Диагностика', sub: t('Ядро, правила iptables и аргументы запуска'), on: "navigate('diag')", chevron: true}
+      {icon: 'test', title: 'Проверка доступности', on: "navigate('test')", chevron: true},
+      {icon: 'medical', title: 'Диагностика', on: "navigate('diag')", chevron: true}
     ]],
     ['Резервная копия', [
-      {icon: 'download', title: 'Создать копию', sub: t('Конфиг, списки, стратегии и оформление — в архив .tar'), on: 'createBackup()'},
-      {icon: 'upload', title: 'Восстановить из копии', sub: t('Выбрать архив .tar или из списка'), on: 'openBackupSheet()'}
+      {icon: 'download', title: 'Создать копию', on: 'createBackup()'},
+      {icon: 'upload', title: 'Восстановить из копии', on: 'openBackupSheet()'}
     ]],
     ['Оформление', [
-      {icon: 'palette', title: 'Тема оформления', sub: t('Светлая, тёмная, AMOLED и цвет акцента'), on: 'openMonetModal()'},
-      {icon: 'tune', title: 'Капсула навигации', sub: t('Плавающая нижняя панель со скруглением'), sw: true, checked: isNavCapsule(), id: 'capsule-toggle-settings', on: 'toggleNavCapsule(this.checked); renderSettings()'},
+      {icon: 'palette', title: 'Тема оформления', on: 'openMonetModal()'},
+      {icon: 'tune', title: 'Капсула навигации', sw: true, checked: isNavCapsule(), id: 'capsule-toggle-settings', on: 'toggleNavCapsule(this.checked); renderSettings()'},
       {icon: 'motion', title: 'Отключение анимаций', sw: true, checked: isAnimationsDisabled(), id: 'animations-toggle', on: 'toggleAnimations(this.checked); renderSettings()'},
-      {icon: 'apps', title: 'Ярлык на рабочий стол', sub: t('Добавить на главный экран телефона'), on: 'addDesktopShortcut()'},
-      {icon: 'translate', title: 'Язык', sub: LANG === 'en' ? 'English' : 'Русский', on: 'pickLanguage(this)', menu: true, long: 'lang'}
+      {icon: 'apps', title: 'Ярлык на рабочий стол', on: 'addDesktopShortcut()'},
+      {icon: 'translate', title: 'Язык', value: LANG === 'en' ? 'English' : 'Русский', on: 'pickLanguage(this)', menu: true, long: 'lang'}
     ]],
     ['О модуле', [
-      {icon: 'info', title: 'nfqws2 for Android', sub: t('Версия {0}', S.version || '—'), on: 'openWhatsNew()', chevron: true, long: 'ver'}
+      {icon: 'info', title: 'nfqws2 for Android', value: S.version || '—', on: 'openWhatsNew()', chevron: true, long: 'ver'}
     ]]
   ];
   let devHtml = '';
