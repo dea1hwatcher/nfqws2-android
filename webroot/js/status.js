@@ -297,8 +297,8 @@ const DEV_SW = [
   ['WAKELOCK', 'Wakelock', 'wakelock_on']
 ];
 const LIMITS = [
-  ['PKT_LIMIT_OUT', 'Исходящие пакеты', 'Сколько первых пакетов соединения обрабатывать', 'pkt_limit_out'],
-  ['PKT_LIMIT_IN', 'Входящие пакеты', 'Сколько первых ответных пакетов обрабатывать', 'pkt_limit_in']
+  ['PKT_LIMIT_OUT', 'Исходящие пакеты', 'pkt_limit_out'],
+  ['PKT_LIMIT_IN', 'Входящие пакеты', 'pkt_limit_in']
 ];
 
 function banner(kind, ic, text){
@@ -329,11 +329,10 @@ function switchRow(k, label, on){
 }
 function renderDevRows(j){
   j = j || {};
-  const lim = LIMITS.map(([k, label, hint, jk]) =>
-    '<div class="list-item two-line clickable state" role="button" tabindex="0" aria-haspopup="dialog"' +
+  const lim = LIMITS.map(([k, label, jk]) =>
+    '<div class="list-item clickable state" role="button" tabindex="0" aria-haspopup="dialog"' +
       ' onclick="editLimit(' + jsArg(k) + ', ' + jsArg(t(label)) + ', ' + (+j[jk] || 15) + ')">' +
-      '<span class="li-text"><span class="li-primary">' + esc(t(label)) + '</span>' +
-        '<span class="li-secondary">' + esc(t(hint)) + '</span></span>' +
+      '<span class="li-text"><span class="li-primary">' + esc(t(label)) + '</span></span>' +
       '<span class="li-trail">' +
         '<span class="li-value">' + esc(j[jk] != null ? j[jk] : '—') + '</span>' + icon('chevron-right', 's24') +
       '</span>' +
