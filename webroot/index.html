@@ -216,11 +216,10 @@
     <div class="pcol">
       <h2 class="subhead" data-t>Действующий конфиг</h2>
       <div class="list">
-        <div class="list-item two-line clickable state" role="button" tabindex="0" onclick="openSlideEditor('conf')">
+        <div class="list-item clickable state" role="button" tabindex="0" onclick="openSlideEditor('conf')">
           <span class="li-icon"><svg aria-hidden="true" class="icon s24"><use href="#i-config"/></svg></span>
           <span class="li-text">
             <span class="li-primary li-mono">nfqws2.conf</span>
-            <span class="li-secondary" data-t>Открыть редактор</span>
           </span>
           <span class="li-trail"><svg aria-hidden="true" class="icon s24"><use href="#i-chevron-right"/></svg></span>
         </div>
@@ -237,13 +236,12 @@
     <div class="pcol">
       <h2 class="subhead" data-t>Импорт конфигов nfqws2-keenetic</h2>
       <div class="group card filled">
-        <div class="t-body-medium muted" data-t>Файлы .txt, .conf, .bat, .ini или вставленный текст. Можно выбрать несколько файлов сразу.</div>
         <input type="file" id="impFile" multiple hidden onchange="importFiles(this.files)">
         <div class="row">
           <button class="btn tonal with-icon state" onclick="$('impFile').click()">
             <svg aria-hidden="true" class="icon s18"><use href="#i-upload"/></svg><span data-t>Выбрать файлы</span>
           </button>
-          <button class="btn outlined with-icon state" onclick="importPaste()">
+          <button class="btn tonal with-icon state" onclick="importPaste()">
             <svg aria-hidden="true" class="icon s18"><use href="#i-edit"/></svg><span data-t>Вставить текст</span>
           </button>
         </div>
