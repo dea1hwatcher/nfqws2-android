@@ -528,12 +528,19 @@ local function save()
 end
 
 -- Сеть: модуль пишет её id в state/smart_net (или offline, если сети нет)
+local function check_bench(t)
+	if t - (SM.benchcheck or 0) < 1 then return end
+	SM.benchcheck = t
+	local l = readline(SM.home .. "/state/smart_bench")
+	SM.bench = l and tonumber(l:match("^(%d+)")) or nil
+end
+
 local function check_net()
 	local t = now()
 	if t - SM.netcheck < NET_EVERY then return end
 	SM.netcheck = t
 	SM.pool_ext = readline(SM.home .. "/state/smart_pool") == "ext"
-	SM.bench = tonumber((readline(SM.home .. "/state/smart_bench") or ""):match("^(%d+)") or "")
+	check_bench(t)
 	local net = readline(SM.home .. "/state/smart_net") or "default"
 	net = net:gsub("[^%w%-_.]", "_")
 	if net == "" then net = "default" end
@@ -766,12 +773,12 @@ local function on_err(slot, key, r, v, n, t, pass, mid, c)
 end
 
 -- вариант, который отладочный замер сейчас проверяет на этом сайте
-local function bench_variant(host)
+local function bench_variant(host, full_host)
 	for i = 0, SM.bench - 1 do
 		local l = readline(SM.home .. "/state/smart_bench." .. i)
 		if l then
 			local h, v, ts = l:match("^(%S+)%s+([%d-]+)%s+(%d+)$")
-			if h == host and math.abs(now() - tonumber(ts)) <= 60 then return v end
+			if (h == host or (full_host and h == full_host)) and math.abs(now() - tonumber(ts)) <= 60 then return v end
 		end
 	end
 end
@@ -978,6 +985,7 @@ function smart(ctx, desync)
 	if not SM.home then SM.home = desync.arg.home or "/data/adb/nfqws2" end
 	local t = now()
 	check_net()
+	check_bench(t)
 	if SM.dirty and t - SM.saved >= SAVE_EVERY then save() end
 
 	local slot = desync.arg.slot or "default"
@@ -1019,7 +1027,7 @@ function smart(ctx, desync)
 	local crec = automate_conn_record(desync)
 	-- отладочный замер: вариант задаёт он, итог считает он же
 	if crec and not crec.smart and SM.bench then
-		local bv = bench_variant(host)
+		local bv = bench_variant(host, desync.track and desync.track.hostname)
 		if bv then
 			-- «-» — проба имени: узнать профиль, а соединение — на выученном
 			-- варианте сайта. Без обхода ТСПУ увидел бы SNI и на время закрыл

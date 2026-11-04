@@ -6,6 +6,9 @@
    Стратегия smart сама подбирает вариант обхода для каждого сайта и помнит
    его отдельно для каждой сети. Здесь — состояние, выученное, обучение и сброс. */
 let SMS = null, smartTimer = null, smartView = null;
+let smartBenchRunning = false, smartBenchCancelled = false;
+let smartBenchSlot = 'tls', smartBenchDomain = '';
+let smartBenchResults = {}, smartBenchBest = null, smartBenchBadgeText = '';
 const isSmartMode = () => (typeof currentStrategy !== 'undefined' ? currentStrategy === 'smart' : (SMS && SMS.active == 1));
 
 const SMART_GROUPS = [
@@ -38,6 +41,7 @@ async function smartInit(){
 }
 
 async function smartLoad(){
+  if(smartBenchRunning) return;
   const r = await ctlx(smartView ? ['smart-status', smartView] : ['smart-status']);
   try { SMS = JSON.parse(r.out); } catch(e){ SMS = null; }
   // выбранной сети больше нет (забыли) — обратно на текущую
@@ -76,6 +80,34 @@ function renderSmart(){
     (cur && (cur.ok || cur.err) ? settingsRow({icon: 'status', title: 'Соединения',
       sub: t('Удачных {0} · с ошибками {1} — свежие весят больше', cur.ok, cur.err)}) : '') +
   '</div>');
+
+  // Калибровка вариантов умного режима
+  parts.push('<h2 class="subhead">' + esc(t('Калибровка вариантов')) + '</h2>' +
+    '<div class="helper">' + esc(t('Экспресс-тест вариантов обхода без перезапуска службы. Подбирает лучший вариант десинхронизации для текущей сети.')) + '</div>' +
+    '<div class="group" id="smart-bench-box">' +
+      '<div class="row align-center wrap gap-sm">' +
+        '<div class="segmented" id="smart-bench-slots">' +
+          '<button type="button" class="seg state' + (smartBenchSlot === 'tls' ? ' on' : '') + '" onclick="smartBenchSetSlot(\'tls\')">' + esc(t('TLS (сайты)')) + '</button>' +
+          '<button type="button" class="seg state' + (smartBenchSlot === 'google' ? ' on' : '') + '" onclick="smartBenchSetSlot(\'google\')">' + esc(t('Google & YT')) + '</button>' +
+          '<button type="button" class="seg state' + (smartBenchSlot === 'quic' ? ' on' : '') + '" onclick="smartBenchSetSlot(\'quic\')">' + esc(t('QUIC')) + '</button>' +
+        '</div>' +
+        '<div class="grow"></div>' +
+        '<span class="pill tonal" id="smart-bench-badge"' + (smartBenchRunning || smartBenchBadgeText ? '' : ' hidden') + '>' + esc(smartBenchBadgeText || '') + '</span>' +
+      '</div>' +
+      '<div class="row align-center gap-sm mt-sm">' +
+        '<input type="text" id="smart-bench-domain" class="input sm grow" placeholder="' + esc(t('Свой домен (опционально)')) + '" value="' + esc(smartBenchDomain || '') + '" oninput="smartBenchDomain = this.value.trim()" />' +
+        '<button class="btn with-icon state sm' + (smartBenchRunning ? ' tonal' : '') + '" id="smart-bench-btn" onclick="toggleSmartBench()">' +
+          icon(smartBenchRunning ? 'pause' : 'play', 's18') +
+          '<span>' + esc(smartBenchRunning ? t('Остановить') : t('Тестировать')) + '</span>' +
+        '</button>' +
+      '</div>' +
+      '<div id="smart-bench-best" class="mt-sm"' + (smartBenchBest ? '' : ' hidden') + '>' +
+        (smartBenchBest ? renderSmartBenchBest(smartBenchBest) : '') +
+      '</div>' +
+      '<div class="list mt-sm" id="smart-bench-list">' +
+        renderSmartBenchList() +
+      '</div>' +
+    '</div>');
 
   // Обучение
   const bg = m.bg || {}, ls = smartLearnState(m);
@@ -244,4 +276,136 @@ async function smartImport(files){
   toast(t('Добавлено сайтов: {0}', (r.out || '0').trim()));
   smartView = null;
   smartLoad();
+}
+
+function smartBenchSetSlot(s){
+  if(smartBenchRunning) return;
+  smartBenchSlot = s;
+  smartBenchResults = {};
+  smartBenchBest = null;
+  smartBenchBadgeText = '';
+  renderSmart();
+}
+
+function renderSmartBenchRow(it, isRunning){
+  const v = it.v, name = it.name || ('#' + v);
+  if(isRunning){
+    return '<div class="list-item two-line" id="smartrow' + v + '">' +
+      '<span class="li-icon plain">' + icon('refresh', 's20') + '</span>' +
+      '<span class="li-text"><span class="li-primary truncate">' + esc(name) + '</span>' +
+      '<span class="li-secondary">' + esc(t('Тестирование...')) + '</span></span>' +
+    '</div>';
+  }
+  const ok = it.ok || 0, total = it.total || 0, avg_ms = it.avg_ms || 0, top_fail = it.top_fail;
+  const isOk = ok > 0;
+  const subText = t('Успешно: {0}/{1} · {2} мс', ok, total, avg_ms) + (top_fail && top_fail !== '-' ? ' · ' + top_fail : '');
+  return '<div class="list-item two-line" id="smartrow' + v + '">' +
+    '<span class="li-icon plain">' + icon(isOk ? 'check' : 'warn', 's20') + '</span>' +
+    '<span class="li-text"><span class="li-primary truncate">' + esc(name) + '</span>' +
+    '<span class="li-secondary">' + esc(subText) + '</span></span>' +
+    '<button class="btn tonal sm state" onclick="smartApplyVariant(' + jsArg(smartBenchSlot) + ', ' + jsArg(v) + ', ' + jsArg(name) + ')">' + esc(t('Применить')) + '</button>' +
+  '</div>';
+}
+
+function renderSmartBenchBest(best){
+  if(!best) return '';
+  return '<div class="suggest mt-sm">' + icon('auto', 's24') +
+    '<span class="grow"><strong>' + esc(t('Рекомендация: {0}', best.name)) + '</strong><br>' +
+    esc(t('Успешно: {0}/{1} · {2} мс', best.ok, best.total, best.avg_ms)) + '</span>' +
+    '<button class="btn sm state" onclick="smartApplyVariant(' + jsArg(best.slot || smartBenchSlot) + ', ' + jsArg(best.v) + ', ' + jsArg(best.name) + ')">' +
+      esc(t('Сделать основным')) +
+    '</button>' +
+  '</div>';
+}
+
+function renderSmartBenchList(){
+  const rows = Object.values(smartBenchResults);
+  if(!rows.length) return '';
+  return rows.sort((a, b) => b.ok - a.ok || a.avg_ms - b.avg_ms).map(it => renderSmartBenchRow(it, false)).join('');
+}
+
+async function toggleSmartBench(){
+  if(smartBenchRunning){
+    smartBenchCancelled = true;
+    smartBenchRunning = false;
+    smartBenchBadgeText = t('Остановлено');
+    renderSmart();
+    return;
+  }
+  smartBenchRunning = true;
+  smartBenchCancelled = false;
+  smartBenchResults = {};
+  smartBenchBest = null;
+  smartBenchBadgeText = t('Запуск...');
+  renderSmart();
+
+  const domain = (smartBenchDomain || '').trim();
+  const args = domain ? ['smart-bench', domain, smartBenchSlot] : ['smart-bench', '', smartBenchSlot];
+
+  const onLine = line => {
+    if(smartBenchCancelled) return;
+    const p = line.trim().split('\t');
+    if(!p[0]) return;
+    if(p[0] === 'SMART_BENCH_START'){
+      const total = +p[1] || 0;
+      smartBenchBadgeText = t('Проверка 0/{0}', total);
+      const bEl = $('smart-bench-badge');
+      if(bEl){ bEl.textContent = smartBenchBadgeText; bEl.hidden = false; }
+    } else if(p[0] === 'SMART_BENCH_RUN'){
+      const idx = +p[1] || 0, v = +p[2] || 0, name = p[3] || ('#' + v), total = +p[4] || 0;
+      smartBenchBadgeText = t('Вариант {0}/{1}', idx + 1, total);
+      const bEl = $('smart-bench-badge');
+      if(bEl) bEl.textContent = smartBenchBadgeText;
+      const listEl = $('smart-bench-list');
+      if(listEl){
+        const rowEl = $('smartrow' + v);
+        const html = renderSmartBenchRow({v, name}, true);
+        if(rowEl) rowEl.outerHTML = html;
+        else listEl.insertAdjacentHTML('beforeend', html);
+      }
+    } else if(p[0] === 'SMART_BENCH_RES'){
+      const v = +p[2] || 0, name = p[3] || ('#' + v), ok = +p[4] || 0, total = +p[5] || 0, avg_ms = +p[6] || 0, top_fail = p[7] || '-';
+      smartBenchResults[v] = {v, name, ok, total, avg_ms, top_fail};
+      const listEl = $('smart-bench-list');
+      if(listEl){
+        const rowEl = $('smartrow' + v);
+        const html = renderSmartBenchRow(smartBenchResults[v], false);
+        if(rowEl) rowEl.outerHTML = html;
+        else listEl.insertAdjacentHTML('beforeend', html);
+      }
+    } else if(p[0] === 'SMART_BENCH_BEST'){
+      const slot = p[1], v = +p[2] || 0, name = p[3] || ('#' + v), ok = +p[4] || 0, total = +p[5] || 0, avg_ms = +p[6] || 0;
+      if(v > 0 && ok > 0){
+        smartBenchBest = {slot, v, name, ok, total, avg_ms};
+        const bestEl = $('smart-bench-best');
+        if(bestEl){
+          bestEl.innerHTML = renderSmartBenchBest(smartBenchBest);
+          bestEl.hidden = false;
+        }
+      }
+    }
+  };
+
+  try {
+    await ctlx(args, 180000, onLine);
+  } catch(e){
+    toast(t('Ошибка тестирования'));
+  }
+  smartBenchRunning = false;
+  if(smartBenchCancelled){
+    smartBenchBadgeText = t('Остановлено');
+  } else {
+    smartBenchBadgeText = t('Завершено');
+  }
+  renderSmart();
+}
+
+async function smartApplyVariant(slot, v, name){
+  const domain = (smartBenchDomain || '').trim();
+  const args = domain ? ['smart-apply-variant', slot, String(v), domain] : ['smart-apply-variant', slot, String(v)];
+  const r = await withBusy(args);
+  if(r.code){ toast(errText(r, 'Не удалось применить')); return; }
+  toast(t('Вариант #{0} закреплён ({1})', v, name || ''));
+  smartView = null;
+  await smartLoad();
 }

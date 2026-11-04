@@ -489,6 +489,16 @@ async function runBench(){
     return;
   }
 
+  if(typeof isSmartMode === 'function' && isSmartMode()){
+    const opt = await mdConfirm(t('Тестирование в умном режиме'),
+      t('Включён умный режим. Перейти в Умный режим для калибровки вариантов без перезапуска службы?'),
+      {ok: t('В умный режим'), cancel: t('Тестировать монолитные')});
+    if(opt){
+      navigate('smart');
+      return;
+    }
+  }
+
   benchRunning = true;
   benchCancelled = false;
   resetBenchResults();

@@ -1844,6 +1844,226 @@ cmd_smart_learn_once() {
   printf 'n=%s\nok=%s\nlast=%s\nt=%s\n' "$n" "${ok:-0}" "$h" "$(date +%s)" > "$SMART_LEARN_FILE.tmp" && mv -f "$SMART_LEARN_FILE.tmp" "$SMART_LEARN_FILE"
 }
 
+smart_variant_name() { # <slot> <v> -> имя варианта
+  local slot="$1" v="$2" name=""
+  name=$(sed -n "s/^#@${slot}[[:space:]]\+${v}[[:space:]]\+//p" "$STRATEGIES_DIR/smart.conf" 2>/dev/null | tr -d '\r')
+  [ -z "$name" ] && name="Вариант #$v"
+  printf '%s' "$name"
+}
+
+# smart-apply-variant <slot> <v> [host]
+# Закрепляет вариант за сайтом или делает его стартовым лидером в текущей сети
+cmd_smart_apply_variant() {
+  local slot="${1:-tls}" v="$2" host="${3:-}"
+  [ -z "$v" ] && { echo "Не указан вариант" >&2; return 1; }
+  local net
+  net=$(cat "$SMART_NET_FILE" 2>/dev/null)
+  { [ -z "$net" ] || [ "$net" = "offline" ]; } && net=$(cat "$SMART_NET_LAST" 2>/dev/null)
+  { [ -z "$net" ] || [ "$net" = "offline" ]; } && net="default"
+  smart_valid_net "$net" || { echo "Неверная сеть" >&2; return 1; }
+
+  local f="$SMART_DIR/$net.tsv"
+  mkdir -p "$SMART_DIR"
+  { [ -f "$f" ] && head -n 1 "$f" | grep -q '^#v4'; } || printf '#v4 slot\thost\tcur\tok\terr\tcool\tseen\tflags\n' > "$f"
+
+  local now_ts; now_ts=$(date +%s)
+  local tmp="$f.tmp.$$"
+
+  if [ -n "$host" ]; then
+    local h_clean; h_clean=$(domain_norm "$host")
+    [ -n "$h_clean" ] || h_clean="$host"
+    awk -F'\t' -v OFS='\t' -v s="$slot" -v h="$h_clean" -v v="$v" -v t="$now_ts" '
+      BEGIN { found = 0 }
+      $1 == s && $2 == h {
+        found = 1
+        $3 = v
+        if ($4 == "") $4 = v ":3.0"
+        else if ($4 !~ "(^|,)" v ":") $4 = $4 "," v ":3.0"
+        $7 = t
+        $8 = "e"
+        print; next
+      }
+      { print }
+      END {
+        if (!found) {
+          print s, h, v, v ":3.0", "", "", t, "e"
+        }
+      }
+    ' "$f" > "$tmp" && mv -f "$tmp" "$f"
+  else
+    local anchor_hosts=""
+    case "$slot" in
+      google) anchor_hosts="youtube.com googlevideo.com" ;;
+      quic) anchor_hosts="youtube.com" ;;
+      *) anchor_hosts="x.com instagram.com rutracker.org" ;;
+    esac
+    for ah in $anchor_hosts; do
+      awk -F'\t' -v OFS='\t' -v s="$slot" -v h="$ah" -v v="$v" -v t="$now_ts" '
+        BEGIN { found = 0 }
+        $1 == s && $2 == h {
+          found = 1
+          $3 = v
+          if ($4 == "") $4 = v ":3.0"
+          else if ($4 !~ "(^|,)" v ":") $4 = $4 "," v ":3.0"
+          $7 = t
+          $8 = "e"
+          print; next
+        }
+        { print }
+        END {
+          if (!found) {
+            print s, h, v, v ":3.0", "", "", t, "e"
+          }
+        }
+      ' "$f" > "$tmp" && mv -f "$tmp" "$f"
+    done
+  fi
+
+  if is_running && smart_active; then sh "$SERVICE" restart >/dev/null 2>&1; fi
+  log_msg "умный режим: закреплён вариант $slot #$v ($([ -n "$host" ] && echo "$host" || echo "лидер сети $net"))"
+  echo OK
+}
+
+# Экспресс-тестирование вариантов слота умного режима без перезапуска службы
+# smart-bench [domain] [slot]
+cmd_smart_bench() {
+  local target_domain="${1:-}" slot_arg="${2:-}"
+  local tool kind bin
+  tool=$(probe_tool); kind="${tool%% *}"; bin="${tool#* }"
+  printf 'tool\t%s\n' "$kind"
+  [ "$kind" = "none" ] && { echo done; return 0; }
+
+  if ! is_running || ! smart_active; then
+    echo "Умный режим не запущен" >&2
+    return 1
+  fi
+  local net
+  net=$(cat "$SMART_NET_FILE" 2>/dev/null)
+  [ "$net" = "offline" ] && { echo "Нет сети (offline)" >&2; return 1; }
+
+  local slot="tls"
+  if [ -n "$slot_arg" ]; then
+    slot="$slot_arg"
+  elif [ -n "$target_domain" ]; then
+    case "$target_domain" in
+      *youtube*|*googlevideo*) slot="google" ;;
+      *) slot="tls" ;;
+    esac
+  fi
+
+  local bench_key="#@bench-$slot"
+  local cand_spec
+  cand_spec=$(sed -n "s/^${bench_key}[[:space:]]*//p" "$STRATEGIES_DIR/smart.conf" 2>/dev/null | tr -d '\r')
+  local candidates=""
+  if [ -n "$cand_spec" ]; then
+    candidates=$(echo "$cand_spec" | awk -F, '{
+      for (i = 1; i <= NF; i++) {
+        if (split($i, r, "-") == 2) {
+          for (j = r[1] + 0; j <= r[2] + 0; j++) printf "%d ", j
+        } else if ($i ~ /^[0-9]+$/) {
+          printf "%d ", $i + 0
+        }
+      }
+    }')
+  fi
+  if [ -z "$candidates" ]; then
+    case "$slot" in
+      google) candidates="1 2 6 15 34 41 43 44" ;;
+      quic) candidates="1 2 3 4 6 7 8" ;;
+      *) candidates="1 8 9 15 23 39" ;;
+    esac
+  fi
+
+  local targets=""
+  if [ -n "$target_domain" ]; then
+    target_domain=$(printf '%s' "$target_domain" | tr 'A-Z' 'a-z' | sed 's#^[a-z]*://##; s#/.*##; s/:[0-9]*$//; s/^www\.//')
+    target_domain=$(resolve_probe_target "$target_domain")
+    targets="$target_domain"
+  else
+    case "$slot" in
+      google) targets="www.youtube.com $(resolve_probe_target 'googlevideo.com')" ;;
+      quic) targets="www.youtube.com" ;;
+      *) targets="x.com instagram.com rutracker.org" ;;
+    esac
+  fi
+
+  local total_variants
+  total_variants=$(printf '%s\n' $candidates | wc -w | tr -d ' ')
+  [ "$total_variants" -eq 0 ] && { echo "Нет вариантов для тестирования" >&2; return 1; }
+
+  mkdir -p "$STATE_DIR"
+  echo "$$" > "$STATE_DIR/probe.pid"
+  echo "1 $$" > "$STATE_DIR/smart_bench"
+  : > "$STATE_DIR/smart_bench.seen"
+
+  smart_bench_cleanup() {
+    rm -f "$STATE_DIR/probe.pid" "$STATE_DIR/smart_bench" "$STATE_DIR/smart_bench.0" "$STATE_DIR/smart_bench.seen"
+    cleanup_probe_app_rule
+  }
+  trap 'trap - EXIT; smart_bench_cleanup; exit 130' INT TERM
+  trap 'smart_bench_cleanup' EXIT
+
+  setup_probe_app_rule
+
+  printf 'SMART_BENCH_START\t%s\t%s\t%s\n' "$total_variants" "$slot" "$(echo $targets | tr ' ' ',')"
+
+  local v_idx=0 best_v="" best_name="" best_ok=0 best_total=0 best_ms=99999
+  local proto=3
+  [ "$slot" = "quic" ] && proto=4
+
+  for v in $candidates; do
+    local v_name
+    v_name=$(smart_variant_name "$slot" "$v")
+    printf 'SMART_BENCH_RUN\t%s\t%s\t%s\t%s\n' "$v_idx" "$v" "$v_name" "$total_variants"
+
+    local ok_cnt=0 total_cnt=0 sum_ms=0 fail_reasons=""
+
+    for tgt in $targets; do
+      local now_ts; now_ts=$(date +%s)
+      local host_part="${tgt%%/*}"
+      printf '%s %s %s\n' "$host_part" "$v" "$now_ts" > "$STATE_DIR/smart_bench.0"
+
+      total_cnt=$((total_cnt + 1))
+      local res
+      res=$(probe_attempt "$kind" "$bin" "$tgt" "$proto")
+      local st="${res%% *}" detail="${res#* }"
+      if [ "$st" = "ok" ]; then
+        ok_cnt=$((ok_cnt + 1))
+        sum_ms=$((sum_ms + ${detail:-0}))
+      else
+        fail_reasons="$fail_reasons $detail"
+      fi
+    done
+
+    local avg_ms=0
+    [ "$ok_cnt" -gt 0 ] && avg_ms=$((sum_ms / ok_cnt))
+
+    local top_fail="-"
+    if [ -n "$fail_reasons" ]; then
+      top_fail=$(printf '%s\n' $fail_reasons | sort | uniq -c | sort -nr | head -1 | awk '{print $2}')
+      [ -z "$top_fail" ] && top_fail="-"
+    fi
+
+    printf 'SMART_BENCH_RES\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$v_idx" "$v" "$v_name" "$ok_cnt" "$total_cnt" "$avg_ms" "$top_fail"
+
+    if [ "$ok_cnt" -gt "$best_ok" ] || { [ "$ok_cnt" -eq "$best_ok" ] && [ "$best_ok" -gt 0 ] && [ "$avg_ms" -lt "$best_ms" ]; }; then
+      best_ok="$ok_cnt"
+      best_total="$total_cnt"
+      best_ms="$avg_ms"
+      best_v="$v"
+      best_name="$v_name"
+    fi
+
+    v_idx=$((v_idx + 1))
+  done
+
+  smart_bench_cleanup
+  trap - EXIT INT TERM
+
+  [ -z "$best_v" ] && { best_v="-"; best_name="-"; }
+  printf 'SMART_BENCH_BEST\t%s\t%s\t%s\t%s\t%s\t%s\n' "$slot" "$best_v" "$best_name" "$best_ok" "$best_total" "$best_ms"
+}
+
 cmd_bench_strategies() {
   local target_domain="$1"
   local tool kind bin orig_strat orig_running=false
@@ -2731,6 +2951,8 @@ EOF
   smart-export) cmd_smart_export "$2" "$3" ;;
   smart-import-b64) cmd_smart_import_b64 "$2" ;;
   smart-learn-once) cmd_smart_learn_once ;;
+  smart-bench) cmd_smart_bench "$2" "$3" ;;
+  smart-apply-variant) cmd_smart_apply_variant "$2" "$3" "$4" ;;
   smart-turbo)
     case "$2" in
       off|0) rm -f "$SMART_TURBO_FILE"; echo "Турбо-обучение выключено" ;;
@@ -2751,7 +2973,7 @@ EOF
     echo "         import-add-b64 list-imports get-import-merged-b64 rename-import delete-import" >&2
     echo "         get-list save-list-b64 list-update add-domain clear-auto reset-lists set set-mode list-apps" >&2
     echo "         get-logs export-logs clear-logs wifi-ssid backup-create backup-list backup-restore backup-restore-b64 probe-dpi probe-cancel net-info bench-strategies check-domain domain-check" >&2
-    echo "         smart-status smart-sites smart-export smart-import-b64 smart-learn-once smart-turbo smart-reset" >&2
+    echo "         smart-status smart-sites smart-export smart-import-b64 smart-learn-once smart-bench smart-apply-variant smart-turbo smart-reset" >&2
     echo "         home-pause net-recheck upload share changelog" >&2
     echo "         current-network list-net-strategies clear-net-strategies googlevideo-discovery orchestra-status orchestra-lock orchestra-unlock orchestra-block orchestra-unblock orchestra-clear tg-affinity" >&2
     echo "         list-catalogs get-catalog catalog-apply-module list-replaced-strategies restore-replaced-strategy" >&2

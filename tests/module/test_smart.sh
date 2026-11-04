@@ -252,6 +252,37 @@ section "the active strategy says whether smart mode is on"
 ctl get-strategy
 assert_eq "smart" "$ctl_out" "smart mode is the smart strategy (the WebUI reads the mode from it)"
 
+section "smart-bench and smart-apply-variant"
+ctl smart-apply-variant tls 15 "custom.example"
+assert_rc 0 "$ctl_rc" "smart-apply-variant succeeds for a host"
+f_net=$(cat "$SMART_NET_FILE" 2>/dev/null || echo "mobile-25001")
+assert_contains "$(cat "$SMART_DIR/$f_net.tsv")" "custom.example	15	15:3.0" "host is pinned to variant with weight 3.0"
+
+ctl smart-apply-variant google 15
+assert_rc 0 "$ctl_rc" "smart-apply-variant succeeds without host (leader)"
+assert_contains "$(cat "$SMART_DIR/$f_net.tsv")" "youtube.com	15	15:3.0" "anchor host is set for the slot leader"
+
+# smart-bench without running service fails cleanly
+ctl smart-bench "custom.example" tls
+assert_rc 1 "$ctl_rc" "smart-bench fails when service is not running"
+
+# smart-bench with mock running daemon and curl stub
+printf '%s\n' "$$" > "$CONFDIR/state/nfqws2.pid"
+cat > "$MOCKBIN/curl" <<'X'
+#!/bin/sh
+echo "HTTP/1.1 200 OK"
+echo "HTTP_CODE:200"
+exit 0
+X
+chmod 0755 "$MOCKBIN/curl"
+ctl smart-bench "custom.example" tls
+assert_rc 0 "$ctl_rc" "smart-bench runs and completes"
+assert_contains "$ctl_out" "SMART_BENCH_START" "emits SMART_BENCH_START"
+assert_contains "$ctl_out" "SMART_BENCH_RES" "emits SMART_BENCH_RES"
+assert_contains "$ctl_out" "SMART_BENCH_BEST" "emits SMART_BENCH_BEST"
+assert_no_file "$CONFDIR/state/smart_bench" "smart_bench state is cleaned up"
+rm -f "$CONFDIR/state/nfqws2.pid"
+
 if [ -x "${NFQWS2_TEST_BIN:-}" ]; then
   section "the orchestrator itself (inside nfqws2)"
   H="$SANDBOX/smarthome"; mkdir -p "$H/state" "$H/smart" "$H/logs"

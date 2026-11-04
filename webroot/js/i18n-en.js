@@ -665,6 +665,21 @@ EN = {
   "продолжится, когда служба возобновит работу": "will continue when the service resumes",
   "служба остановлена — продолжится при запуске": "service is stopped — will continue on start",
   "только по ходу работы": "only as it works",
-  "удачных {0} · с ошибками {1}": "successful {0} · with errors {1}"
+  "удачных {0} · с ошибками {1}": "successful {0} · with errors {1}",
+  "Калибровка вариантов": "Calibrate variants",
+  "Экспресс-тест вариантов обхода без перезапуска службы. Подбирает лучший вариант десинхронизации для текущей сети.": "Express test of bypass variants without service restarts. Finds the best desync variant for this network.",
+  "TLS (сайты)": "TLS (websites)",
+  "Google & YT": "Google & YT",
+  "Свой домен (опционально)": "Custom domain (optional)",
+  "Тестировать": "Test",
+  "Остановить": "Stop",
+  "Сделать основным": "Make primary",
+  "Рекомендация: {0}": "Recommendation: {0}",
+  "Успешно: {0}/{1} · {2} мс": "Successful: {0}/{1} · {2} ms",
+  "Вариант #{0} закреплён ({1})": "Variant #{0} applied ({1})",
+  "Тестирование в умном режиме": "Benchmark in smart mode",
+  "Включён умный режим. Перейти в Умный режим для калибровки вариантов без перезапуска службы?": "Smart mode is active. Switch to Smart mode to calibrate variants without restarting the service?",
+  "В умный режим": "Go to Smart mode",
+  "Тестировать монолитные": "Test monolithic"
 };
 
