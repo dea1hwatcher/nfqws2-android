@@ -95,7 +95,7 @@ if (status) {
   // in apps.js: (S.counts || {}).apps
   const countSrc = new Set([...webrootSrc.matchAll(/\b(?:counts|S\.counts)\.([a-z_]+)\b/g)].map(m => m[1]));
   for (const m of webrootSrc.matchAll(/\['([a-z_]+)',\s*'[a-z_]+\.list'/g)) {
-    if (m[1] !== 'probe_hosts') countSrc.add(m[1]);
+    countSrc.add(m[1]);
   }
   const counts = status.counts || {};
   const missingCounts = [...countSrc].filter(k => !(k in counts));

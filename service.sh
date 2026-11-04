@@ -71,7 +71,6 @@ start() {
     log_msg "Starting nfqws2..."
     kernel_modules
     rotate_logs start
-    [ -f "$LISTS_DIR/geoblock.list" ] || : > "$LISTS_DIR/geoblock.list"
     ensure_eol "$LISTS_DIR/auto.list"
 
     local args

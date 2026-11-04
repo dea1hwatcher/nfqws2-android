@@ -54,7 +54,6 @@ list_file() {
     probe_tg|probe_tg.list) echo "$LISTS_DIR/probe_tg.list" ;;
     probe_bench|probe_bench.list) echo "$LISTS_DIR/probe_bench.list" ;;
     quic_unsupported|quic_unsupported.list) echo "$LISTS_DIR/quic_unsupported.list" ;;
-    geoblock|geoblock.list) echo "$LISTS_DIR/geoblock.list" ;;
     apps|apps.list) echo "$CONFDIR/apps.list" ;;
     home|home_wifi.list) echo "$HOME_FILE" ;;
     *) return 1 ;;
@@ -200,16 +199,16 @@ cmd_json_status() {
   cur_strat=$(get_current_strategy)
   local qdrop
   qdrop=$(awk -v q="$NFQUEUE_NUM" '$1 == q { print $6 + $7; f = 1 } END { if (!f) print 0 }' /proc/net/netfilter/nfnetlink_queue 2>/dev/null)
-  local appn cnt_user cnt_auto cnt_excl cnt_ipset cnt_ipset_excl cnt_apps cnt_geo v
+  local appn cnt_user cnt_auto cnt_excl cnt_ipset cnt_ipset_excl cnt_apps cnt_probe v
   appn=$(app_uid_count 2>/dev/null)
   set -- $(list_counts "$LISTS_DIR/user.list" "$LISTS_DIR/auto.list" "$LISTS_DIR/exclude.list" \
                       "$LISTS_DIR/ipset.list" "$LISTS_DIR/ipset_exclude.list" "$CONFDIR/apps.list" \
-                      "$LISTS_DIR/geoblock.list")
-  cnt_user="$1" cnt_auto="$2" cnt_excl="$3" cnt_ipset="$4" cnt_ipset_excl="$5" cnt_apps="$6" cnt_geo="$7"
+                      "$LISTS_DIR/probe_hosts.list")
+  cnt_user="$1" cnt_auto="$2" cnt_excl="$3" cnt_ipset="$4" cnt_ipset_excl="$5" cnt_apps="$6" cnt_probe="$7"
   local has_rb
   if [ -f "$SNAPSHOT_DIR/nfqws2.conf" ]; then has_rb=1; else has_rb=0; fi
   # нечисловое значение обваливает весь JSON и убивает WebUI, поэтому проверяем каждое поле
-  for v in appn cnt_user cnt_auto cnt_excl cnt_ipset cnt_ipset_excl cnt_apps cnt_geo uptime upms qdrop \
+  for v in appn cnt_user cnt_auto cnt_excl cnt_ipset cnt_ipset_excl cnt_apps cnt_probe uptime upms qdrop \
            PKT_LIMIT_OUT PKT_LIMIT_IN BLOCK_QUIC AUTOSTART WATCHDOG IPV6_ENABLED LOG_LEVEL NFQUEUE_NUM WAKELOCK HOME_WIFI ENABLE_HOTSPOT NET_STRATEGY VPN_PAUSE META_QUIC_REJECT CALLS_BYPASS TCP_MSS_CLAMP WL_PAUSE has_rb; do
     eval "case \"\${$v}\" in ''|*[!0-9]*) $v=0 ;; esac"
   done
@@ -220,7 +219,7 @@ cmd_json_status() {
 "ipv6":$IPV6_ENABLED,"log_level":$LOG_LEVEL,"qdrop":$qdrop,"queue":$NFQUEUE_NUM,"app_uids":$appn,
 "home_wifi":$HOME_WIFI,"enable_hotspot":$ENABLE_HOTSPOT,"net_strategy":$NET_STRATEGY,"vpn_pause":$VPN_PAUSE,"wl_pause":$WL_PAUSE,"meta_quic":$META_QUIC_REJECT,"calls_bypass":$CALLS_BYPASS,"tcp_mss_clamp":$TCP_MSS_CLAMP,"smart":$(smart_active && echo 1 || echo 0),"paused":"$(json_str "$paused")","home_override":"$(json_str "$override")","pending":"$(json_str "$pending")",
 "has_rollback":$has_rb,
-"counts":{"user":$cnt_user,"auto":$cnt_auto,"exclude":$cnt_excl,"ipset":$cnt_ipset,"ipset_exclude":$cnt_ipset_excl,"apps":$cnt_apps,"geoblock":$cnt_geo}}
+"counts":{"user":$cnt_user,"auto":$cnt_auto,"exclude":$cnt_excl,"ipset":$cnt_ipset,"ipset_exclude":$cnt_ipset_excl,"apps":$cnt_apps,"probe_hosts":$cnt_probe}}
 JSON
 }
 
