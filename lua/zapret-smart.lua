@@ -190,7 +190,7 @@ local function vname(slot, v)
 	if m then
 		local a = {}
 		for _, c in ipairs(m.ch) do a[#a + 1] = c.k .. "=" .. c.val end
-		return one(m.base) .. " · подстройка " .. v .. ": " .. table.concat(a, ", ")
+		return one(m.base) .. " · tuning " .. v .. ": " .. table.concat(a, ", ")
 	end
 	return one(v)
 end
@@ -551,11 +551,11 @@ local function check_net()
 	SM.net = net
 	if load_net(net) then
 		DLOG("smart: network '" .. net .. "': loaded")
-		SJ("сеть " .. net .. ": выученное загружено")
+		SJ("network " .. net .. ": learned data loaded")
 	else
 		-- новая сеть — с копии выученного в прежней; меняется уже отдельно
 		DLOG("smart: network '" .. net .. "' is new, starting from a copy of '" .. tostring(prev) .. "'")
-		SJ("сеть " .. net .. ": новая" .. (prev and (", начинает с копии " .. prev) or ""))
+		SJ("network " .. net .. ": new" .. (prev and (", starts from copy of " .. prev) or ""))
 		for _, r in pairs(SM.db) do r.cool = {}; r.cooln = {}; r.win = {} end
 		SM.dirty = true
 	end
@@ -718,7 +718,7 @@ local function on_err(slot, key, r, v, n, t, pass, mid, c)
 		r.cur = best
 		r.win = {}
 		DLOG("smart: " .. key .. ": tried " .. tried .. " variants, worked on " .. string.format("%.1f", tok) .. " of " .. string.format("%.0f", tok + terr) .. " — pausing the search for " .. NODPI_TIME .. "s")
-		SJ(key .. ": перепробованы почти все варианты (" .. tried .. "), открывался считанные разы — перебор на паузе 6 часов")
+		SJ(key .. ": tried almost all variants (" .. tried .. "), opened very few times — search paused for 6h")
 		return
 	end
 	-- «без обхода» выбирается последним и сюда может не дойти — его не ждём
@@ -727,7 +727,7 @@ local function on_err(slot, key, r, v, n, t, pass, mid, c)
 		r.cur = r.first or 1
 		r.win = {}
 		DLOG("smart: " .. key .. ": fails on " .. bad_v .. " variants, never worked — not DPI, leaving it alone for " .. NODPI_TIME .. "s")
-		SJ(key .. ": не открылся ни на одном из " .. bad_v .. " вариантов — не похоже на блокировку, 6 часов не трогаем")
+		SJ(key .. ": did not open on any of " .. bad_v .. " variants — does not look like DPI blocking, paused for 6h")
 		return
 	end
 	-- вариант остывает: чем чаще ломается, тем дольше
@@ -755,7 +755,7 @@ local function on_err(slot, key, r, v, n, t, pass, mid, c)
 			r.tune, tuned = t, true
 			if not bs then SM.mutt[slot] = t end
 			DLOG("smart: " .. key .. ": tuning variant " .. base .. " as " .. nxt .. " (" .. ch_str(SM.mut[slot][nxt].ch) .. ")")
-			SJ(key .. ": " .. vname(slot, v) .. " сбоит — " .. (bs and "берём удачную подстройку: " or "пробуем подстройку: ") .. vname(slot, nxt))
+			SJ(key .. ": " .. vname(slot, v) .. " failing — " .. (bs and "using successful tuning: " or "trying tuning: ") .. vname(slot, nxt))
 		end
 	end
 	nxt = nxt or next_strategy(slot, r, n, t, pass)
@@ -764,7 +764,7 @@ local function on_err(slot, key, r, v, n, t, pass, mid, c)
 			", err " .. string.format("%.1f", r.err[v] or 0) .. ")")
 		if not tuned then
 			local e, o = win_count(r)
-			SJ(key .. ": " .. vname(slot, v) .. " → " .. vname(slot, nxt) .. string.format(" (за последние соединения: ошибок %d, удач %.1f; всего удач %.1f, ошибок %.1f)", e, o, r.ok[v] or 0, r.err[v] or 0))
+			SJ(key .. ": " .. vname(slot, v) .. " → " .. vname(slot, nxt) .. string.format(" (recent conns: errors %d, ok %.1f; total ok %.1f, errors %.1f)", e, o, r.ok[v] or 0, r.err[v] or 0))
 		end
 		r.cur = nxt
 	end
@@ -955,7 +955,7 @@ function smart_watch()
 					-- застряло после удачного начала — обрыв посреди работы; ещё до
 					-- ответа сервера — ошибка начала соединения
 					DLOG("smart: " .. c.key .. ": connection :" .. h.lp .. " stuck " .. (c.ok and "mid-stream" or "before any answer") .. " on variant " .. c.v)
-					SJ(c.key .. ": соединение застряло " .. (c.ok and "посреди работы" or "до ответа сервера") .. " — ошибка " .. vname(c.slot, c.v) .. ", обрываем")
+					SJ(c.key .. ": connection stuck " .. (c.ok and "mid-stream" or "before server response") .. " — error " .. vname(c.slot, c.v) .. ", cutting")
 					c.done, c.failed = true, true
 					on_err(c.slot, c.key, r, c.v, c.n, t, c.pass, c.ok, c)
 				end
@@ -1051,7 +1051,7 @@ function smart(ctx, desync)
 		if prev and not prev.done and prev.maxin >= 14000 and prev.maxin < 17000 and t - prev.tin <= 30 then
 			prev.done = true
 			DLOG("smart: " .. key .. ": previous connection stalled at " .. prev.maxin .. " bytes")
-			SJ(key .. ": соединение замерло на " .. prev.maxin .. " байтах (обрыв на 16 КБ) — ошибка " .. vname(slot, prev.v))
+			SJ(key .. ": connection stalled at " .. prev.maxin .. " bytes (16KB cut) — error " .. vname(slot, prev.v))
 			-- начало у него было удачным (больше 4 КБ) — это обрыв посреди работы
 			on_err(slot, key, r, prev.v, n, t, pass, prev.ok, prev)
 		end
@@ -1102,9 +1102,9 @@ function smart(ctx, desync)
 			local lp = tcp.th_sport
 			DLOG("smart: " .. key .. ": connection :" .. lp .. " frozen after the answer on variant " .. cs.v)
 			if r.nodpi and r.nodpi > t then
-				SJ(key .. ": соединение заморожено после первого ответа — обрываем, приложение откроет новое")
+				SJ(key .. ": connection frozen after first response — cutting, app will reopen")
 			else
-				SJ(key .. ": соединение заморожено после первого ответа — ошибка " .. vname(slot, cs.v) .. ", обрываем")
+				SJ(key .. ": connection frozen after first response — error " .. vname(slot, cs.v) .. ", cutting")
 				on_err(slot, key, r, cs.v, n, t, pass, true, cs)
 			end
 			if cs.ip then kill_conns({ kill_line(cs.ip, lp) }) end

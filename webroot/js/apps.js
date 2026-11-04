@@ -37,6 +37,7 @@ async function appsInit(){
 }
 function renderAppModes(){
   const cur = S.app_mode || 'off';
+  const uids = S.app_uids || 0;
   setHTML('amode-list', APP_MODES.map(([v, label]) =>
     '<label class="list-item clickable state' + (v === cur ? ' selected' : '') + '">' +
       '<input type="radio" class="radio" name="amode" value="' + v + '"' + (v === cur ? ' checked' : '') +

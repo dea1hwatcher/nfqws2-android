@@ -596,9 +596,9 @@ check(rec("149.154.167.51") ~= nil, "mtproto has no name and is keyed by address
 section("the journal tells what smart mode decided")
 local jr = readall(HOME .. "/logs/smart.log") or ""
 check(jr:find("b.example: MartinBacker #1 → MartinBacker #2", 1, true) ~= nil, "a switch is in the journal, with variant names")
-check(jr:find("подстройк", 1, true) ~= nil, "so is tuning")
-check(jr:find("не похоже на блокировку", 1, true) ~= nil, "and «not DPI»")
-check(jr:find("застряло", 1, true) ~= nil, "and cut connections")
+check(jr:find("tuning", 1, true) ~= nil, "so is tuning")
+check(jr:find("does not look like DPI blocking", 1, true) ~= nil, "and «not DPI»")
+check(jr:find("stuck", 1, true) ~= nil, "and cut connections")
 
 section("strategies mode: the statistics observer only counts")
 do

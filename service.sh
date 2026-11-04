@@ -671,7 +671,7 @@ home_check() {
     if is_running && [ ! -f "$HOME_PAUSED_FILE" ]; then
       case "$want" in
         @vpn) log_msg "VPN active — bypass paused" ;;
-        @wl)  log_msg "Carrier whitelist active (белые списки — обход приостановлен)" ;;
+        @wl)  log_msg "Carrier whitelist active — bypass paused" ;;
         *)    log_msg "Home Wi-Fi «$want» — bypass paused" ;;
       esac
       stop >/dev/null 2>&1
@@ -684,7 +684,7 @@ home_check() {
   elif [ -f "$HOME_PAUSED_FILE" ]; then
     case "$(cat "$HOME_PAUSED_FILE" 2>/dev/null)" in
       @vpn) log_msg "VPN disconnected — bypass resumed" ;;
-      @wl)  log_msg "Carrier whitelist ended (Белые списки выключены — обход возобновлён)" ;;
+      @wl)  log_msg "Carrier whitelist ended — bypass resumed" ;;
       *)    log_msg "Home Wi-Fi no longer active — bypass resumed" ;;
     esac
     rm -f "$HOME_PAUSED_FILE"
@@ -746,7 +746,7 @@ autostart_service() {
       printf '@vpn' > "$HOME_PAUSED_FILE"
       update_description paused "@vpn"
     elif [ "$WL_PAUSE" = "1" ] && [ -f "$WL_FILE" ]; then
-      log_msg "Carrier whitelist active (белые списки) — autostart deferred until ended"
+      log_msg "Carrier whitelist active — autostart deferred until ended"
       printf '@wl' > "$HOME_PAUSED_FILE"
       update_description paused "@wl"
     elif [ "$HOME_WIFI" = "1" ] && ssid=$(current_ssid) && ssid_is_home "$ssid"; then

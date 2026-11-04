@@ -365,23 +365,23 @@ assert_contains "$ctl_out" "пусто" "an empty log reports (пусто) rathe
 ctl clear-logs
 assert_rc 0 "$ctl_rc" "clear-logs works"
 assert_eq "1" "$(grep -c . "$CONFDIR/logs/service.log")" "service.log is truncated"
-assert_contains "$(cat "$CONFDIR/logs/service.log")" "действие пользователя: журналы очищены" "keeping one line: who cleared it"
+assert_contains "$(cat "$CONFDIR/logs/service.log")" "user action: logs cleared" "keeping one line: who cleared it"
 
 # Действия пользователя — в журнал службы: кто остановил, что забыто, что
 # отключено. Чтение (состояние, списки) — нет
 section "user actions are logged"
 : > "$CONFDIR/logs/service.log"
 ctl status >/dev/null; ctl get-list user >/dev/null; ctl smart-status >/dev/null
-assert_eq "0" "$(grep -c 'действие пользователя' "$CONFDIR/logs/service.log")" "reading the state is not an action"
+assert_eq "0" "$(grep -c 'user action' "$CONFDIR/logs/service.log")" "reading the state is not an action"
 ctl set SMART_LEARN 0
-assert_contains "$(cat "$CONFDIR/logs/service.log")" "действие пользователя: настройка SMART_LEARN=0" "a setting change is logged with its value"
+assert_contains "$(cat "$CONFDIR/logs/service.log")" "user action: setting SMART_LEARN=0" "a setting change is logged with its value"
 ctl smart-reset all
-assert_contains "$(cat "$CONFDIR/logs/service.log")" "действие пользователя: умный режим: забыто всё выученное (все сети)" "forgetting everything learned is logged"
-assert_contains "$(cat "$CONFDIR/logs/smart.log")" "действие пользователя: умный режим: забыто всё выученное" "in the smart mode log too, where it will be looked for"
+assert_contains "$(cat "$CONFDIR/logs/service.log")" "user action: smart mode: cleared all learned data (all networks)" "forgetting everything learned is logged"
+assert_contains "$(cat "$CONFDIR/logs/smart.log")" "user action: smart mode: cleared all learned data" "in the smart mode log too, where it will be looked for"
 ctl smart-reset mobile-25001
-assert_contains "$(cat "$CONFDIR/logs/service.log")" "забыто выученное сети mobile-25001" "forgetting one network names it"
+assert_contains "$(cat "$CONFDIR/logs/service.log")" "cleared learned data for network mobile-25001" "forgetting one network names it"
 ctl add-domain example.org
-assert_contains "$(cat "$CONFDIR/logs/service.log")" "действие пользователя: добавлен домен example.org" "a domain added by hand"
+assert_contains "$(cat "$CONFDIR/logs/service.log")" "user action: added domain example.org" "a domain added by hand"
 ctl set SMART_LEARN 1
 
 section "smart-turbo"
@@ -389,7 +389,7 @@ ctl smart-turbo 300
 assert_rc 0 "$ctl_rc" "smart-turbo enables"
 assert_file "$SMART_TURBO_FILE" "turbo file created"
 assert_contains "$ctl_out" "300" "turbo output confirms duration"
-assert_contains "$(cat "$CONFDIR/logs/service.log")" "турбо-обучение" "user action logged"
+assert_contains "$(cat "$CONFDIR/logs/service.log")" "turbo learning" "user action logged"
 ctl smart-turbo off
 assert_rc 0 "$ctl_rc" "smart-turbo turns off"
 assert_no_file "$SMART_TURBO_FILE" "turbo file removed"
@@ -800,7 +800,7 @@ assert_eq "$(cat "$CONFFILE")" "$(cat "$SANDBOX/shared/.share/nfqws2.conf" 2>/de
 assert_contains "$(cat "$MOCK_DIR/content.log")" "--method scan_file --arg $SANDBOX/shared/.share/nfqws2.conf" "MediaStore scans the copy at once"
 assert_match "$(cat "$MOCK_DIR/am.log")" "SEND --user 0 -d content://media/external_primary/file/42 -t text/plain" "and the link it answers with is shared, as plain text"
 assert_not_contains "$(cat "$MOCK_DIR/am.log")" "file://" "no file:// link: other apps (Telegram, ChatGPT, Quick Share) cannot read it"
-assert_contains "$(cat "$LOG_DIR/service.log")" "поделиться: nfqws2.conf — content://media/external_primary/file/42 (scan)" "which link was shared goes to the log"
+assert_contains "$(cat "$LOG_DIR/service.log")" "share: nfqws2.conf — content://media/external_primary/file/42 (scan)" "which link was shared goes to the log"
 # без ответа scan_file и MediaStore — ссылка DocumentsProvider на файл в общей памяти
 touch "$MOCK_DIR/noscan"; : > "$MOCK_DIR/am.log"
 mkdir -p "$SANDBOX/sd"

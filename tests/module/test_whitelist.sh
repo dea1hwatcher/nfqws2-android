@@ -45,7 +45,7 @@ date +%s > "$WL_FILE"
 svc home_check >/dev/null 2>&1
 assert_no_file "$PIDFILE" "white lists pause it"
 assert_eq "@wl" "$(cat "$HOME_PAUSED_FILE" 2>/dev/null)" "with the white lists as the reason"
-assert_contains "$(cat "$SERVICE_LOG")" "белые списки — обход приостановлен" "and say so in the log"
+assert_contains "$(cat "$SERVICE_LOG")" "Carrier whitelist active" "and say so in the log"
 ctl json-status
 assert_contains "$ctl_out" '"paused":"@wl"' "the status shows the reason"
 svc start >/dev/null 2>&1
@@ -62,7 +62,7 @@ assert_no_file "$PIDFILE" "the next white lists pause again"
 rm -f "$WL_FILE"
 svc home_check >/dev/null 2>&1
 assert_file "$PIDFILE" "their end resumes the bypass"
-assert_contains "$(cat "$SERVICE_LOG")" "Белые списки выключены — обход возобновлён" "and says so"
+assert_contains "$(cat "$SERVICE_LOG")" "Carrier whitelist ended" "and says so"
 
 section "the switch"
 date +%s > "$WL_FILE"

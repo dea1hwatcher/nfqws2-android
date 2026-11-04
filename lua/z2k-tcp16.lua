@@ -70,7 +70,7 @@ local function z2k_nets_load()
 	end
 	nf:close()
 	if cnt == 0 then return nil end
-	DLOG("z2k_tcp16: карта сетей загружена, " .. cnt .. " записей")
+	DLOG("z2k_tcp16: network map loaded, " .. cnt .. " entries")
 	z2k_nets = set
 	return set
 end
@@ -114,7 +114,7 @@ local function z2k_asn_sni_load()
 	end
 	f:close()
 	if n == 0 then return nil end
-	DLOG("z2k_tcp16: карта имён по сетям загружена, " .. n .. " сетей")
+	DLOG("z2k_tcp16: network names map loaded, " .. n .. " networks")
 	z2k_asn_sni = m
 	return m
 end
@@ -199,6 +199,6 @@ function z2k_sni_pick(ctx, desync)
 	end
 	desync[desync.arg.blob or "z2k_ch"] = ch
 	if b_debug then
-		DLOG("z2k_sni_pick: подставлено имя " .. name)
+		DLOG("z2k_sni_pick: substituted name " .. name)
 	end
 end

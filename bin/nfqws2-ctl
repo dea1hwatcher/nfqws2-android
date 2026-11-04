@@ -1491,8 +1491,8 @@ share_stream() { # <файл> <имя>
   out=$(share_uri "$rf" "$mime"); u=${out%%	*}; how=${out#*	}
   out=$(am start -a android.intent.action.SEND --user 0 -d "$u" -t "$mime" --eu android.intent.extra.STREAM "$u" \
     --es android.intent.extra.SUBJECT "$2" --es android.intent.extra.TITLE "$2" -f 0x10000001 2>&1)
-  log_msg "поделиться: $2 — $u ($how)"
-  case "$out" in *Error*|*Exception*) log_msg "поделиться: am: $out"; echo "Не удалось открыть «Поделиться»: $out" >&2; return 1 ;; esac
+  log_msg "share: $2 — $u ($how)"
+  case "$out" in *Error*|*Exception*) log_msg "share: am: $out"; echo "Не удалось открыть «Поделиться»: $out" >&2; return 1 ;; esac
   return 0
 }
 # share-saved <путь>: поделиться файлом, который WebUI уже сохранил в общую
@@ -1920,7 +1920,7 @@ cmd_smart_apply_variant() {
   fi
 
   if is_running && smart_active; then sh "$SERVICE" restart >/dev/null 2>&1; fi
-  log_msg "умный режим: закреплён вариант $slot #$v ($([ -n "$host" ] && echo "$host" || echo "лидер сети $net"))"
+  log_msg "smart mode: pinned variant $slot #$v ($([ -n "$host" ] && echo "$host" || echo "network leader $net"))"
   echo OK
 }
 
@@ -2643,39 +2643,39 @@ cmd_monet_system() {
 # только что и куда
 user_action() { # <команда> [аргументы] -> описание | пусто, если не действие
   case "$1" in
-    start) echo "запуск службы" ;;
-    stop) echo "остановка службы" ;;
-    restart) echo "перезапуск службы" ;;
-    reload) echo "перечитать списки" ;;
-    set-strategy) echo "выбрана стратегия $2" ;;
-    strategy-reset) echo "сброшена стратегия $2" ;;
-    strategy-save-b64) echo "сохранена стратегия $2" ;;
-    save-conf-b64) echo "сохранён nfqws2.conf" ;;
-    reset-conf) echo "nfqws2.conf сброшен к умолчанию" ;;
-    import-add-b64) echo "импортирована стратегия $2" ;;
-    delete-import) echo "удалена импортированная стратегия $2" ;;
-    rename-import) echo "переименована стратегия $2 → $3" ;;
-    save-list-b64) echo "список $2 сохранён" ;;
-    add-domain) echo "добавлен домен $2${3:+ в $3}" ;;
-    clear-auto) echo "auto.list очищен" ;;
-    reset-lists) echo "списки сброшены к умолчанию" ;;
-    set) echo "настройка $2=$3" ;;
-    set-mode) echo "режим списков: $2" ;;
-    home-pause) echo "пауза дома: ${2:-переключение}" ;;
-    net-recheck) echo "перепроверка сети" ;;
-    backup-create) echo "резервная копия создана" ;;
-    backup-restore|backup-restore-b64) echo "восстановление из резервной копии${2:+ $2}" ;;
-    smart-import-b64) echo "импорт выученного умного режима" ;;
-    smart-turbo) echo "турбо-обучение: ${2:-вкл}" ;;
-    smart-reset) if [ "${2:-all}" = all ]; then echo "умный режим: забыто всё выученное (все сети)"
-      else echo "умный режим: забыто выученное сети $2"; fi ;;
-    clear-logs) echo "журналы очищены" ;;
+    start) echo "service started" ;;
+    stop) echo "service stopped" ;;
+    restart) echo "service restarted" ;;
+    reload) echo "lists reloaded" ;;
+    set-strategy) echo "selected strategy $2" ;;
+    strategy-reset) echo "reset strategy $2" ;;
+    strategy-save-b64) echo "saved strategy $2" ;;
+    save-conf-b64) echo "saved nfqws2.conf" ;;
+    reset-conf) echo "nfqws2.conf reset to defaults" ;;
+    import-add-b64) echo "imported strategy $2" ;;
+    delete-import) echo "deleted imported strategy $2" ;;
+    rename-import) echo "renamed strategy $2 -> $3" ;;
+    save-list-b64) echo "list $2 saved" ;;
+    add-domain) echo "added domain $2${3:+ to $3}" ;;
+    clear-auto) echo "auto.list cleared" ;;
+    reset-lists) echo "lists reset to defaults" ;;
+    set) echo "setting $2=$3" ;;
+    set-mode) echo "list mode: $2" ;;
+    home-pause) echo "home Wi-Fi pause: ${2:-toggle}" ;;
+    net-recheck) echo "network recheck" ;;
+    backup-create) echo "backup created" ;;
+    backup-restore|backup-restore-b64) echo "restoring from backup${2:+ $2}" ;;
+    smart-import-b64) echo "imported smart mode data" ;;
+    smart-turbo) echo "turbo learning: ${2:-on}" ;;
+    smart-reset) if [ "${2:-all}" = all ]; then echo "smart mode: cleared all learned data (all networks)"
+      else echo "smart mode: cleared learned data for network $2"; fi ;;
+    clear-logs) echo "logs cleared" ;;
   esac
 }
 ua=$(user_action "$@")
 if [ -n "$ua" ]; then
-  log_msg "действие пользователя: $ua" >/dev/null
-  [ "$1" = smart-reset ] && echo "$(date '+%Y-%m-%d %H:%M:%S') действие пользователя: $ua" >> "$LOG_DIR/smart.log" 2>/dev/null
+  log_msg "user action: $ua" >/dev/null
+  [ "$1" = smart-reset ] && echo "$(date '+%Y-%m-%d %H:%M:%S') user action: $ua" >> "$LOG_DIR/smart.log" 2>/dev/null
 fi
 
 case "$1" in
@@ -2966,7 +2966,7 @@ EOF
   probe-cancel) cmd_probe_cancel ;;
   clear-logs) : > "$SERVICE_LOG"; : > "$NFQWS_LOG"; rm -f "$LOG_DIR/nfqws2-debug.log" "$LOG_DIR/auto.log"
     for f in "$LOG_DIR/smart.log"; do [ -f "$f" ] && : > "$f"; done
-    log_msg "действие пользователя: $ua" >/dev/null; echo OK ;;
+    log_msg "user action: $ua" >/dev/null; echo OK ;;
   *)
     echo "Команды: status json-status is-running check dry-run start stop restart reload doctor get-conf save-conf-b64 reset-conf conf-modified" >&2
     echo "         list-strategies get-strategy set-strategy strategy-get-b64 strategy-save-b64 strategy-reset" >&2

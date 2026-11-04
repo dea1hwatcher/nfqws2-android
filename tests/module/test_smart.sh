@@ -39,7 +39,7 @@ grep -v '^SMART_CONF_VER=' "$MODDIR/strategies/smart.conf" | sed 's/slot=tls_16:
 load_conf >/dev/null 2>&1
 assert_contains "$(cat "$CONFFILE")" "slot=tls_16:" "an old smart config is rebuilt from the module's smart.conf"
 assert_contains "$(cat "$CONFFILE")" "LOG_LEVEL=2" "keeping the user's settings"
-assert_contains "$(cat "$SERVICE_LOG" 2>/dev/null)" "конфиг обновлён" "and says so in the log"
+assert_contains "$(cat "$SERVICE_LOG" 2>/dev/null)" "config updated" "and says so in the log"
 before=$(cksum < "$CONFFILE")
 load_conf >/dev/null 2>&1
 assert_eq "$before" "$(cksum < "$CONFFILE")" "an up-to-date one is left alone"
@@ -240,7 +240,7 @@ i=0; while [ "$i" -lt 40 ] && ! grep -q 40002 "$MOCK_IPT_STORE/ip6tables/filter/
 assert_contains "$(cat "$MOCK_IPT_STORE/iptables/filter/nfqws_smartkill" 2>/dev/null)" "-p tcp -d 104.244.42.1 --sport 40001 -j REJECT --reject-with tcp-reset" "an IPv4 connection is cut with a reset"
 assert_contains "$(cat "$MOCK_IPT_STORE/ip6tables/filter/nfqws_smartkill" 2>/dev/null)" "-d 2a00:1450:4010:c05::64 --sport 40002" "an IPv6 one too"
 assert_not_contains "$(cat "$MOCK_IPT_STORE/iptables/filter/nfqws_smartkill" 2>/dev/null)" "notaport" "garbage lines are skipped"
-assert_not_contains "$(cat "$SERVICE_LOG")" "оборвано" "the service log is not flooded with cut connections (they are in the smart mode log)"
+assert_not_contains "$(cat "$SERVICE_LOG")" "stuck" "the service log is not flooded with cut connections (they are in the smart mode log)"
 svc stop
 # наблюдатели сети этого запуска песочнице больше не нужны: иначе netwatch с
 # заглушкой ip крутился бы в фоне и мешал соседним наборам тестов

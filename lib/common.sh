@@ -234,7 +234,7 @@ smart_conf_sync() {
      merge_user_keys "$tmp.raw" "$CONFFILE" > "$tmp" && validate_conf "$tmp" >/dev/null 2>&1; then
     cp -f "$CONFFILE" "$CONFFILE.bak" 2>/dev/null
     mv -f "$tmp" "$CONFFILE" && chmod 0644 "$CONFFILE"
-    log_msg "Smart mode: config updated (конфиг обновлён) to layout $want"
+    log_msg "Smart mode: config updated to layout $want"
   fi
   rm -f "$tmp" "$tmp.raw"
 }
