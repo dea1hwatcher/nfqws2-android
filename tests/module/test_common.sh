@@ -376,9 +376,16 @@ assert_eq "443,590:600,1400" "$(collect_capture_ports udp "$sample_args")" "extr
 section "validate_strategy_blob_references"
 
 assert_rc 0 "$(validate_strategy_blob_references "$MODDIR/defaults/nfqws2.conf" >/dev/null 2>&1; echo $?)" "default config blob references are valid"
+
+hyphen_conf="$SANDBOX/hyphen_blob.conf"
+printf '%s\n' 'NFQWS_BASE_ARGS="--lua-init=@$LUA_DIR/zapret-lib.lua --lua-init=@${LUA_DIR}/zapret-smart.lua --blob=quic:@$BLOBS_DIR/quic_initial.bin"' > "$hyphen_conf"
+assert_rc 0 "$(validate_strategy_blob_references "$hyphen_conf" >/dev/null 2>&1; echo $?)" "hyphenated and curly-brace blob references resolve correctly"
+
 bad_conf="$SANDBOX/bad_blob.conf"
 echo 'NFQWS_BASE_ARGS="--blob=test:@$BLOBS_DIR/nonexistent_blob_xyz.bin"' > "$bad_conf"
 assert_rc 1 "$(validate_strategy_blob_references "$bad_conf" >/dev/null 2>&1; echo $?)" "detects missing blob reference"
+bad_err=$(validate_strategy_blob_references "$bad_conf" 2>&1)
+assert_match "$bad_err" '^Error: blob or script file not found:' "missing blob error has clean format without timestamp"
 
 section "heal_blob self-healing"
 test_heal_blob="$SANDBOX/blobs_test/zero_256.bin"
@@ -386,6 +393,11 @@ rm -f "$test_heal_blob"
 assert_rc 0 "$(heal_blob "$test_heal_blob" >/dev/null 2>&1; echo $?)" "heal_blob restores zero_256.bin"
 assert_file "$test_heal_blob" "healed zero_256.bin file exists"
 assert_eq "256" "$(wc -c < "$test_heal_blob" | tr -d ' ')" "healed zero_256.bin is 256 bytes"
+
+test_heal_lua="$SANDBOX/lua_heal_test/zapret-lib.lua"
+rm -f "$test_heal_lua"
+assert_rc 0 "$(heal_blob "$test_heal_lua" >/dev/null 2>&1; echo $?)" "heal_blob restores lua script from MODDIR/lua"
+assert_file "$test_heal_lua" "healed zapret-lib.lua file exists"
 
 test_bad_blob="$SANDBOX/blobs_test/unknown_invalid_blob.bin"
 assert_rc 1 "$(heal_blob "$test_bad_blob" >/dev/null 2>&1; echo $?)" "heal_blob returns 1 for non-standard blob"

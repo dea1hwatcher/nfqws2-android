@@ -65,8 +65,8 @@ start() {
       [ -x "$NFQWS_BIN" ] || { log_msg "Error: executable $NFQWS_BIN not found"; return 1; }
     fi
     local err
-    err=$(validate_args_conf) || { log_msg "$err"; return 1; }
-    err=$(validate_strategy_blob_references "$CONFFILE") || { log_msg "$err"; return 1; }
+    err=$(validate_args_conf) || { log_msg "${err:-Error: arguments validation failed}"; return 1; }
+    err=$(validate_strategy_blob_references "$CONFFILE") || { log_msg "${err:-Error: strategy blob or script file validation failed}"; return 1; }
 
     log_msg "Starting nfqws2..."
     kernel_modules
@@ -171,8 +171,8 @@ replace_daemon() {
     [ -n "$old_pid" ] || { start; return $?; }
 
     local err
-    err=$(validate_args_conf) || { log_msg "$err"; return 1; }
-    err=$(validate_strategy_blob_references "$CONFFILE") || { log_msg "$err"; return 1; }
+    err=$(validate_args_conf) || { log_msg "${err:-Error: arguments validation failed}"; return 1; }
+    err=$(validate_strategy_blob_references "$CONFFILE") || { log_msg "${err:-Error: strategy blob or script file validation failed}"; return 1; }
 
     log_msg "Zero-Downtime Daemon Replace..."
     rotate_logs start

@@ -696,7 +696,12 @@ heal_blob() { # <blob_path> -> 0 if healed/exists, 1 if not healable
     cp -f "$MODDIR/blobs/$base" "$target" 2>/dev/null && return 0
   fi
 
-  # 2. Heal known standard zero blobs
+  # 2. Try to restore from $MODDIR/lua/ if target is in another directory
+  if [ -n "$MODDIR" ] && [ -f "$MODDIR/lua/$base" ]; then
+    cp -f "$MODDIR/lua/$base" "$target" 2>/dev/null && return 0
+  fi
+
+  # 3. Heal known standard zero blobs
   case "$base" in
     zero_256.bin)
       dd if=/dev/zero of="$target" bs=256 count=1 >/dev/null 2>&1 && return 0
@@ -744,7 +749,7 @@ validate_strategy_blob_references() { # <args_or_conffile>
     {
       s = $0
       if (s ~ /^[[:space:]]*#/) next
-      while (match(s, /@[A-Za-z0-9_.\-\/$]+/)) {
+      while (match(s, /@[-A-Za-z0-9_.\/${}]+/)) {
         print substr(s, RSTART + 1, RLENGTH - 1)
         s = substr(s, RSTART + RLENGTH)
       }
@@ -753,9 +758,13 @@ validate_strategy_blob_references() { # <args_or_conffile>
     f="$p"
     f=$(printf '%s\n' "$f" | sed \
         -e "s#\\\$LUA_DIR#$LUA_DIR#g" \
+        -e "s#\\\${LUA_DIR}#$LUA_DIR#g" \
         -e "s#\\\$BLOBS_DIR#$BLOBS_DIR#g" \
+        -e "s#\\\${BLOBS_DIR}#$BLOBS_DIR#g" \
         -e "s#\\\$CONFDIR#$CONFDIR#g" \
-        -e "s#\\\$MODDIR#$MODDIR#g")
+        -e "s#\\\${CONFDIR}#$CONFDIR#g" \
+        -e "s#\\\$MODDIR#$MODDIR#g" \
+        -e "s#\\\${MODDIR}#$MODDIR#g")
     case "$f" in
       */nfqws2-debug.log|*/nfqws2.log|*/auto.log) continue ;;
     esac
@@ -763,7 +772,7 @@ validate_strategy_blob_references() { # <args_or_conffile>
       heal_blob "$f" 2>/dev/null || true
     fi
     if [ ! -f "$f" ]; then
-      log_msg "Error: blob or script file not found: $f"
+      echo "Error: blob or script file not found: $f"
       missing=$((missing + 1))
     fi
   done
@@ -778,7 +787,7 @@ generate_strategy_receipt() { # [conffile]
   for p in $(awk '
     {
       s = $0
-      while (match(s, /@[A-Za-z0-9_.\-\/$]+/)) {
+      while (match(s, /@[-A-Za-z0-9_.\/${}]+/)) {
         print substr(s, RSTART + 1, RLENGTH - 1)
         s = substr(s, RSTART + RLENGTH)
       }
@@ -786,9 +795,13 @@ generate_strategy_receipt() { # [conffile]
     f="$p"
     f=$(printf '%s\n' "$f" | sed \
         -e "s#\\\$LUA_DIR#$LUA_DIR#g" \
+        -e "s#\\\${LUA_DIR}#$LUA_DIR#g" \
         -e "s#\\\$BLOBS_DIR#$BLOBS_DIR#g" \
+        -e "s#\\\${BLOBS_DIR}#$BLOBS_DIR#g" \
         -e "s#\\\$CONFDIR#$CONFDIR#g" \
-        -e "s#\\\$MODDIR#$MODDIR#g")
+        -e "s#\\\${CONFDIR}#$CONFDIR#g" \
+        -e "s#\\\$MODDIR#$MODDIR#g" \
+        -e "s#\\\${MODDIR}#$MODDIR#g")
     case "$f" in
       */nfqws2-debug.log|*/nfqws2.log|*/auto.log) continue ;;
     esac
