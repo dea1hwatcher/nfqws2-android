@@ -82,20 +82,23 @@ function renderSmart(){
   '</div>');
 
   // Калибровка вариантов умного режима
+  const curSlot = SMART_BENCH_SLOTS.find(([sl]) => sl === smartBenchSlot) || SMART_BENCH_SLOTS[0];
   parts.push('<h2 class="subhead">' + esc(t('Калибровка вариантов')) + '</h2>' +
     '<div class="group" id="smart-bench-box">' +
       '<div class="row align-center wrap gap-sm">' +
-        '<div class="segmented" id="smart-bench-slots">' +
-          '<button type="button" class="seg state' + (smartBenchSlot === 'tls' ? ' on' : '') + '" onclick="smartBenchSetSlot(\'tls\')">' + esc(t('TLS (сайты)')) + '</button>' +
-          '<button type="button" class="seg state' + (smartBenchSlot === 'google' ? ' on' : '') + '" onclick="smartBenchSetSlot(\'google\')">' + esc(t('Google & YT')) + '</button>' +
-          '<button type="button" class="seg state' + (smartBenchSlot === 'quic' ? ' on' : '') + '" onclick="smartBenchSetSlot(\'quic\')">' + esc(t('QUIC')) + '</button>' +
-        '</div>' +
+        '<button class="chip dropdown state" id="smart-bench-slot-select" type="button" aria-haspopup="menu" aria-expanded="false" onclick="openSmartBenchSlotMenu(this)"' + (smartBenchRunning ? ' disabled' : '') + '>' +
+          '<span id="smart-bench-slot-label">' + esc(t(curSlot[1])) + '</span>' +
+          icon('caret', 's18') +
+        '</button>' +
         '<div class="grow"></div>' +
         '<span class="pill tonal" id="smart-bench-badge"' + (smartBenchRunning || smartBenchBadgeText ? '' : ' hidden') + '>' + esc(smartBenchBadgeText || '') + '</span>' +
       '</div>' +
-      '<div class="row align-center gap-sm mt-sm">' +
-        '<input type="text" id="smart-bench-domain" class="input sm grow" placeholder="' + esc(t('Свой домен (опционально)')) + '" value="' + esc(smartBenchDomain || '') + '" oninput="smartBenchDomain = this.value.trim()" />' +
-        '<button class="btn with-icon state sm' + (smartBenchRunning ? ' tonal' : '') + '" id="smart-bench-btn" onclick="toggleSmartBench()">' +
+      '<div class="search-bar mt-sm">' +
+        icon('globe', 's24') +
+        '<input type="text" id="smart-bench-domain" placeholder="' + esc(t('Свой домен (опционально)')) + '" aria-label="' + esc(t('Свой домен (опционально)')) + '" data-ta="placeholder,aria-label" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="go" value="' + esc(smartBenchDomain || '') + '" oninput="smartBenchDomain = this.value.trim()" onkeydown="if(event.key===\'Enter\')toggleSmartBench()" />' +
+      '</div>' +
+      '<div class="row mt-sm">' +
+        '<button class="btn with-icon state' + (smartBenchRunning ? ' tonal' : '') + '" id="smart-bench-btn" onclick="toggleSmartBench()">' +
           icon(smartBenchRunning ? 'pause' : 'play', 's18') +
           '<span>' + esc(smartBenchRunning ? t('Остановить') : t('Тестировать')) + '</span>' +
         '</button>' +
@@ -271,6 +274,21 @@ async function smartImport(files){
   toast(t('Добавлено сайтов: {0}', (r.out || '0').trim()));
   smartView = null;
   smartLoad();
+}
+
+const SMART_BENCH_SLOTS = [
+  ['tls', 'TLS (сайты)'],
+  ['google', 'Google & YT'],
+  ['quic', 'QUIC']
+];
+
+function openSmartBenchSlotMenu(anchor){
+  if(smartBenchRunning) return;
+  openMenu(anchor, SMART_BENCH_SLOTS.map(([sl, label]) => ({
+    label: t(label),
+    icon: sl === smartBenchSlot ? 'check' : '',
+    onClick: () => smartBenchSetSlot(sl)
+  })));
 }
 
 function smartBenchSetSlot(s){
