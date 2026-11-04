@@ -609,10 +609,9 @@
 <div class="sheet list-sheet" id="backup-sheet" role="dialog" aria-modal="true" aria-labelledby="backup-sheet-title">
   <button type="button" class="sheet-drag" aria-label="Закрыть" data-ta="aria-label"><span class="handle"></span></button>
   <div class="sheet-title" id="backup-sheet-title" data-t>Восстановить из копии</div>
-  <div class="sheet-desc" data-t>Выберите архив .tar через проводник или сохранённую копию из списка ниже. Текущие настройки, списки и стратегии будут заменены.</div>
   <input type="file" id="backupFile" accept=".tar,application/x-tar" hidden onchange="restoreBackupFromFile(this.files[0])">
   <div class="row" style="margin-bottom:8px">
-    <button class="btn elevated with-icon state" onclick="$('backupFile').click()">
+    <button class="btn tonal with-icon state" onclick="$('backupFile').click()">
       <svg aria-hidden="true" class="icon s18"><use href="#i-upload"/></svg><span data-t>Выбрать файл архива</span>
     </button>
   </div>
