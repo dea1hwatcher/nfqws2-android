@@ -166,36 +166,39 @@ async function addTestDomainToUser(domain){
   }
 }
 
+const TEST_TABS = [
+  ['all', 'Все проверки'],
+  ['web', 'Сайты'],
+  ['ru', 'RU-сайты'],
+  ['tcp16', 'TCP 16K'],
+  ['dns', 'DNS'],
+  ['domain', 'Домен']
+];
+
+function openTestTabMenu(anchor){
+  openMenu(anchor, TEST_TABS.map(([k, label]) => ({
+    label: t(label),
+    icon: k === currentTestTab ? 'check' : '',
+    onClick: () => selectTestTab(k)
+  })));
+}
+
 function testInit(){
-  updateTestDesc();
   stat(true).then(renderTestWarn);
   renderTestWarn();
   refreshNetInfo();
 }
 
 function updateTestDesc(){
-  const d = $('test-desc');
-  if(!d) return;
-  if(currentTestTab === 'web'){
-    d.textContent = t('Каждый адрес из probe_hosts.list проверяется по 4 протоколам (HTTP, TLS 1.2, TLS 1.3, QUIC). Анализируются активные сбросы (TLS RST), инжекции TLS Alert, тихий дроп и блокировки UDP/QUIC.');
-  } else if(currentTestTab === 'ru'){
-    d.textContent = t('Проверка доступности популярных российских сервисов (банки, Госуслуги, VK, маркетплейсы) для выявления подмены TLS и региональных ограничений.');
-  } else if(currentTestTab === 'tcp16'){
-    d.textContent = t('Тестирование соединений к зарубежным CDN и хостингам (Cloudflare, Hetzner, DO, OVH) с нарастающим объёмом данных до 32 КБ для выявления фильтра TCP 16-20KB.');
-  } else if(currentTestTab === 'dns'){
-    d.textContent = t('Проверка резолверов по UDP:53 и DoH для обнаружения перехвата портов провайдером и подмены IP адресов на заглушки РКН.');
-  } else if(currentTestTab === 'domain'){
-    d.textContent = t('Проверка списков, IP-адреса и доступности конкретного домена через nfqws2.');
-  } else {
-    d.textContent = t('Комплексный анализ цензуры DPI: проверка доступности сайтов (HTTP/TLS/QUIC), детекция блокировок TCP 16-20KB и перехват DNS.');
-  }
+  // Descriptions removed in favor of clean MD3 layout
 }
 
 function selectTestTab(tab){
   currentTestTab = tab;
-  document.querySelectorAll('#test-tabs .seg').forEach(btn => {
-    btn.classList.toggle('on', btn.dataset.tab === tab);
-  });
+  const tabItem = TEST_TABS.find(x => x[0] === tab) || TEST_TABS[0];
+  const lbl = $('test-tab-label');
+  if(lbl) lbl.textContent = t(tabItem[1]);
+
   const showWeb = tab === 'all' || tab === 'web' || tab === 'ru';
   const showTcp = tab === 'all' || tab === 'tcp16';
   const showDns = tab === 'all' || tab === 'dns';
@@ -211,15 +214,12 @@ function selectTestTab(tab){
     if($('test-sec-web')) $('test-sec-web').hidden = true;
     if($('test-sec-tcp16')) $('test-sec-tcp16').hidden = true;
     if($('test-sec-dns')) $('test-sec-dns').hidden = true;
-    updateTestDesc();
     return;
   }
 
   if($('test-sec-web')) $('test-sec-web').hidden = !showWeb;
   if($('test-sec-tcp16')) $('test-sec-tcp16').hidden = !showTcp;
   if($('test-sec-dns')) $('test-sec-dns').hidden = !showDns;
-
-  updateTestDesc();
 }
 
 /* net-info returns one TAB-separated line: NET ip loc isp asn iface gw dns status strategy; unknown is "-" */

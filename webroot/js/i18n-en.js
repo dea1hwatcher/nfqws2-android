@@ -377,6 +377,7 @@ EN = {
  "Яркость": "Brightness",
  "Тон и насыщенность": "Hue and saturation",
  "Версия {0}": "Version {0}",
+ "Все проверки": "All checks",
  "Все": "All",
  "Сайты": "Sites",
  "TCP 16K": "TCP 16K",
