@@ -184,6 +184,7 @@ cat > "$MOCKBIN/curl" <<'X'
 #!/bin/sh
 for a; do u="$a"; done
 echo "$u" >> "$MOCK_DIR/curl.urls"
+printf '\nHTTP_CODE:101\n'
 exit 0
 X
 chmod 0755 "$MOCKBIN/curl"
