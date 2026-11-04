@@ -64,7 +64,7 @@ function renderSmart(){
   // Подсказка, если умный режим не выбран основной стратегией
   if(m.active != 1){
     parts.push('<div class="suggest">' + icon('auto', 's24') + '<span class="grow">' +
-      esc(t('Умный режим сейчас не выбран. Он сам подберёт обход для каждого сайта из блоков авторских стратегий и альтов Flowseal и запомнит его для каждой сети.')) + '</span>' +
+      esc(t('Умный режим сейчас не выбран.')) + '</span>' +
       '<button class="btn tonal sm state" onclick="smartEnable()">' + esc(t('Включить')) + '</button></div>');
   }
 
@@ -72,18 +72,17 @@ function renderSmart(){
   const netText = m.offline == 1 ? t('Нет связи — перебор на паузе') : cur ? smartNetLabel(cur) : t('Сеть ещё не определена');
   parts.push('<div class="list">' +
     settingsRow({icon: m.offline == 1 ? 'warn' : (cur && /^mobile/.test(cur.id) ? 'globe' : 'wifi'),
-      title: 'Сеть', sub: netText + (nets.length > 1 ? ' · ' + t('нажмите для выбора сети') : ''),
+      title: 'Сеть', value: netText,
       on: nets.length > 1 ? 'smartPickNet(this)' : null, chevron: nets.length > 1}) +
     settingsRow({icon: 'auto', title: 'Выучено в этой сети',
-      sub: cur ? plural(cur.sites, t('сайт'), t('сайта'), t('сайтов')) : t('пока ничего'),
+      value: cur ? plural(cur.sites, t('сайт'), t('сайта'), t('сайтов')) : t('пока ничего'),
       on: "smartSites('all')", chevron: true}) +
     (cur && (cur.ok || cur.err) ? settingsRow({icon: 'status', title: 'Соединения',
-      sub: t('Удачных {0} · с ошибками {1} — свежие весят больше', cur.ok, cur.err)}) : '') +
+      value: t('Удачных {0} · с ошибками {1}', cur.ok, cur.err)}) : '') +
   '</div>');
 
   // Калибровка вариантов умного режима
   parts.push('<h2 class="subhead">' + esc(t('Калибровка вариантов')) + '</h2>' +
-    '<div class="helper">' + esc(t('Экспресс-тест вариантов обхода без перезапуска службы. Подбирает лучший вариант десинхронизации для текущей сети.')) + '</div>' +
     '<div class="group" id="smart-bench-box">' +
       '<div class="row align-center wrap gap-sm">' +
         '<div class="segmented" id="smart-bench-slots">' +
@@ -112,12 +111,11 @@ function renderSmart(){
   // Обучение
   const bg = m.bg || {}, ls = smartLearnState(m);
   parts.push('<h2 class="subhead">' + esc(t('Обучение')) + '</h2>' +
-    '<div class="helper">' + esc(t('Умный режим учится сам, по ходу работы. Фоновое обучение раз в две минуты открывает один сайт из списка популярных и ваших — так он заранее знает обход для каждого вида соединений.')) + '</div>' +
     '<div class="list">' +
       settingsRow({icon: 'auto', title: 'Фоновое обучение',
-        sub: bg.n ? t('Открыто сайтов: {0}, из них удачно {1}', bg.n, bg.ok || 0) + (bg.last ? ' · ' + bg.last : '') : t('Раз в две минуты, пока работает умный режим'),
         sw: true, checked: m.learn == 1, on: 'smartLearnToggle(this.checked)'}) +
-      (m.learn == 1 ? settingsRow({icon: ls.on ? 'check' : 'pause', title: ls.on ? t('Идёт') : ls.value, sub: ls.sub}) : '') +
+      (m.learn == 1 ? settingsRow({icon: ls.on ? 'check' : 'pause', title: 'Статус обучения',
+        value: ls.on ? (bg.n ? t('Идёт ({0})', bg.n) : t('Идёт')) : ls.value}) : '') +
     '</div>');
 
   // Что работает в этой сети
@@ -141,7 +139,6 @@ function renderSmart(){
   const probs = m.problems || [];
   if(probs.length){
     parts.push('<h2 class="subhead">' + esc(t('Сайты с ошибками')) + '</h2>' +
-      '<div class="helper">' + esc(t('На текущем варианте у них ошибок больше, чем удач. Умный режим уже подбирает им другой: при следующей ошибке вариант сменится, а застрявшие соединения он обрывает сам, чтобы приложение переподключилось.')) + '</div>' +
       '<div class="list">' + probs.slice().sort((a, b) => b.err - a.err).slice(0, 10).map(p =>
         settingsRow({icon: 'warn', title: p.host, sub: (p.name || '#' + p.n) + ' · ' + t('удачных {0} · с ошибками {1}', p.ok, p.err)})).join('') + '</div>');
   }
@@ -150,25 +147,23 @@ function renderSmart(){
   const nodpi = m.nodpi || [];
   if(nodpi.length){
     parts.push('<h2 class="subhead">' + esc(t('Не похоже на блокировку')) + '</h2>' +
-      '<div class="helper">' + esc(t('Эти сайты не открылись ни на одном варианте: дело не в DPI — сервер недоступен, мешает прокси или само приложение. Умный режим 6 часов их не трогает: не перебирает варианты и не обрывает соединения.')) + '</div>' +
       '<div class="list">' + nodpi.slice(0, 10).map(h => settingsRow({icon: 'info', title: h})).join('') + '</div>');
   }
 
   // Резервная копия и перенос
   parts.push('<h2 class="subhead">' + esc(t('Резервная копия выученного')) + '</h2>' +
     '<div class="list">' +
-      settingsRow({icon: 'share', title: 'Поделиться обучением', sub: t('Файл с выученным в этой сети (.tsv)'), on: 'smartExport()'}) +
-      settingsRow({icon: 'upload', title: 'Загрузить обучение', sub: t('Добавить выученное из файла (.tsv) в текущую сеть'), on: "$('smart-imp').click()"}) +
+      settingsRow({icon: 'share', title: 'Поделиться обучением', on: 'smartExport()'}) +
+      settingsRow({icon: 'upload', title: 'Загрузить обучение', on: "$('smart-imp').click()"}) +
     '</div>');
 
   // Сети: выученное хранится отдельно для каждой
   parts.push('<h2 class="subhead">' + esc(t('Сети')) + '</h2>' +
-    '<div class="helper">' + esc(t('Для каждой сети — своё выученное. Новая сеть начинает с копии выученного в прежней и дальше меняется сама; при возвращении в сеть ничего не перебирается заново.')) + '</div>' +
     (nets.length ? '<div class="list">' + nets.map(n =>
-      '<div class="list-item two-line">' +
+      '<div class="list-item">' +
         '<span class="li-icon plain">' + icon(/^mobile/.test(n.id) ? 'globe' : 'wifi', 's24') + '</span>' +
-        '<span class="li-text"><span class="li-primary truncate">' + esc(smartNetLabel(n)) + '</span>' +
-          '<span class="li-secondary">' + esc(plural(n.sites, t('сайт'), t('сайта'), t('сайтов')) + (n.current == 1 ? ' · ' + t('сейчас') : '')) + '</span></span>' +
+        '<span class="li-text"><span class="li-primary truncate">' + esc(smartNetLabel(n)) + '</span></span>' +
+        '<span class="li-trail li-value">' + esc(plural(n.sites, t('сайт'), t('сайта'), t('сайтов')) + (n.current == 1 ? ' · ' + t('сейчас') : '')) + '</span>' +
         '<button class="icon-btn sm state" aria-label="' + esc(t('Забыть выученное в {0}', smartNetLabel(n))) + '" onclick="smartReset(' + jsArg(n.id) + ')">' +
           icon('trash', 's20') + '</button>' +
       '</div>').join('') + '</div>'
@@ -222,9 +217,9 @@ async function smartSitesList(grp){
 async function smartSites(grp){
   if(!SMS) await smartLoad();
   if(!SMS) return;
-  smartSheet(t('Выученные сайты'), '<div class="helper">' + esc(t('Загрузка…')) + '</div>');
+  smartSheet(t('Выученные сайты'), '<div class="list-item"><span class="spinner"></span><span class="li-text"><span class="li-secondary">' + esc(t('Загрузка…')) + '</span></span></div>');
   const list = await smartSitesList(grp);
-  smartSheet(t('Выученные сайты'), '<div class="helper">' + esc(t('Сайт и вариант, на котором он сейчас работает. Первые 300 — по числу удачных соединений.')) + '</div>' + smartSiteRows(list));
+  smartSheet(t('Выученные сайты'), smartSiteRows(list));
 }
 
 async function smartLearnToggle(on){
