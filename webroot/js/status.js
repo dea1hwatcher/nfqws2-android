@@ -321,9 +321,10 @@ function renderHeroActions(){
 }
 
 function switchRow(k, label, on){
+  const sid = 'sw-' + k.toLowerCase().replace(/_/g, '-');
   return '<label class="list-item clickable state">' +
     '<span class="li-text"><span class="li-primary">' + esc(t(label)) + '</span></span>' +
-    '<span class="li-trail"><input type="checkbox" class="switch" role="switch" aria-label="' + esc(t(label)) + '"' +
+    '<span class="li-trail"><input type="checkbox" id="' + sid + '" class="switch" role="switch" aria-label="' + esc(t(label)) + '"' +
       (on ? ' checked' : '') + ' onchange="setp(' + jsArg(k) + ', this.checked ? 1 : 0)"></span>' +
   '</label>';
 }
@@ -339,19 +340,53 @@ function renderDevRows(j){
     '</div>');
   return DEV_SW.map(([k, label, jk]) => switchRow(k, label, j[jk] == 1)).concat(lim).join('');
 }
-function renderParams(j){
+function renderParams(j, force){
   j = j || {};
-  setHTML('sws', SW.map(([k, label, jk]) => switchRow(k, label, j[jk] == 1)).join(''), false);
+  const swContainer = $('sws');
+  if(swContainer){
+    const firstSw = $('sw-' + SW[0][0].toLowerCase().replace(/_/g, '-'));
+    if(!force && firstSw && swContainer.children && swContainer.children.length === SW.length){
+      for(const [k, label, jk] of SW){
+        const el = $('sw-' + k.toLowerCase().replace(/_/g, '-'));
+        if(el){
+          const on = (j[jk] == 1);
+          if(el.checked !== on) el.checked = on;
+        }
+      }
+    } else {
+      setHTML('sws', SW.map(([k, label, jk]) => switchRow(k, label, j[jk] == 1)).join(''), false);
+    }
+  }
+
   if($('dev-sws') && devMode){
-    setHTML('dev-sws', renderDevRows(j), false);
+    const devContainer = $('dev-sws');
+    const firstDevSw = $('sw-' + DEV_SW[0][0].toLowerCase().replace(/_/g, '-'));
+    if(!force && firstDevSw && devContainer.children && devContainer.children.length === (DEV_SW.length + LIMITS.length)){
+      for(const [k, label, jk] of DEV_SW){
+        const el = $('sw-' + k.toLowerCase().replace(/_/g, '-'));
+        if(el){
+          const on = (j[jk] == 1);
+          if(el.checked !== on) el.checked = on;
+        }
+      }
+      const vals = devContainer.querySelectorAll('.li-value');
+      if(vals && vals.length === LIMITS.length){
+        LIMITS.forEach(([k, label, jk], idx) => {
+          const v = j[jk] != null ? j[jk] : '—';
+          if(vals[idx].textContent !== String(v)) vals[idx].textContent = v;
+        });
+      }
+    } else {
+      setHTML('dev-sws', renderDevRows(j), false);
+    }
   }
   if($('dev-block')) $('dev-block').hidden = !devMode;
 }
 
 /* Paint from the last known status so the screen is never blank */
-function renderStatus(){
+function renderStatus(force){
   const j = S;
-  if(!j || j.running == null){ renderHeroActions(); renderParams({}); return; }
+  if(!j || j.running == null){ renderHeroActions(); renderParams({}, force); return; }
   const paused = !j.running && !!j.paused;
   if(j.strategy) currentStrategy = j.strategy;
   $('hero-status').className = 'hero' + (j.running ? ' running' : (paused ? ' paused' : ''));
@@ -368,7 +403,7 @@ function renderStatus(){
   qd.classList.toggle('bad', j.running && j.qdrop > 0);
   if(j.running) startUptTimer(j.uptime_ms != null ? j.uptime_ms : (j.uptime || 0) * 1000); else stopUptTimer();
   renderHeroActions();
-  renderParams(j);
+  renderParams(j, force);
   $('dbg').checked = (j.log_level == 1);
 
   const rbBtn = $('btn-rollback');

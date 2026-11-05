@@ -221,6 +221,8 @@ function openMenu(anchor, items, opts){
   menu.style.left = Math.max(8, Math.min(end ? r.right - mw : r.left, innerWidth - mw - 8)) + 'px';
   menu.style.top = top + 'px';
   anchor.setAttribute('aria-expanded', 'true');
+  void menu.offsetWidth;
+  (window.requestAnimationFrame || setTimeout)(() => menu.classList.add('open'), 16);
   const itemsEls = () => [...menu.querySelectorAll('.mi')];
   const onKey = e => {
     if(e.key === 'Escape'){ e.stopPropagation(); e.preventDefault(); close(); anchor.focus(); return; }
@@ -244,9 +246,13 @@ function openMenu(anchor, items, opts){
     if(closed) return; closed = true;
     if(scrim) scrim.classList.remove('show');
     removeEventListener('keydown', onKey, true);
-    back.remove();
+    back.style.pointerEvents = 'none';
+    menu.classList.remove('open');
     menu.classList.add('closing');
-    setTimeout(() => menu.remove(), 110);
+    setTimeout(() => {
+      back.remove();
+      menu.remove();
+    }, 120);
     anchor.setAttribute('aria-expanded', 'false');
     if(openMenuEntry === entry) openMenuEntry = null;
     scheduleSync();

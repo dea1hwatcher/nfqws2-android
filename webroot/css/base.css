@@ -454,6 +454,10 @@ body.swiping .state::after { opacity: 0 !important; }
   background: transparent; color: var(--md-sys-color-on-surface-variant);
   font-size: var(--ts-label-large); line-height: var(--lh-label-large); font-weight: var(--w-medium);
   cursor: pointer; white-space: nowrap;
+  transition: background-color var(--dur-short) var(--standard),
+              color var(--dur-short) var(--standard),
+              border-color var(--dur-short) var(--standard),
+              box-shadow var(--dur-short) var(--standard);
 }
 /* Touch area 48dp; overflow:visible is required or Blink clips the pseudo-element */
 .chip::before { content: ""; position: absolute; inset: -8px -4px; }
@@ -517,14 +521,28 @@ body.swiping .state::after { opacity: 0 !important; }
   position: absolute; z-index: 60; min-width: 112px; max-width: 280px;
   padding: 8px 0; border-radius: var(--shape-large);
   background: var(--md-sys-color-surface-container); color: var(--md-sys-color-on-surface);
-  box-shadow: var(--md-elev-2); transform-origin: top left;
-  animation: menu-in var(--dur-medium) var(--spring-strong);
+  box-shadow: var(--md-elev-2);
+  transform-origin: top left;
+  opacity: 0;
+  transform: scale(.86) translateY(-8px);
+  transition: opacity var(--dur-short) var(--standard),
+              transform var(--dur-medium) var(--spring-strong);
+  pointer-events: none;
 }
 .menu.end { transform-origin: top right; }
-.menu.end.up { transform-origin: bottom right; animation-name: menu-in-up; }
-.menu.up { transform-origin: bottom left; animation-name: menu-in-up; }
-@keyframes menu-in { from { opacity: 0; transform: scale(.86) translateY(-8px); } to { opacity: 1; transform: none; } }
-@keyframes menu-in-up { from { opacity: 0; transform: scale(.86) translateY(8px); } to { opacity: 1; transform: none; } }
+.menu.up { transform-origin: bottom left; transform: scale(.86) translateY(8px); }
+.menu.end.up { transform-origin: bottom right; transform: scale(.86) translateY(8px); }
+.menu.open {
+  opacity: 1;
+  transform: scale(1) translateY(0);
+  pointer-events: auto;
+}
+.menu.closing {
+  opacity: 0;
+  transform: scale(.86);
+  transition: opacity 120ms var(--emphasized-accelerate), transform 120ms var(--emphasized-accelerate);
+  pointer-events: none;
+}
 .menu .mi {
   appearance: none; display: flex; align-items: center; gap: 12px; width: 100%;
   min-height: 48px; padding: 0 16px; border: 0; background: none; cursor: pointer; text-align: start;
@@ -546,6 +564,7 @@ body.swiping .state::after { opacity: 0 !important; }
   font-size: var(--ts-label-large); line-height: var(--lh-label-large); font-weight: var(--w-medium);
   color: var(--md-sys-color-on-surface);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  transition: background-color var(--dur-short) var(--standard), color var(--dur-short) var(--standard), border-color var(--dur-short) var(--standard);
 }
 .segmented .seg + .seg { margin-inline-start: -1px; }
 .segmented .seg:first-child { border-start-start-radius: var(--shape-full); border-end-start-radius: var(--shape-full); }
@@ -562,27 +581,28 @@ body.swiping .state::after { opacity: 0 !important; }
   width: 52px; height: 32px; flex: 0 0 52px;
   border: 2px solid var(--md-sys-color-outline); border-radius: var(--shape-full);
   background: var(--md-sys-color-surface-container-highest);
-  transition: background-color var(--dur-medium) var(--spring), border-color var(--dur-medium) var(--spring);
+  transition: background-color var(--dur-medium) var(--standard), border-color var(--dur-medium) var(--standard);
 }
 .switch::before {
   content: ""; position: absolute; top: 50%; left: 6px; width: 16px; height: 16px;
   border-radius: 50%; background: var(--md-sys-color-outline); transform: translateY(-50%);
   transition: left var(--dur-medium) var(--spring-strong), width var(--dur-medium) var(--spring-strong),
-              height var(--dur-medium) var(--spring-strong), background-color var(--dur-medium) var(--spring);
+              height var(--dur-medium) var(--spring-strong), background-color var(--dur-medium) var(--standard);
 }
 .switch:checked { background: var(--md-sys-color-primary); border-color: var(--md-sys-color-primary); }
 .switch:checked::before { left: 22px; width: 24px; height: 24px; background: var(--md-sys-color-on-primary); }
 .switch::after {
-  content: ""; position: absolute; top: 50%; left: 22px; width: 24px; height: 24px;
+  content: ""; position: absolute; top: 50%; left: 6px; width: 24px; height: 24px;
   border-radius: 50%; pointer-events: none;
   background: var(--md-sys-color-primary);
   -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M9.55 18 3.85 12.3 5.275 10.875 9.55 15.15 18.725 5.975 20.15 7.4Z' fill='black'/%3E%3C/svg%3E") no-repeat center / 16px 16px;
   mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M9.55 18 3.85 12.3 5.275 10.875 9.55 15.15 18.725 5.975 20.15 7.4Z' fill='black'/%3E%3C/svg%3E") no-repeat center / 16px 16px;
   transform: translateY(-50%) scale(0);
   opacity: 0;
-  transition: transform var(--dur-medium) var(--spring-strong), opacity var(--dur-short) var(--standard);
+  transition: left var(--dur-medium) var(--spring-strong), transform var(--dur-medium) var(--spring-strong), opacity var(--dur-short) var(--standard);
 }
 .switch:checked::after {
+  left: 22px;
   transform: translateY(-50%) scale(1);
   opacity: 1;
 }
@@ -976,12 +996,10 @@ body.kb-open .snackbar { bottom: 16px; }
 .sheet-drag:focus-visible { outline: none; }
 .sheet-drag:focus-visible .handle { outline: 3px solid var(--md-sys-color-secondary); outline-offset: 4px; }
 
-/* Menu fades out instead of vanishing */
-.menu.closing { animation: fade-out 100ms var(--emphasized-accelerate) forwards; pointer-events: none; }
-
 /* Handle grows while pressed */
-.switch:active::before { width: 28px; height: 28px; left: 0; }
-.switch:checked:active::before { left: 20px; }
+.switch:active::before { width: 28px; height: 28px; left: 2px; }
+.switch:checked:active::before { left: 18px; }
+.switch:checked:active::after { left: 20px; }
 
 .dialog:focus { outline: none; }
 .dialog.has-icon .d-title { text-align: center; }

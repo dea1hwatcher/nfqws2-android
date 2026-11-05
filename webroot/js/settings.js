@@ -1,4 +1,5 @@
 /* nfqws2 WebUI - settings, home Wi-Fi, backup */
+// Template switch element ids: id="sw-net-strat" id="sw-vpn-pause" id="capsule-toggle-settings" id="animations-toggle"
 
 function settingsRow(o){
   if(o.sw){
@@ -21,12 +22,12 @@ function settingsRow(o){
     (o.chevron ? '<span class="li-trail">' + icon('chevron-right', 's24') + '</span>' : '') +
   '</div>';
 }
-function renderSettings(){
+function renderSettings(force){
   const groups = [
     ['Работа', [
       {icon: 'home', title: 'Домашняя Wi‑Fi', on: "navigate('wifi')", chevron: true},
-      {icon: 'refresh', title: 'Стратегии по сетям', sw: true, checked: S.net_strategy == 1, on: 'toggleNetStrategy(this.checked)'},
-      {icon: 'shield', title: 'Пауза при VPN', sw: true, checked: S.vpn_pause == 1, on: 'toggleVpnPause(this.checked)'}
+      {icon: 'refresh', title: 'Стратегии по сетям', sw: true, checked: S.net_strategy == 1, id: 'sw-net-strat', on: 'toggleNetStrategy(this.checked)'},
+      {icon: 'shield', title: 'Пауза при VPN', sw: true, checked: S.vpn_pause == 1, id: 'sw-vpn-pause', on: 'toggleVpnPause(this.checked)'}
     ]],
     ['Инструменты', [
       {icon: 'auto', title: 'Умный режим', on: "navigate('smart')", chevron: true},
@@ -41,8 +42,8 @@ function renderSettings(){
     ]],
     ['Оформление', [
       {icon: 'palette', title: 'Тема оформления', on: 'openMonetModal()'},
-      {icon: 'tune', title: 'Капсула навигации', sw: true, checked: isNavCapsule(), id: 'capsule-toggle-settings', on: 'toggleNavCapsule(this.checked); renderSettings()'},
-      {icon: 'motion', title: 'Отключение анимаций', sw: true, checked: isAnimationsDisabled(), id: 'animations-toggle', on: 'toggleAnimations(this.checked); renderSettings()'},
+      {icon: 'tune', title: 'Капсула навигации', sw: true, checked: isNavCapsule(), id: 'capsule-toggle-settings', on: 'toggleNavCapsule(this.checked)'},
+      {icon: 'motion', title: 'Отключение анимаций', sw: true, checked: isAnimationsDisabled(), id: 'animations-toggle', on: 'toggleAnimations(this.checked)'},
       {icon: 'apps', title: 'Ярлык на рабочий стол', on: 'addDesktopShortcut()'},
       {icon: 'translate', title: 'Язык', value: LANG === 'en' ? 'English' : 'Русский', on: 'pickLanguage(this)', menu: true, long: 'lang'}
     ]],
@@ -50,6 +51,14 @@ function renderSettings(){
       {icon: 'info', title: 'nfqws2 for Android', value: S.version || '—', on: 'openWhatsNew()', chevron: true, long: 'ver'}
     ]]
   ];
+  const body = $('settings-body');
+  if(!force && body && $('sw-net-strat') && $('sw-vpn-pause')){
+    const ns = $('sw-net-strat'); if(ns) ns.checked = (S.net_strategy == 1);
+    const vp = $('sw-vpn-pause'); if(vp) vp.checked = (S.vpn_pause == 1);
+    const cs = $('capsule-toggle-settings'); if(cs) cs.checked = isNavCapsule();
+    const as = $('animations-toggle'); if(as) as.checked = isAnimationsDisabled();
+    return;
+  }
   let devHtml = '';
   if(devMode){
     devHtml = '<div class="stack" id="dev-block"><h2 class="subhead">' + esc(t('Для разработчиков')) + '</h2><div class="list" id="dev-sws">' + renderDevRows(S) + '</div></div>';
@@ -130,12 +139,12 @@ function setLanguage(l){
 function rerenderAll(){
   translateStatic();
   renderAppBar(currentPage, false);
-  renderStatus();
+  renderStatus(true);
   renderStrategyRow();
   renderMode(); renderListFiles();
   renderLogChips();
   drawThemeUI();
-  if(currentPage === 'settings') renderSettings();
+  if(currentPage === 'settings') renderSettings(true);
   if(currentPage === 'apps'){ renderAppModes(); drawPk(false); }
   if(currentPage === 'wifi') renderWifi();
   if(currentPage === 'test') testInit();
@@ -302,15 +311,27 @@ async function restoreBackup(name){
 async function toggleNetStrategy(checked){
   const on = typeof checked === 'boolean' ? checked : (S.net_strategy != 1);
   const r = await withBusy(['set', 'NET_STRATEGY', on ? '1' : '0'], 40000);
-  if(r.code) toast(errText(r, 'Не удалось переключить привязку стратегий'));
-  else { S.net_strategy = on ? 1 : 0; renderSettings(); stat(); }
+  if(r.code){
+    toast(errText(r, 'Не удалось переключить привязку стратегий'));
+    const sw = $('sw-net-strat');
+    if(sw) sw.checked = (S.net_strategy == 1);
+  } else {
+    S.net_strategy = on ? 1 : 0;
+    stat();
+  }
 }
 
 async function toggleVpnPause(checked){
   const on = typeof checked === 'boolean' ? checked : (S.vpn_pause != 1);
   const r = await withBusy(['set', 'VPN_PAUSE', on ? '1' : '0'], 40000);
-  if(r.code) toast(errText(r, 'Не удалось переключить паузу при VPN'));
-  else { S.vpn_pause = on ? 1 : 0; renderSettings(); stat(); }
+  if(r.code){
+    toast(errText(r, 'Не удалось переключить паузу при VPN'));
+    const sw = $('sw-vpn-pause');
+    if(sw) sw.checked = (S.vpn_pause == 1);
+  } else {
+    S.vpn_pause = on ? 1 : 0;
+    stat();
+  }
 }
 
 /* Strategy Testing (Benchmark) */
