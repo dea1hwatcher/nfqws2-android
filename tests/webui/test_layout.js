@@ -390,6 +390,12 @@ const VIEWPORTS = [
     // setMode, setThemeMode, applyMonet and setp now take their value through
     // jsArg(), so the argument reaches them as a JS string literal rather than a
     // bare word. These three clicks check that the value survives the trip.
+    const modeControl = await page.evaluate(() => ({
+      segments: document.querySelectorAll('#mode button.seg').length,
+      dropdown: !!document.querySelector('#mode-select')
+    }));
+    eq(0, modeControl.segments, 'the lists mode control is no longer a segmented group');
+    truthy(modeControl.dropdown, 'it is the mode dropdown instead');
     const handlers = await page.evaluate(async () => {
       const wait = () => new Promise(r => setTimeout(r, 150));
       // #mode is filled by renderMode(), which runs when the lists page is shown.
@@ -399,10 +405,15 @@ const VIEWPORTS = [
       else if (typeof renderMode === 'function') { renderMode(); if (typeof renderListFiles === 'function') renderListFiles(); }
       await wait();
       window.__calls = [];
-      const seg = document.querySelector('#mode button.seg');
-      if (seg) seg.click();
+      const chip = document.querySelector('#mode-select');
+      if (chip) chip.click();
+      // The dropdown is built synchronously by openModeMenu(); pick a value that
+      // differs from the stubbed current mode so the call cannot be a no-op.
+      const item = [...document.querySelectorAll('.menu .mi')].find(b => b.textContent.trim() === 'all');
+      if (item) item.click();
       await wait();
       const modeCall = window.__calls.find(c => c.indexOf('set-mode') >= 0) || '';
+      if (typeof closeMenu === 'function') closeMenu();
       window.__calls = [];
       const sw = document.querySelector('#sws input.switch');
       if (sw) sw.click();
@@ -412,8 +423,8 @@ const VIEWPORTS = [
     });
     // ctl() quotes every argument, so the recorded command reads
     // `sh '…/nfqws2-ctl' 'set-mode' 'auto'` — match on the quoted pieces.
-    truthy(handlers.modeCall.indexOf("'set-mode'") >= 0 && handlers.modeCall.indexOf("'auto'") >= 0,
-      `a mode segment reaches setMode() with its value intact (saw: ${handlers.modeCall || 'no call'})`);
+    truthy(handlers.modeCall.indexOf("'set-mode'") >= 0 && handlers.modeCall.indexOf("'all'") >= 0,
+      `a mode dropdown item reaches setMode() with its value intact (saw: ${handlers.modeCall || 'no call'})`);
     truthy(handlers.swCall.indexOf("'set'") >= 0 && handlers.swCall.indexOf('AUTOSTART') >= 0,
       `a switch row reaches setp() with its key intact (saw: ${handlers.swCall || 'no call'})`);
 

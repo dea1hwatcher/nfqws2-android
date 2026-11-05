@@ -34,6 +34,23 @@ case "$MOCK_NFQWS_FAIL" in
   *) echo "mock nfqws2: refusing to start"; exit "$MOCK_NFQWS_FAIL" ;;
 esac
 
+# MOCK_NFQWS_EBUSY=1 reproduces what the kernel does when the NFQUEUE number is
+# already bound: the BIND request answers -EBUSY and the real nfqws2 exits with a
+# non-zero code instead of running. The canonical pidfile sits next to the
+# temporary one the caller passes, so "another daemon holds the queue" is
+# exactly "that pidfile exists and its process lives". start() removes the
+# pidfile before launching, so a plain start still works with the flag set.
+if [ -n "${MOCK_NFQWS_EBUSY:-}" ] && [ -n "$pidfile" ]; then
+  case "$pidfile" in
+    */*) holder="${pidfile%/*}/nfqws2.pid" ;;
+    *)   holder="nfqws2.pid" ;;
+  esac
+  if [ -f "$holder" ] && kill -0 "$(cat "$holder" 2>/dev/null)" 2>/dev/null; then
+    echo "nfq_create_queue(): Device or resource busy"
+    exit 1
+  fi
+fi
+
 if [ -n "$pidfile" ]; then
   sleep 86400 &
   printf '%s\n' "$!" > "$pidfile"
