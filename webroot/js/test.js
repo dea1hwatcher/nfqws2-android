@@ -19,6 +19,8 @@ const PROBE_REASON = {
   refused: 'Соединение отклонено',
   tls: 'Ошибка TLS',
   quic_unsupported: 'QUIC не поддерживается',
+  freeze: 'TCP Freeze (16-20KB)',
+  late_freeze: 'Late Freeze (26KB Cloudflare)',
   other: 'Ошибка'
 };
 
@@ -643,30 +645,30 @@ function analyzeProbeResults(webRes, tcp16Res, dnsRes){
   } else if(tcp16Detected > 0){
     if(alertCount > 0 || rstCount > 0){
       strategy = 'fake_tls_auto_alt2';
-      altStrategies = ['fake_tls_auto_alt3', 'alt4_mod'];
+      altStrategies = ['universal_v12', 'alt4_mod'];
       summaryTitle = t('Обнаружены TCP 16-20KB и фильтрация TLS');
-      reason = t('DPI разрывает сессии после 16-20 КБ данных и блокирует ClientHello. Рекомендуется стратегия со сплитом пакетов и маскировкой перекрытиями (multisplit + seqovl).');
+      reason = t('DPI разрывает сессии после 16-20 КБ данных и блокирует ClientHello. Рекомендуется стратегия со сплитом пакетов и маскировкой перекрытиями (multisplit + seqovl / Universal V12).');
     } else {
       strategy = 'alt4_mod';
-      altStrategies = ['alt4', 'fake_tls_auto_alt2'];
+      altStrategies = ['universal_v12', 'fake_tls_auto_alt2'];
       summaryTitle = t('Обнаружен фильтр TCP 16-20KB');
-      reason = t('Соединения к зарубежным CDN (Cloudflare/Hetzner) обрываются после 16-20 КБ данных. Рекомендуется сегментация TCP пакетов.');
+      reason = t('Соединения к зарубежным CDN (Cloudflare/Hetzner) обрываются после 16-20 КБ данных. Рекомендуется сегментация TCP пакетов и наложение 4pda (Universal V12).');
     }
   } else if(alertCount > 0){
     strategy = 'fake_tls_auto';
-    altStrategies = ['fake_tls_auto_alt', 'simple_fake_alt2'];
+    altStrategies = ['universal_v12', 'fake_tls_auto_alt'];
     summaryTitle = t('Обнаружена блокировка по SNI (TLS Alert)');
     reason = t('DPI перехватывает имя хоста в ClientHello и посылает TLS Alert. Рекомендуется стратегия с поддельным SNI и рандомизацией.');
   } else if(rstCount > 0){
     strategy = 'fake_tls_auto';
-    altStrategies = ['simple_fake_alt2', 'alt8'];
+    altStrategies = ['anti_throttle', 'universal_v12'];
     summaryTitle = t('Обнаружен активный сброс (TLS RST)');
-    reason = t('DPI инжектирует пакеты TCP RST при попытке установить защищенное соединение. Рекомендуется отправка фейкового ClientHello со сдвигом окна.');
+    reason = t('DPI инжектирует пакеты TCP RST и глушит сессии. Рекомендуется отправка фейкового ClientHello или Anti-Throttle (rst_flood).');
   } else if(dropCount > 0){
     strategy = 'alt11';
-    altStrategies = ['alt12', 'exp'];
+    altStrategies = ['anti_throttle', 'universal_v12'];
     summaryTitle = t('Обнаружен тихий сброс (Drop / Timeout)');
-    reason = t('DPI молча отбрасывает пакеты без ответа. Рекомендуется стратегия с повышенным числом повторов (repeats=8) и модификацией TCP Timestamps.');
+    reason = t('DPI молча отбрасывает пакеты без ответа. Рекомендуется стратегия с повышенным числом повторов (repeats=8) или Anti-Throttle.');
   } else {
     strategy = 'eduncey';
     altStrategies = ['hardcorp74', 'fake_tls_auto'];

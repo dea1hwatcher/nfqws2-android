@@ -1,0 +1,5 @@
+# AI Services Clean Endpoints
+104.18.37.228 chatgpt.com
+104.18.38.228 chatgpt.com
+160.79.104.10 claude.ai
+160.79.104.11 claude.ai

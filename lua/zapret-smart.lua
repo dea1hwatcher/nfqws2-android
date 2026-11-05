@@ -143,6 +143,16 @@ local function site_key(desync)
 		return host_ip(desync)
 	end
 	if desync.track.hostname_is_ip then return h end
+	-- Zephyron domain grouping: CDN shards share learned strategy
+	if h == "redirector.googlevideo.com" then return h end
+	if h:match("%.googlevideo%.com$") then return "googlevideo.com" end
+	if h:match("%.youtube%.com$") or h == "youtube.com" then return "youtube.com" end
+	if h:match("%.ytimg%.com$") or h == "ytimg.com" then return "ytimg.com" end
+	if h:match("%.ggpht%.com$") or h == "ggpht.com" then return "ggpht.com" end
+	if h:match("%.googleapis%.com$") or h == "googleapis.com" then return "googleapis.com" end
+	if h:match("%.google%.com$") or h == "google.com" then return "google.com" end
+	if h:match("%.rapidgator%.net$") or h == "rapidgator.net" then return "rapidgator.net" end
+
 	local two = dissect_nld(h, 2)
 	if not two then return h end
 	if shared_zone(two) then return dissect_nld(h, 3) or h end
@@ -1133,7 +1143,11 @@ function smart(ctx, desync)
 			else
 				-- сброс от сервера — блокировка, только пока сервер не ответил
 				a.inseq = tostring(ANSWER)
-				if standard_failure_detector(dd, crec) then
+				local fail = standard_failure_detector(dd, crec)
+				if not fail and silent_drop_detector then
+					fail = silent_drop_detector(desync, crec, dd.arg or {})
+				end
+				if fail then
 					cs.done, cs.failed = true, true
 					on_err(slot, key, r, cs.v, n, t, pass, false, cs)
 				end
@@ -1257,7 +1271,11 @@ function smartstat(ctx, desync)
 		if standard_success_detector(dd, crec) then res = "ok"
 		else
 			a.inseq = tostring(ANSWER)
-			if standard_failure_detector(dd, crec) then res = "err" end
+			local fail = standard_failure_detector(dd, crec)
+			if not fail and silent_drop_detector then
+				fail = silent_drop_detector(desync, crec, dd.arg or {})
+			end
+			if fail then res = "err" end
 		end
 		if res then cs.done = true end
 	end

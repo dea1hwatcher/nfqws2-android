@@ -3258,3 +3258,1404 @@ function discord_ultimate_combo(ctx, desync)
     replay_drop_set(desync)
     return VERDICT_DROP
 end
+
+-- ==================== ZEPHYRON / ZAPRET-GUI MODERN EXTENSIONS ====================
+
+-- arg : seqovl=N . decrease seq of the first segment by N bytes, fill with pattern
+-- arg : seqovl_pattern=<blob> . override pattern
+-- arg : blob=<blob> - use this data instead of desync.dis.payload
+-- arg : optional - skip if blob is absent. use zero pattern if seqovl_pattern blob is absent
+-- arg : nodrop - do not drop current dissect
+function multisplitdisorder(ctx, desync)
+	if not desync.dis.tcp then
+		if not desync.dis.icmp then instance_cutoff_shim(ctx, desync) end
+		return
+	end
+	direction_cutoff_opposite(ctx, desync)
+	if desync.arg.optional and desync.arg.blob and not blob_exist(desync, desync.arg.blob) then
+		DLOG("multisplitdisorder: blob '"..desync.arg.blob.."' not found. skipped")
+		return
+	end
+	local data = blob_or_def(desync, desync.arg.blob) or desync.reasm_data or desync.dis.payload
+	if #data>0 and direction_check(desync) and payload_check(desync) then
+		if replay_first(desync) then
+			local spos = desync.arg.pos or "2"
+			local mode = desync.arg.mode or "interlace"
+			if b_debug then DLOG("multisplitdisorder["..mode.."]: split pos: "..spos) end
+			local pos = resolve_multi_pos(data, desync.l7payload, spos)
+			if b_debug then DLOG("multisplitdisorder["..mode.."]: resolved split pos: "..table.concat(zero_based_pos(pos)," ")) end
+			delete_pos_1(pos)
+			if #pos>0 then
+				-- build send order depending on mode
+				local order = {}
+				if mode == "interlace" then
+					-- alternate picking from the end and from the start
+					-- for segments 0,1,2,3,4 produces: 4,0,3,1,2
+					local lo, hi = 0, #pos
+					local pick_hi = true
+					while lo <= hi do
+						if pick_hi then
+							table.insert(order, hi)
+							hi = hi - 1
+						else
+							table.insert(order, lo)
+							lo = lo + 1
+						end
+						pick_hi = not pick_hi
+					end
+				elseif mode == "random" then
+					for i = 0, #pos do table.insert(order, i) end
+					-- Fisher-Yates shuffle
+					for k = #order, 2, -1 do
+						local j = math.random(1, k)
+						order[k], order[j] = order[j], order[k]
+					end
+				elseif mode == "disorder" then
+					for i = #pos, 0, -1 do table.insert(order, i) end
+				else
+					-- "split" or anything else — forward
+					for i = 0, #pos do table.insert(order, i) end
+				end
+
+				if b_debug then
+					local os = {}
+					for _, v in ipairs(order) do table.insert(os, tostring(v)) end
+					DLOG("multisplitdisorder["..mode.."]: send order: "..table.concat(os, ","))
+				end
+
+				-- send segments in computed order
+				for _, i in ipairs(order) do
+					local pos_start = pos[i] or 1
+					local pos_end = i < #pos and pos[i+1] - 1 or #data
+					local part = string.sub(data, pos_start, pos_end)
+					local seqovl = 0
+					-- seqovl on the first data segment regardless of send position
+					if i == 0 and desync.arg.seqovl and tonumber(desync.arg.seqovl) > 0 then
+						seqovl = tonumber(desync.arg.seqovl)
+						local pat = "\x00"
+						if desync.arg.seqovl_pattern then
+							if desync.arg.optional and not blob_exist(desync, desync.arg.seqovl_pattern) then
+								DLOG("multisplitdisorder: blob '"..desync.arg.seqovl_pattern.."' not found. using zero pattern")
+							else
+								pat = blob(desync, desync.arg.seqovl_pattern)
+							end
+						end
+						part = pattern(pat, 1, seqovl) .. part
+					end
+					if b_debug then DLOG("multisplitdisorder["..mode.."]: sending seg "..(i+1).." "..(pos_start-1).."-"..(pos_end-1).." len="..#part.." seqovl="..seqovl.." : "..hexdump_dlog(part)) end
+					if not rawsend_payload_segmented(desync, part, pos_start - 1 - seqovl) then
+						return VERDICT_PASS
+					end
+				end
+				replay_drop_set(desync)
+				return desync.arg.nodrop and VERDICT_PASS or VERDICT_DROP
+			else
+				DLOG("multisplitdisorder["..mode.."]: no valid split positions")
+			end
+		else
+			DLOG("multisplitdisorder: not acting on further replay pieces")
+		end
+		if replay_drop(desync) then
+			return desync.arg.nodrop and VERDICT_PASS or VERDICT_DROP
+		end
+	end
+end
+
+-- decoy_hello — sends fake TLS ClientHello with whitelisted SNI (e.g. ya.ru)
+-- and low TTL to poison DPI connection classification.
+-- Packets die en route but DPI sees them first and caches "ya.ru" for this flow.
+--
+-- standard args : direction, payload, fooling, ip_id, rawsend, reconstruct, ipfrag
+-- arg : blob=<blob> - captured TLS ClientHello dump. if absent, clones current outgoing payload as base
+-- arg : tls_mod=<list> - modify decoy SNI: sni=ya.ru, rndsni, rnd, dupsid, padencap
+-- arg : repeats=N - how many decoy copies to blast. default 3
+-- arg : optional - skip if blob is absent
+function decoy_hello(ctx, desync)
+	if not desync.dis.tcp then
+		if not desync.dis.icmp then instance_cutoff_shim(ctx, desync) end
+		return
+	end
+	direction_cutoff_opposite(ctx, desync)
+	if direction_check(desync) and payload_check(desync) then
+		if replay_first(desync) then
+			-- build decoy payload: either pre-captured blob or clone of current packet
+			local decoy
+			if desync.arg.blob then
+				if desync.arg.optional and not blob_exist(desync, desync.arg.blob) then
+					DLOG("decoy_hello: blob '"..desync.arg.blob.."' not found. skipped")
+					return
+				end
+				decoy = blob(desync, desync.arg.blob)
+			else
+				decoy = desync.reasm_data or desync.dis.payload
+			end
+			if not decoy or #decoy == 0 then
+				DLOG("decoy_hello: empty decoy payload")
+				return
+			end
+			-- swap SNI or apply other tls mods
+			if desync.arg.tls_mod then
+				decoy = tls_mod_shim(desync, decoy, desync.arg.tls_mod, desync.reasm_data or desync.dis.payload)
+			end
+			local repeats = tonumber(desync.arg.repeats) or 3
+			local options = desync_opts(desync)
+			for r = 1, repeats do
+				local dis = deepcopy(desync.dis)
+				dis.payload = decoy
+				apply_fooling(desync, dis)
+				apply_ip_id(desync, dis, nil, "none")
+				if b_debug then DLOG("decoy_hello: ["..r.."/"..repeats.."] len="..#decoy.." : "..hexdump_dlog(string.sub(decoy, 1, 80))) end
+				if not rawsend_dissect_ipfrag(dis, options) then
+					DLOG("decoy_hello: rawsend failed on copy "..r)
+					return
+				end
+			end
+			DLOG("decoy_hello: blasted "..repeats.." decoy(s)")
+		else
+			DLOG("decoy_hello: not acting on further replay pieces")
+		end
+	end
+end
+
+-- rst_desync — send fake RST(s) with low TTL to clear DPI state, then pass real data uninspected.
+-- DPI sees RST → removes connection from tracking → real data flies through unmonitored.
+-- Server never sees the RST (low TTL kills it en route).
+--
+-- standard args : direction, payload, fooling, ip_id, rawsend, reconstruct, ipfrag
+-- arg : repeats=N - how many RSTs to send. default 3
+-- arg : ack - send RST+ACK instead of plain RST
+-- arg : shift=N - add N to th_seq of the RST so DPI accepts it within window but server may not. default 0
+function rst_desync(ctx, desync)
+	if not desync.dis.tcp then
+		if not desync.dis.icmp then instance_cutoff_shim(ctx, desync) end
+		return
+	end
+	direction_cutoff_opposite(ctx, desync)
+	if direction_check(desync) and payload_check(desync) then
+		if replay_first(desync) then
+			local repeats = tonumber(desync.arg.repeats) or 3
+			local shift = tonumber(desync.arg.shift) or 0
+			local options = desync_opts(desync)
+			for r = 1, repeats do
+				local dis = deepcopy(desync.dis)
+				dis.payload = ""
+				dis.tcp.th_flags = TH_RST + (desync.arg.ack and TH_ACK or 0)
+				if shift ~= 0 then
+					dis.tcp.th_seq = u32add(dis.tcp.th_seq, shift)
+				end
+				apply_fooling(desync, dis)
+				apply_ip_id(desync, dis, nil, "none")
+				if b_debug then DLOG("rst_desync: sending fake RST " .. r .. "/" .. repeats .. " seq_shift=" .. shift) end
+				if not rawsend_dissect_ipfrag(dis, options) then return end
+			end
+			DLOG("rst_desync: sent " .. repeats .. " fake RST(s), real data passes through")
+		else
+			DLOG("rst_desync: not acting on further replay pieces")
+		end
+	end
+end
+
+
+-- desync_combo — all-in-one: fake RST to kill DPI state + decoy ClientHello + TLS record split + TCP segment disorder.
+-- Each step attacks a different DPI layer:
+--   1) RST → clears DPI connection tracking
+--   2) decoy → poisons SNI classification with whitelisted domain
+--   3) tlsrec → splits TLS record so DPI can't read handshake
+--   4) disorder → sends TCP segments out of order
+--
+-- standard args : direction, payload, fooling, ip_id, rawsend, reconstruct, ipfrag
+-- arg : blob=<blob> - decoy TLS ClientHello (e.g. ya.ru capture). if absent, clones current with tls_mod
+-- arg : tls_mod=<list> - modify decoy SNI (e.g. sni=ya.ru)
+-- arg : decoy_repeats=N - how many decoy copies. default 3
+-- arg : rst_repeats=N - how many fake RSTs. default 2. set to 0 to skip RST phase
+-- arg : pos=<posmarker list> - split positions for TCP disorder. default "host,endhost"
+-- arg : tlsrec_pos=<posmarker> - TLS record split position. default "host". set "none" to skip
+-- arg : optional - skip if blob absent
+-- arg : nodrop - do not drop original
+function desync_combo(ctx, desync)
+	if not desync.dis.tcp then
+		if not desync.dis.icmp then instance_cutoff_shim(ctx, desync) end
+		return
+	end
+	direction_cutoff_opposite(ctx, desync)
+	if direction_check(desync) and payload_check(desync) then
+		if replay_first(desync) then
+			local data = desync.reasm_data or desync.dis.payload
+			if #data == 0 then return end
+			local options = desync_opts(desync)
+
+			------- PHASE 1: fake RST to kill DPI state -------
+			local rst_n = tonumber(desync.arg.rst_repeats)
+			if rst_n == nil then rst_n = 2 end
+			if rst_n > 0 then
+				for r = 1, rst_n do
+					local dis = deepcopy(desync.dis)
+					dis.payload = ""
+					dis.tcp.th_flags = TH_RST + TH_ACK
+					apply_fooling(desync, dis)
+					apply_ip_id(desync, dis, nil, "none")
+					if b_debug then DLOG("desync_combo: RST " .. r .. "/" .. rst_n) end
+					rawsend_dissect_ipfrag(dis, options)
+				end
+				DLOG("desync_combo: phase 1 done — " .. rst_n .. " fake RSTs sent")
+			end
+
+			------- PHASE 2: decoy ClientHello -------
+			local decoy_n = tonumber(desync.arg.decoy_repeats) or 3
+			local decoy
+			if desync.arg.blob then
+				if desync.arg.optional and not blob_exist(desync, desync.arg.blob) then
+					DLOG("desync_combo: blob '" .. desync.arg.blob .. "' not found, skipping decoy")
+					decoy = nil
+				else
+					decoy = blob(desync, desync.arg.blob)
+				end
+			else
+				decoy = data
+			end
+			if decoy and #decoy > 0 then
+				if desync.arg.tls_mod then
+					decoy = tls_mod_shim(desync, decoy, desync.arg.tls_mod, data)
+				end
+				for r = 1, decoy_n do
+					local dis = deepcopy(desync.dis)
+					dis.payload = decoy
+					apply_fooling(desync, dis)
+					apply_ip_id(desync, dis, nil, "none")
+					if b_debug then DLOG("desync_combo: decoy " .. r .. "/" .. decoy_n) end
+					rawsend_dissect_ipfrag(dis, options)
+				end
+				DLOG("desync_combo: phase 2 done — " .. decoy_n .. " decoys sent")
+			end
+
+			------- PHASE 3: TLS record split -------
+			local tlsrec_spos = desync.arg.tlsrec_pos or "host"
+			if tlsrec_spos ~= "none" and #data >= 6 and string.byte(data, 1) == 0x16 then
+				local tpos = resolve_pos(data, desync.l7payload, tlsrec_spos)
+				if tpos and tpos > 5 and tpos < #data then
+					local rec_type = string.sub(data, 1, 1)
+					local rec_ver  = string.sub(data, 2, 3)
+					local c1 = string.sub(data, 6, tpos - 1)
+					local c2 = string.sub(data, tpos)
+					local function tls_hdr(c)
+						return rec_type .. rec_ver .. string.char(math.floor(#c / 256), #c % 256) .. c
+					end
+					data = tls_hdr(c1) .. tls_hdr(c2)
+					DLOG("desync_combo: phase 3 done — TLS record split at " .. (tpos - 1) .. " into " .. #c1 .. "+" .. #c2)
+				else
+					DLOG("desync_combo: phase 3 skipped — cannot resolve tlsrec pos")
+				end
+			end
+
+			------- PHASE 4: TCP segment disorder -------
+			local spos = desync.arg.pos or "host,endhost"
+			local pos = resolve_multi_pos(data, desync.l7payload, spos)
+			if b_debug then DLOG("desync_combo: phase 4 split pos: " .. table.concat(zero_based_pos(pos), " ")) end
+			delete_pos_1(pos)
+			if #pos > 0 then
+				-- interlace order: last, first, second-to-last, second, ...
+				local order = {}
+				local lo, hi = 0, #pos
+				local pick_hi = true
+				while lo <= hi do
+					if pick_hi then
+						table.insert(order, hi); hi = hi - 1
+					else
+						table.insert(order, lo); lo = lo + 1
+					end
+					pick_hi = not pick_hi
+				end
+				for _, i in ipairs(order) do
+					local ps = pos[i] or 1
+					local pe = i < #pos and pos[i + 1] - 1 or #data
+					local part = string.sub(data, ps, pe)
+					if b_debug then DLOG("desync_combo: seg " .. (i + 1) .. " " .. (ps - 1) .. "-" .. (pe - 1) .. " len=" .. #part) end
+					if not rawsend_payload_segmented(desync, part, ps - 1) then
+						return VERDICT_PASS
+					end
+				end
+				DLOG("desync_combo: phase 4 done — " .. (#pos + 1) .. " segments sent interleaved")
+			else
+				-- no valid split, send as-is
+				if not rawsend_payload_segmented(desync, data, 0) then
+					return VERDICT_PASS
+				end
+			end
+
+			replay_drop_set(desync)
+			return desync.arg.nodrop and VERDICT_PASS or VERDICT_DROP
+		else
+			DLOG("desync_combo: not acting on further replay pieces")
+		end
+		if replay_drop(desync) then
+			return desync.arg.nodrop and VERDICT_PASS or VERDICT_DROP
+		end
+	end
+end
+
+-- ============================================================================
+-- БЕЛОЕ ИМЯ ПО ПОДСЕТИ
+-- Перебор делает штатный circular: пары «белое имя + способ доставки» записаны
+-- в пресете строками strategy=N. Здесь только то, чего в движке нет: память по
+-- сайту и подсети сервера, признак «зависло после ~16 КБ» и доставка белого
+-- приветствия в перекрытии.
+--
+-- --writable
+-- --out-range=-s34228 --in-range=-s29500
+-- --lua-desync=circular:key=white_sni:hostkey=white_hostkey:state=white_sni_state.txt:fails=2:time=300:retrans=2:reset:inseq=28000:success_detector=white_success_detector:failure_detector=white_failure_detector
+-- --payload=tls_client_hello
+-- --lua-desync=white_seqovl:sni=web.max.ru:strategy=1
+-- --lua-desync=fake:blob=fake_default_tls:tls_mod=rnd,dupsid,sni=web.max.ru:badsum:strategy=2
+-- Стратегия, которая в подсети ещё не срабатывала, меняется после одной неудачи,
+-- сработавшая - после fails. Что победило блокировку на одном сайте, первым
+-- пробуется на остальных. reset сразу обрывает соединение, которое не прошло.
+-- Входящие пакеты нужны обоим признакам: в пресете должен быть --wf-tcp-in.
+-- ============================================================================
+
+-- hostkey для circular: подсеть сервера вместо имени сайта
+-- arg : mask=N - длина префикса IPv4 (по умолчанию 24)
+-- arg : mask6=N - длина префикса IPv6 (по умолчанию 48)
+function subnet_hostkey(desync)
+	local raw = desync.target and (desync.target.ip or desync.target.ip6)
+	if not raw then return nil end
+	local bits = math.floor(#raw==4 and (tonumber(desync.arg.mask) or 24) or (tonumber(desync.arg.mask6) or 48))
+	if bits<0 then bits=0 end
+	if bits>#raw*8 then bits=#raw*8 end
+	local net = {}
+	for i=1,#raw do
+		local keep = bits-(i-1)*8
+		local b = string.byte(raw,i)
+		if keep<=0 then
+			b = 0
+		elseif keep<8 then
+			b = b - b % 2^(8-keep)
+		end
+		net[i] = string.char(b)
+	end
+	return ntop(table.concat(net)).."/"..bits
+end
+
+-- hostkey для circular: сайт (домен nld-го уровня), а пока имя неизвестно - подсеть.
+-- У разных сайтов одной подсети обход может быть разным, поэтому счёт ведётся по сайту.
+-- arg : nld=N - до какого уровня обрезать имя (по умолчанию 2 : a.b.site.com => site.com)
+-- arg : mask, mask6 - как у subnet_hostkey
+function white_hostkey(desync)
+	local host = desync.track and desync.track.hostname
+	if host and not desync.track.hostname_is_ip then
+		return dissect_nld(host, tonumber(desync.arg.nld) or 2) or host
+	end
+	return subnet_hostkey(desync)
+end
+
+-- Память подбора между подсетями и между запусками. Незаблокированный сайт
+-- открывается с любой стратегией, поэтому ценны только победы над блокировкой :
+-- стратегии, сработавшие в подсети после неудачи (mem.best, свежие впереди).
+-- Память только подсказывает, с чего начать и что пробовать первым : для сайта
+-- это его прошлая стратегия, потом стратегия его подсети, потом mem.best.
+-- Доверие (смена только после fails неудач) стратегия получает, лишь сработав
+-- на этом сайте в текущем запуске. С аргументом state память лежит в файле.
+-- arg : state=<filename> - имя файла памяти. У каждого circular свой файл.
+-- winws2 под Windows может писать только в каталог из параметра --writable,
+-- поэтому файл кладётся туда (переменная окружения WRITABLE)
+function white_mem(desync, hrec)
+	local askey = (desync.arg.key and #desync.arg.key>0) and desync.arg.key or desync.func_instance
+	if not white_memory then white_memory = {} end
+	local mem = white_memory[askey]
+	if not mem then
+		local dir, name = os.getenv("WRITABLE"), desync.arg.state
+		mem = { keys = {}, best = {}, count = 0, file = name and #name>0 and (dir and dir.."/"..name or name) or nil }
+		white_memory[askey] = mem
+		local ok, text = pcall(readfile, mem.file or "")
+		-- номера стратегий годятся, только пока в пресете их столько же
+		if not ok then
+			DLOG("white_mem: no saved memory")
+		elseif tonumber(string.match(text, "^strategies (%d+)\r?\n"))~=hrec.ctstrategy then
+			DLOG("white_mem: '"..mem.file.."' is for another strategy list. ignored")
+		else
+			for key, n in string.gmatch(text, "\n(%S+) (%d+)") do
+				n = tonumber(n)
+				if n>=1 and n<=hrec.ctstrategy then
+					if key=="*" then
+						mem.best[#mem.best+1] = n
+					else
+						mem.keys[key] = n
+						mem.count = mem.count+1
+					end
+				end
+			end
+			DLOG("white_mem: loaded "..mem.count.." records from '"..mem.file.."'")
+		end
+	end
+	return mem
+end
+function white_mem_store(desync, w)
+	local mem = white_mem(desync, w.hrec)
+	local changed = false
+	if w.hrec.white_failed and mem.best[1]~=w.strategy then
+		-- победа над блокировкой : стратегия встаёт первой в mem.best
+		for i=#mem.best,1,-1 do
+			if mem.best[i]==w.strategy then table.remove(mem.best, i) end
+		end
+		table.insert(mem.best, 1, w.strategy)
+		mem.best[6] = nil
+		changed = true
+	end
+	-- запоминается и для сайта, и для его подсети
+	for i, key in ipairs({ w.key, w.net }) do
+		if mem.keys[key]~=w.strategy then
+			if not mem.keys[key] then
+				-- память не растёт без конца : переполнилась - начинаем заново
+				if mem.count>=3000 then
+					DLOG("white_mem: "..mem.count.." records. starting over")
+					mem.keys = {}
+					mem.count = 0
+				end
+				mem.count = mem.count+1
+			end
+			mem.keys[key] = w.strategy
+			changed = true
+		end
+	end
+	-- файл переписывается, только когда что-то поменялось
+	if changed and mem.file and not mem.nosave then
+		local t = { "strategies "..w.hrec.ctstrategy }
+		for i, n in ipairs(mem.best) do
+			t[#t+1] = "* "..n
+		end
+		for key, n in pairs(mem.keys) do
+			t[#t+1] = key.." "..n
+		end
+		local ok, err = pcall(writefile, mem.file, table.concat(t,"\n").."\n")
+		if not ok then
+			DLOG_ERR("white_mem: cannot save '"..mem.file.."' : "..tostring(err)..". saving disabled")
+			mem.nosave = true
+		end
+	end
+end
+-- что пробовать сайту : его прошлая стратегия, стратегия подсети, победители блокировок
+function white_mem_hints(desync, w)
+	local mem = white_mem(desync, w.hrec)
+	local hints = { mem.keys[w.key], mem.keys[w.net] }
+	local t = {}
+	for i=1,2 do
+		if hints[i] then t[#t+1] = hints[i] end
+	end
+	for i, n in ipairs(mem.best) do
+		t[#t+1] = n
+	end
+	return t
+end
+
+-- Запись соединения для white_*_detector. crec у automate один на всё соединение,
+-- поэтому своё лежит в подтаблице. Запись сайта (hrec) и его стратегия берутся в
+-- момент, когда уходят первые данные соединения (ClientHello) : раньше имя сайта
+-- неизвестно. Стратегия запоминается, потому что браузер открывает к сайту сразу
+-- несколько соединений, и неудачи старых засчитывались бы уже новой стратегии.
+function white_conn_state(desync, crec)
+	if not crec.white then crec.white = {} end
+	local w = crec.white
+	if not w.strategy and desync.outgoing and #desync.dis.payload>0 then
+		local hkf = desync.arg.hostkey and _G[desync.arg.hostkey] or standard_hostkey
+		w.hrec = automate_host_record(desync)
+		w.key = hkf(desync)
+		w.net = subnet_hostkey(desync) or w.key
+		if w.hrec and w.key then
+			if not w.hrec.white_seen then
+				-- сайт встретился впервые : начинаем с подсказки из памяти
+				w.hrec.white_seen = true
+				local n = white_mem_hints(desync, w)[1]
+				if n and n<=w.hrec.ctstrategy and n~=w.hrec.nstrategy then
+					DLOG("white_detector: '"..w.key.."' starts from remembered strategy "..n)
+					w.hrec.nstrategy = n
+				end
+			end
+			w.strategy = w.hrec.nstrategy
+		else
+			w.hrec = nil
+		end
+	end
+	return w
+end
+-- true, если соединение не должно влиять на выбор стратегии сайта :
+-- это не TLS, или сайт уже переключился на другую стратегию
+function white_conn_skip(desync, crec)
+	if crec.nocheck then return true end
+	local w = white_conn_state(desync, crec)
+	local l7 = desync.track and desync.track.l7proto
+	if l7 and l7~="unknown" and l7~="tls" then
+		DLOG("white_detector: '"..l7.."' connection. not counted")
+		crec.nocheck = true
+		return true
+	end
+	if w.strategy and w.strategy~=w.hrec.nstrategy then
+		DLOG("white_detector: connection started with strategy "..w.strategy..", '"..w.key.."' is at "..tostring(w.hrec.nstrategy)..". not counted")
+		crec.nocheck = true
+		return true
+	end
+	return false
+end
+-- Неудача засчитана. Стратегии, которая на этом сайте ещё не сработала, хватает
+-- одной неудачи, сработавшей нужно fails. Следующей берётся не соседняя по
+-- номеру, а первая ещё не пробованная из подсказок памяти, и только потом по
+-- порядку. circular сам прибавит к номеру единицу, поэтому ставится номер перед нужным.
+function white_conn_failed(desync, crec)
+	local w = crec.white
+	local hrec = w.hrec
+	if not w.strategy then return true end
+	hrec.white_failed = true
+	local fails = tonumber(desync.arg.fails) or 3
+	local counted = hrec.failure_counter or 0
+	if hrec.failure_time_last and os.time()>(hrec.failure_time_last+(tonumber(desync.arg.time) or 60)) then
+		counted = 0
+	end
+	if hrec.white_ok==hrec.nstrategy and counted+1<fails then return true end
+
+	local ct, cur = hrec.ctstrategy, hrec.nstrategy
+	if not hrec.white_tried then hrec.white_tried = {} end
+	hrec.white_tried[cur] = true
+	local nxt
+	for i, n in ipairs(white_mem_hints(desync, w)) do
+		if n<=ct and not hrec.white_tried[n] then
+			nxt = n
+			break
+		end
+	end
+	if not nxt then
+		for i=1,ct-1 do
+			local n = (cur-1+i)%ct+1
+			if not hrec.white_tried[n] then
+				nxt = n
+				break
+			end
+		end
+	end
+	if not nxt then
+		-- перепробовано всё : круг начинается заново
+		hrec.white_tried = {}
+		nxt = cur%ct+1
+	end
+	DLOG("white_detector: '"..w.key.."' strategy "..cur.." failed. next is "..nxt)
+	hrec.nstrategy = (nxt-2)%ct+1
+	hrec.failure_counter = fails-1
+	hrec.failure_time_last = os.time()
+	return true
+end
+
+-- success_detector для circular. args - как у standard_success_detector.
+-- Сработавшая стратегия запоминается для сайта и его подсети (см. white_mem)
+function white_success_detector(desync, crec)
+	if white_conn_skip(desync, crec) then return false end
+	if not standard_success_detector(desync, crec) then return false end
+	local w = crec.white
+	if w.strategy then
+		w.hrec.white_ok = w.strategy
+		w.hrec.white_tried = nil
+		white_mem_store(desync, w)
+	end
+	return true
+end
+
+-- failure_detector для circular. К штатным признакам добавляет «зависло»:
+-- от сервера пришло от stall_lo до stall_hi байт, после чего он замолчал, и
+-- клиент сам закрыл соединение. Так выглядит блокировка «16 КБ»: сбросов и
+-- повторов нет, поэтому standard_failure_detector её не видит.
+-- args - как у standard_failure_detector, плюс :
+-- arg : stall_lo=N - нижняя граница принятого от сервера, байт (по умолчанию 12000)
+-- arg : stall_hi=N - верхняя граница (по умолчанию 26000). 0 - не искать зависания
+-- arg : stall_time=N - сколько секунд тишины перед закрытием (по умолчанию 2)
+-- arg : stall_any - считать и тогда, когда последний пакет сервера был с PSH (конец ответа)
+function white_failure_detector(desync, crec)
+	if white_conn_skip(desync, crec) then return false end
+	if standard_failure_detector(desync, crec) then return white_conn_failed(desync, crec) end
+	if not desync.dis.tcp then return false end
+
+	local hi = tonumber(desync.arg.stall_hi) or 26000
+	if hi<=0 then return false end
+	local w = white_conn_state(desync, crec)
+	if not desync.outgoing then
+		local len = #desync.dis.payload
+		if len>0 then
+			local got = pos_get(desync,'s')+len
+			if not w.in_seq or got>w.in_seq then
+				w.in_seq = got
+				w.in_time = os.time()
+				w.in_psh = bitand(desync.dis.tcp.th_flags, TH_PUSH)~=0
+			end
+		end
+		return false
+	end
+	if w.in_seq and bitand(desync.dis.tcp.th_flags, bitor(TH_FIN,TH_RST))~=0 then
+		local lo = tonumber(desync.arg.stall_lo) or 12000
+		local idle = os.time()-w.in_time
+		if w.in_seq>=lo and w.in_seq<=hi and idle>=(tonumber(desync.arg.stall_time) or 2) and (desync.arg.stall_any or not w.in_psh) then
+			DLOG("white_failure_detector: stalled at s"..w.in_seq.." for "..idle.." sec, then closed by client")
+			return white_conn_failed(desync, crec)
+		end
+	end
+	return false
+end
+
+-- Белое приветствие в перекрытии. Перед первым куском настоящего ClientHello
+-- уходит ClientHello с белым именем, сдвинутый влево по sequence: сервер
+-- отбрасывает его как данные до начала окна, а фильтр читает первым. Мод
+-- padencap растягивает поле padding белого приветствия на всё настоящее, так
+-- что вместе они выглядят одной TLS-записью.
+-- Дальше работает штатный multisplit с его pos и nodrop. seqovl и seqovl_pattern
+-- функция выставляет сама, payload всегда tls_client_hello.
+-- standard args : direction, fooling, ip_id, rawsend, reconstruct, ipfrag
+-- arg : sni=<str> - белое имя
+-- arg : blob=<blob> - образец TLS ClientHello (по умолчанию fake_default_tls)
+-- arg : pos=<posmarker list> - где резать настоящее приветствие (по умолчанию 2)
+function white_seqovl(ctx, desync)
+	if not desync.arg.sni or #desync.arg.sni==0 then
+		error("white_seqovl: 'sni' arg required")
+	end
+	local sample = desync.arg.blob or "fake_default_tls"
+	-- blob у multisplit значит «отправить вместо настоящих данных», образец туда попасть не должен
+	desync.arg.blob = nil
+	desync.arg.payload = "tls_client_hello"
+	if desync.dis.tcp and desync.outgoing and desync.l7payload=="tls_client_hello" and replay_first(desync) then
+		local hello = desync.reasm_data or desync.dis.payload
+		local base = blob(desync, sample)
+		local pat = tls_mod(base, "rnd,dupsid,padencap,sni="..desync.arg.sni, hello)
+		if not pat then
+			-- padencap не применить, если padding в образце не последнее расширение
+			DLOG("white_seqovl: padencap failed for '"..sample.."'. sending white hello without it")
+			pat = tls_mod(base, "rnd,dupsid,sni="..desync.arg.sni, hello)
+		end
+		if pat then
+			desync.white_hello = pat
+			desync.arg.seqovl = tostring(#pat)
+			desync.arg.seqovl_pattern = "white_hello"
+			DLOG("white_seqovl: sni="..desync.arg.sni.." seqovl="..#pat)
+		else
+			DLOG_ERR("white_seqovl: blob '"..sample.."' is not a tls client hello with sni. plain multisplit")
+		end
+	end
+	return multisplit(ctx, desync)
+end
+
+
+-- ============================================================================
+-- ТЕНЕВЫЕ ПРОБЫ
+-- Подбор стратегии без неудачных соединений браузера. Когда клиент шлёт TLS
+-- ClientHello сайту, для которого стратегия ещё не известна, приветствие
+-- придерживается, а к тому же серверу с других портов открываются служебные
+-- соединения : каждое несёт копию приветствия со своей стратегией. Чьё первым
+-- получило ответ сервера, та стратегия и применяется к настоящему приветствию
+-- и запоминается для сайта. Ответы на служебные порты отбрасываются, чтобы
+-- Windows не ответила на них сбросом. Порядок : две пробы без обхода, потом
+-- волны стратегий, ответившая в волне стратегия перепроверяется в одиночку.
+-- Одному ответу веры нет : фильтр бывает дырявым и часть соединений с
+-- запрещённым именем пропускает сам.
+-- Проба видит только, дошло ли приветствие. Блокировку, которая срабатывает
+-- позже по объёму данных, ловит обратная связь от настоящих соединений : для
+-- неё оркестратору нужны входящие пакеты до inseq (--in-range=-s29500).
+--
+-- --wf-tcp-in=443 --in-range=-s29500 --payload=all
+-- --lua-desync=shadow_probe
+-- --lua-desync=fake:blob=fake_default_tls:badsum:strategy=1 --lua-desync=multisplit:strategy=1
+-- --lua-desync=multidisorder:pos=1,midsld:strategy=2
+-- Профиль должен подходить и без имени сайта (без --hostlist) : ответ на
+-- служебное соединение приходит раньше, чем движок узнаёт имя.
+-- ============================================================================
+
+function shadow_state()
+	if not shadow_st then
+		shadow_st = { flows = {}, hosts = {}, nhosts = 0, active = 0, best = {}, leaky = {}, port = 20000+math.random(0,20000) }
+	end
+	return shadow_st
+end
+-- копия desync, над которой стратегия работает отдельно от настоящего соединения :
+-- свой dissect и своя память соединения, чтобы отсечки инстансов не попали в настоящее
+function shadow_copy(desync)
+	local c = {}
+	for k,v in pairs(desync) do c[k] = v end
+	c.dis = deepcopy(desync.dis)
+	c.plan, c.replay, c.replay_piece, c.replay_piece_count, c.replay_piece_last = nil, nil, nil, nil, nil
+	if desync.track then
+		local t = {}
+		for k,v in pairs(desync.track) do t[k] = v end
+		t.lua_state = {}
+		c.track = t
+	end
+	return c
+end
+-- выполнить инстансы стратегии над desync.
+-- probe : это служебное соединение. У подделок убирается dupsid, иначе они
+-- унесут ту же метку session id, что и приветствие пробы (см. shadow_mark)
+function shadow_exec(desync, instances, probe)
+	local verdict = VERDICT_PASS
+	for i, instance in ipairs(instances or {}) do
+		apply_execution_plan(desync, instance)
+		if probe and desync.arg.tls_mod then
+			local mods = {}
+			for mod in string.gmatch(desync.arg.tls_mod, "[^,]+") do
+				if mod~="dupsid" then mods[#mods+1] = mod end
+			end
+			desync.arg.tls_mod = #mods>0 and table.concat(mods, ",") or "none"
+		end
+		verdict = plan_instance_execute_preapplied(desync, verdict, instance)
+	end
+	return verdict
+end
+-- можно ли пометить приветствие (см. shadow_mark) : полный ClientHello с session id в 32 байта
+function shadow_markable(data)
+	return #data>=76 and string.byte(data,1)==0x16 and string.byte(data,6)==0x01 and string.byte(data,44)==32
+end
+-- Пометить приветствие пробы случайным session id и вернуть его. Сервер TLS 1.3
+-- возвращает session id клиента в ServerHello, и по нему видно, ответил он на
+-- наше приветствие или на подделку, которая до него долетела.
+function shadow_mark(copy)
+	local data = copy.reasm_data or copy.dis.payload
+	if not shadow_markable(data) then return nil end
+	local sid = brandom(32)
+	data = string.sub(data,1,44)..sid..string.sub(data,77)
+	if copy.reasm_data then copy.reasm_data = data end
+	copy.dis.payload = string.sub(data, 1, #copy.dis.payload)
+	return sid
+end
+-- отправить приветствие из копии, пропустив его через стратегию. Если стратегия
+-- сама его не отправила (например одна подделка), оно уходит как есть
+function shadow_send_hello(copy, instances, probe)
+	local verdict = bitand(shadow_exec(copy, instances, probe), VERDICT_MASK)
+	if verdict~=VERDICT_DROP then
+		copy.arg = {}
+		rawsend_payload_segmented(copy, verdict~=VERDICT_MODIFY and copy.reasm_data or nil)
+	end
+end
+-- закрыть служебное соединение : сброс серверу, запоздалые ответы дальше отбрасываются
+function shadow_close(host, flow)
+	if flow.state=="done" then return end
+	local st = shadow_state()
+	st.active = st.active-1
+	local dis = deepcopy(host.syn.dis)
+	dis.tcp.th_sport = flow.port
+	dis.tcp.th_seq = flow.nxt
+	dis.tcp.th_ack = 0
+	dis.tcp.th_flags = TH_RST
+	dis.tcp.options = nil
+	dis.payload = nil
+	rawsend_dissect(dis, {ifout = host.syn.ifout})
+	if flow.nxt~=flow.isn+1 then
+		-- приветствие могло не дойти : тогда сервер ждёт сброс с номером сразу после SYN
+		dis.tcp.th_seq = flow.isn+1
+		rawsend_dissect(dis, {ifout = host.syn.ifout})
+	end
+	flow.state = "done"
+	flow.t = os.time()
+end
+-- отпустить придержанные приветствия сайта со стратегией k (nil или 0 - как есть)
+function shadow_release(host, k)
+	for i, pend in ipairs(host.pending) do
+		pend.ls.shadow_hold = "released"
+		-- ошибка в стратегии не должна оставить приветствие неотправленным
+		local ok, err = pcall(shadow_send_hello, pend.desync, k and k>0 and host.strat[k] or nil)
+		if not ok then
+			DLOG_ERR("shadow_probe: strategy failed on release : "..tostring(err)..". sending hello as is")
+			pcall(shadow_send_hello, pend.desync, nil)
+		end
+	end
+	host.pending = {}
+end
+-- стратегия k выбрана для сайта
+function shadow_decide(st, host, key, k)
+	if host.winner then return end
+	host.winner = k
+	host.probing = false
+	DLOG("shadow_probe: '"..key.."' winner is "..(k>0 and "strategy "..k or "no tampering"))
+	if k>0 then
+		for i=#st.best,1,-1 do
+			if st.best[i]==k then table.remove(st.best, i) end
+		end
+		table.insert(st.best, 1, k)
+		st.best[6] = nil
+	end
+	for i, flow in ipairs(host.flows) do shadow_close(host, flow) end
+	shadow_release(host, k)
+	host.flows, host.hello, host.strat, host.syn, host.confirm = {}, nil, nil, nil, nil
+end
+-- открыть служебное соединение для стратегии k (0 - без обхода)
+function shadow_open(st, host, key, k)
+	st.port = st.port>=45000 and 20000 or st.port+1
+	local flow = { k = k, host = host, key = key, port = st.port, isn = math.random(1, 0x7FFFFFF0), state = "syn", t = os.time() }
+	flow.nxt = flow.isn+1
+	local dis = deepcopy(host.syn.dis)
+	dis.tcp.th_sport = flow.port
+	dis.tcp.th_seq = flow.isn
+	dis.payload = nil
+	rawsend_dissect(dis, {ifout = host.syn.ifout})
+	st.flows[host.sip..flow.port] = flow
+	st.active = st.active+1
+	host.flows[#host.flows+1] = flow
+	DLOG("shadow_probe: '"..key.."' probe "..(k>0 and "strategy "..k or "no tampering").." from port "..flow.port)
+	return flow
+end
+-- очередная волна служебных соединений. false - пробовать больше нечего.
+-- Соединение без обхода идёт первым и в одиночку : на обычном сайте этим всё и
+-- кончается, а рядом с ним стратегии не пробуются, потому что фильтр может вести
+-- себя иначе, когда к серверу сразу идёт несколько соединений с запрещённым именем
+function shadow_wave(st, host, key)
+	local cfg = host.cfg
+	local now = os.time()
+	for key2, flow in pairs(st.flows) do
+		if flow.state=="done" and now-flow.t>10 then st.flows[key2] = nil end
+	end
+	if not cfg.noplain and not host.tried[0] then
+		-- сразу два соединения : фильтр может случайно пропустить одно, поэтому
+		-- сайт считается незаблокированным, только если ответили оба
+		host.tried[0] = true
+		host.plain = 0
+		shadow_open(st, host, key, 0)
+		shadow_open(st, host, key, 0)
+		return true
+	end
+	-- приветствие старого клиента без session id пометить нельзя, а без метки
+	-- ответ на стратегию не отличить от ответа на подделку : стратегии не пробуются
+	if not shadow_markable(host.hello.reasm_data or host.hello.dis.payload) then return false end
+	-- победители у других сайтов, потом по порядку. стратегии, чьи подделки на
+	-- этой линии долетают до сервера, идут последними
+	local order = {}
+	for i, k in ipairs(st.best) do order[#order+1] = k end
+	for k=1,host.nstrat do
+		if not st.leaky[k] then order[#order+1] = k end
+	end
+	for k=1,host.nstrat do
+		if st.leaky[k] then order[#order+1] = k end
+	end
+	local n = 0
+	for i, k in ipairs(order) do
+		if n>=cfg.probes then break end
+		if not host.tried[k] and host.strat[k] then
+			host.tried[k] = true
+			n = n+1
+			shadow_open(st, host, key, k)
+		end
+	end
+	return n>0
+end
+-- таймер волны : кто не ответил - не прошёл. Дальше следующая волна либо конец
+function shadow_tick(name, data)
+	local st = shadow_state()
+	local host = st.hosts[data.key]
+	if not host or host.winner or not host.probing then return end
+	local confirm = host.confirm
+	if confirm then
+		host.confirm = nil
+		if host.flows[1] and host.flows[1].state=="syn" then
+			-- сервер не успел ответить на открытие соединения : это не отказ, стратегия попробуется снова
+			confirm = nil
+		else
+			-- в одиночку стратегия не прошла : в волне её ответ был ложным
+			DLOG("shadow_probe: '"..data.key.."' strategy "..confirm.." not confirmed alone. rejected")
+		end
+	end
+	-- проба, которой сервер даже не ответил на открытие соединения, ничего не
+	-- говорит о стратегии : она не считается проверенной
+	local reached = false
+	for i, flow in ipairs(host.flows) do
+		if flow.state~="syn" then
+			reached = true
+		elseif flow.k~=0 then
+			host.tried[flow.k] = nil
+		end
+		shadow_close(host, flow)
+	end
+	if confirm then
+		host.tried[confirm] = true
+		reached = true
+	end
+	host.flows = {}
+	host.nwave = host.nwave+1
+	local more = reached and shadow_wave(st, host, data.key)
+	if not more or host.nwave>host.cfg.waves then
+		-- дольше держать приветствие нельзя : уходит как есть
+		shadow_release(host, nil)
+	end
+	if more then
+		timer_set(name, "shadow_tick", host.cfg.wait, true, data)
+	else
+		DLOG("shadow_probe: '"..data.key.."' "..(reached and "nothing worked" or "server did not answer probes in "..host.cfg.wait.." ms")..". retry later")
+		host.probing = false
+		host.tried = {}
+		for k in pairs(host.bad or {}) do host.tried[k] = true end
+		host.retry_at = os.time()+(reached and 300 or 30)
+		host.hello, host.strat, host.syn = nil, nil, nil
+	end
+end
+-- Сервер ответил на приветствие пробы, а не на подделку ?
+-- Проба без обхода подделок не шлёт : любая запись TLS - ответ на неё. У стратегии ответ
+-- засчитывается, только если это ServerHello с нашим session id (так отвечает
+-- TLS 1.3). Сервер только с TLS 1.2 метку не возвращает : для него стратегию
+-- проверить нечем, и она отвергается.
+function shadow_answer_is_ours(flow, desync)
+	local data = desync.dis.payload
+	if flow.k==0 then
+		-- запись TLS : handshake или alert. Заглушка фильтра ответом не считается
+		local b = string.byte(data,1)
+		return desync.l7payload=="tls_server_hello" or b==0x16 or b==0x15
+	end
+	if not flow.sid or desync.l7payload~="tls_server_hello" or #data<76 then return false end
+	return string.byte(data,44)==32 and string.sub(data,45,76)==flow.sid
+end
+-- входящий пакет служебного соединения
+function shadow_incoming(st, flow, desync)
+	local tcp, host = desync.dis.tcp, flow.host
+	if flow.state=="syn" and bitand(tcp.th_flags, bitor(TH_SYN,TH_ACK))==bitor(TH_SYN,TH_ACK) then
+		local pd = shadow_copy(host.hello)
+		pd.dis.tcp.th_sport = flow.port
+		pd.dis.tcp.th_seq = flow.isn+1
+		pd.dis.tcp.th_ack = u32add(tcp.th_seq, 1)
+		flow.nxt = u32add(flow.isn, 1+#(host.hello.reasm_data or host.hello.dis.payload))
+		flow.state = "sent"
+		flow.sid = shadow_mark(pd)
+		-- как у настоящего соединения : сначала пустое подтверждение, потом данные
+		local ack = deepcopy(pd.dis)
+		ack.payload = nil
+		ack.tcp.th_flags = TH_ACK
+		rawsend_dissect(ack, {ifout = pd.ifout})
+		shadow_send_hello(pd, flow.k>0 and host.strat[flow.k] or nil, true)
+	elseif flow.state=="sent" then
+		if bitand(tcp.th_flags, TH_RST)~=0 then
+			DLOG("shadow_probe: '"..flow.key.."' probe "..flow.k.." got RST")
+			flow.state = "fail"
+		elseif #desync.dis.payload>0 and not shadow_answer_is_ours(flow, desync) then
+			-- сервер ответил не на приветствие, а на подделку : стратегия ломает соединение
+			DLOG("shadow_probe: '"..flow.key.."' probe "..flow.k.." : answer is not to our hello. strategy rejected")
+			flow.state = "fail"
+			st.leaky[flow.k] = true
+		elseif #desync.dis.payload>0 then
+			-- сервер ответил данными : приветствие дошло
+			DLOG("shadow_probe: '"..flow.key.."' probe "..flow.k.." answered")
+			flow.state = "ok"
+			if flow.k==0 then
+				host.plain = (host.plain or 0)+1
+				if host.plain>=2 then shadow_decide(st, host, flow.key, 0) end
+			elseif flow.confirm then
+				shadow_decide(st, host, flow.key, flow.k)
+			elseif not host.confirm then
+				-- стратегия ответила в волне. Перепроверить её в одиночку : остальные
+				-- пробы закрываются, чтобы не влиять на фильтр
+				host.confirm = flow.k
+				for i, f in ipairs(host.flows) do
+					-- соседи закрываются раньше срока : они не проверены
+					if f~=flow and f.state~="fail" then host.tried[f.k] = nil end
+					shadow_close(host, f)
+				end
+				host.flows = {}
+				shadow_open(st, host, flow.key, flow.k).confirm = true
+				timer_set("shadow_"..flow.key, "shadow_tick", host.cfg.wait, true, {key = flow.key})
+			end
+		end
+	end
+	return VERDICT_DROP
+end
+
+-- оркестратор. Следующие за ним инстансы помечаются strategy=N, как у circular
+-- arg : probes=N - сколько служебных соединений в одной волне (по умолчанию 4)
+-- arg : wait=N - сколько мс ждать ответов одной волны (по умолчанию 400, но не меньше
+--   четырёх времён открытия настоящего соединения)
+-- arg : maxflows=N - сколько служебных соединений может быть открыто сразу (по умолчанию 32)
+-- arg : waves=N - сколько волн держать настоящее приветствие (по умолчанию 3 : без обхода,
+--   волна стратегий, перепроверка победителя)
+-- arg : noplain - не пробовать соединение без обхода
+-- arg : retrans, inseq, stall_lo, stall_hi, stall_time - обратная связь от настоящего соединения :
+--   сколько повторов приветствия считать неудачей (2), после скольких байт ответа считать
+--   решение рабочим (28000), границы объёма (12000-26000) и секунды тишины (2) для «замерло»
+-- arg : hostkey - функция ключа сайта (по умолчанию white_hostkey). её args : nld, mask, mask6
+function shadow_probe(ctx, desync)
+	orchestrate(ctx, desync)
+	local strat = {}
+	while true do
+		local instance = plan_instance_pop(desync)
+		if not instance then break end
+		local n = tonumber(instance.arg.strategy)
+		if n then
+			if not strat[n] then strat[n] = {} end
+			table.insert(strat[n], instance)
+		end
+	end
+	if not desync.dis.tcp then return end
+	local sip = desync.target and (desync.target.ip or desync.target.ip6)
+	if not sip then return end
+	local st = shadow_state()
+	local tcp = desync.dis.tcp
+	if not desync.outgoing then
+		local flow = st.flows[sip..tcp.th_dport]
+		if flow then return shadow_incoming(st, flow, desync) end
+	end
+	local ls = desync.track and desync.track.lua_state
+	if not ls then return end
+	if desync.outgoing and bitand(tcp.th_flags, bitor(TH_SYN,TH_ACK))==TH_SYN then
+		-- образец для служебных соединений : тот же SYN с теми же опциями
+		ls.shadow_syn = { dis = deepcopy(desync.dis), ifout = desync.ifout, t = clock_getfloattime() }
+		return
+	end
+	if desync.outgoing and ls.shadow_hold=="held" and #desync.dis.payload>0 then
+		-- приветствие придержано : его части и повторы от Windows не выпускаются
+		return VERDICT_DROP
+	end
+
+	local host = ls.shadow_host
+	if desync.outgoing and desync.l7payload=="tls_client_hello" and not host then
+		local hkf = desync.arg.hostkey and _G[desync.arg.hostkey] or white_hostkey
+		local key = hkf(desync)
+		if not key then return end
+		host = st.hosts[key]
+		if not host then
+			if st.nhosts>=5000 then
+				-- таблица не растёт без конца. сайты, у которых идут пробы, остаются
+				local keep, n = {}, 0
+				for k2, h in pairs(st.hosts) do
+					if h.probing then
+						keep[k2] = h
+						n = n+1
+					end
+				end
+				st.hosts, st.nhosts = keep, n
+			end
+			host = { tried = {}, pending = {}, flows = {} }
+			st.hosts[key] = host
+			st.nhosts = st.nhosts+1
+		end
+		ls.shadow_host = host
+		local maxflows = tonumber(desync.arg.maxflows) or 32
+		if host.probing and os.time()-host.probe_t>15 then
+			-- пробы так долго не идут : таймер пропал. начать заново, а не держать приветствия вечно
+			DLOG_ERR("shadow_probe: '"..key.."' probing got stuck. reset")
+			for i, flow in ipairs(host.flows) do flow.state = "done" end
+			host.probing, host.pending, host.flows, host.tried, host.confirm = false, {}, {}, {}, nil
+		end
+		if not host.winner and ls.shadow_syn and (host.probing or os.time()>=(host.retry_at or 0) and st.active<maxflows) then
+			-- стратегия для сайта не известна : придержать приветствие и запустить пробы
+			local copy = shadow_copy(desync)
+			table.insert(host.pending, { desync = copy, ls = ls })
+			ls.shadow_hold = "held"
+			if not host.probing then
+				host.probing = true
+				host.probe_t = os.time()
+				host.nstrat = 0
+				for n in pairs(strat) do
+					if n>host.nstrat then host.nstrat = n end
+				end
+				host.nwave = 1
+				host.sip = sip
+				host.hello = copy
+				host.strat = strat
+				host.syn = ls.shadow_syn
+				-- ждать ответов не меньше четырёх времён открытия настоящего соединения :
+				-- на медленной линии и под нагрузкой опоздание не должно сойти за блокировку
+				local rtt = math.floor((clock_getfloattime()-ls.shadow_syn.t)*1000)
+				host.cfg = {
+					probes = tonumber(desync.arg.probes) or 4,
+					wait = math.min(3000, math.max(tonumber(desync.arg.wait) or 400, rtt*4)),
+					waves = tonumber(desync.arg.waves) or 3,
+					noplain = desync.arg.noplain
+				}
+				timer_set("shadow_"..key, "shadow_tick", host.cfg.wait, true, {key = key})
+				shadow_wave(st, host, key)
+			end
+			return VERDICT_DROP
+		end
+	end
+	if not host or not host.winner then return end
+	if desync.outgoing and desync.l7payload=="tls_client_hello" and not ls.shadow_w then
+		-- с каким решением ушло приветствие этого соединения
+		ls.shadow_w = host.winner
+	end
+	-- Обратная связь от настоящего соединения. Проба видит только, дошло ли
+	-- приветствие. Блокировку по объёму (соединение замирает после ~16 КБ) она
+	-- увидеть не может : её ловит эта проверка.
+	if ls.shadow_w==host.winner and not ls.shadow_judged then
+		local failed
+		if desync.outgoing then
+			if desync.l7payload=="tls_client_hello" and is_retransmission(desync) then
+				-- приветствие не доходит
+				ls.shadow_retr = (ls.shadow_retr or 0)+1
+				failed = ls.shadow_retr>=(tonumber(desync.arg.retrans) or 2)
+			elseif ls.shadow_in and bitand(tcp.th_flags, bitor(TH_FIN,TH_RST))~=0 then
+				-- клиент закрыл соединение, которое замерло на середине ответа
+				local idle = os.time()-ls.shadow_in_t
+				failed = ls.shadow_in>=(tonumber(desync.arg.stall_lo) or 12000) and ls.shadow_in<=(tonumber(desync.arg.stall_hi) or 26000)
+					and idle>=(tonumber(desync.arg.stall_time) or 2) and not ls.shadow_in_psh
+			end
+		elseif #desync.dis.payload>0 then
+			local got = pos_get(desync,'s')+#desync.dis.payload
+			if not ls.shadow_in or got>ls.shadow_in then
+				ls.shadow_in, ls.shadow_in_t, ls.shadow_in_psh = got, os.time(), bitand(tcp.th_flags, TH_PUSH)~=0
+			end
+			if got>(tonumber(desync.arg.inseq) or 28000) then
+				-- ответ прошёл дальше места, где режет блокировка : решение рабочее
+				ls.shadow_judged = true
+				host.good = host.winner
+				host.fails = nil
+			end
+		end
+		if failed then
+			ls.shadow_judged = true
+			host.fails = (host.fails or 0)+1
+			-- решению, которое уже срабатывало на этом сайте, одна неудача прощается
+			if host.good~=host.winner or host.fails>=2 then
+				DLOG("shadow_probe: "..(host.winner>0 and "strategy "..host.winner or "no tampering").." failed on a real connection. will probe again without it")
+				if not host.bad then host.bad = {} end
+				host.bad[host.winner] = true
+				local n = 0
+				for k in pairs(host.bad) do n = n+1 end
+				if n>host.nstrat then
+					-- забраковано всё : начать круг заново
+					host.bad = {}
+				end
+				host.tried = {}
+				for k in pairs(host.bad) do host.tried[k] = true end
+				host.winner, host.good, host.fails = nil, nil, nil
+				return
+			end
+		end
+	end
+	if host.winner==0 then return end
+	return shadow_exec(desync, strat[host.winner])
+end
+
+
+-- ============================================================================
+-- ПРИЁМЫ БЕЗ ПОДБОРА : fake_close, slowsplit, tlsrec
+-- Работают с первого соединения : перебора стратегий и перезагрузок страницы нет.
+-- ============================================================================
+
+-- отложенная отправка заранее собранного пакета (slowsplit, tlsrec)
+function slowsplit_timer(name, data)
+	rawsend_dissect_segmented(data.desync, data.desync.dis)
+end
+-- отправить куски данных соединения. parts : список { off = смещение от base_seq, data = байты }
+-- куски уходят по порядку списка. delay : пауза между кусками в мс, first : пауза перед первым
+local function slowsplit_send(desync, base_seq, parts, delay, first, tname)
+	for n, p in ipairs(parts) do
+		local c = shadow_copy(desync)
+		local arg = {}
+		for k,v in pairs(desync.arg) do arg[k] = v end
+		c.arg = arg
+		c.dis.payload = p.data
+		c.dis.tcp.th_seq = (base_seq + p.off) % 4294967296
+		local when = first + (n-1)*delay
+		if when>0 then
+			timer_set(tname.."_"..n, "slowsplit_timer", when, true, {desync = c})
+		elseif not rawsend_dissect_segmented(c, c.dis) then
+			return false
+		end
+	end
+	return true
+end
+
+-- fake_close - ложное закрытие соединения перед настоящими данными.
+-- Пакет с флагами RST или FIN доходит до фильтра, но не до сервера (нужен fooling :
+-- badsum, ip_ttl, ip_autottl, tcp_md5). Фильтр считает соединение закрытым и перестаёт за ним следить.
+--
+-- standard args : direction, payload, fooling, ip_id, rawsend, reconstruct, ipfrag
+-- arg : flags=<буквы> - флаги пакета : R=RST F=FIN A=ACK S=SYN P=PSH. по умолчанию RA
+-- arg : shift=N - прибавить N к номеру последовательности. по умолчанию 0
+-- arg : repeats=N - сколько раз отправить
+function fake_close(ctx, desync)
+	if not desync.dis.tcp then
+		if not desync.dis.icmp then instance_cutoff_shim(ctx, desync) end
+		return
+	end
+	direction_cutoff_opposite(ctx, desync)
+	if direction_check(desync) and payload_check(desync) then
+		if replay_first(desync) then
+			local bits = { R = TH_RST, F = TH_FIN, A = TH_ACK, S = TH_SYN, P = TH_PUSH }
+			local sflags = string.upper(desync.arg.flags or "RA")
+			local flags = 0
+			for ch in string.gmatch(sflags, ".") do
+				if not bits[ch] then error("fake_close: unknown flag '"..ch.."'") end
+				flags = bitor(flags, bits[ch])
+			end
+			local dis = deepcopy(desync.dis)
+			dis.payload = ""
+			dis.tcp.th_flags = flags
+			local shift = tonumber(desync.arg.shift) or 0
+			if shift~=0 then dis.tcp.th_seq = (dis.tcp.th_seq + shift) % 4294967296 end
+			apply_fooling(desync, dis)
+			apply_ip_id(desync, dis, nil, "none")
+			DLOG("fake_close: flags="..sflags.." shift="..shift)
+			rawsend_dissect_ipfrag(dis, desync_opts(desync))
+		else
+			DLOG("fake_close: not acting on further replay pieces")
+		end
+	end
+end
+
+-- slowsplit - разрезать данные на части и отправить их с паузами.
+-- Фильтр не держит недособранные куски долго. Подделок нет : серверу приходит обычный поток.
+--
+-- standard args : direction, payload, fooling, ip_id, rawsend, reconstruct, ipfrag
+-- arg : pos=<posmarker list> - места разреза. по умолчанию "1,midsld"
+-- arg : delay=<мс> - пауза между частями. по умолчанию 60
+-- arg : first=<мс> - пауза перед первой частью. по умолчанию 0
+-- arg : disorder - отправлять части с конца
+-- arg : nodrop - не выбрасывать исходный пакет
+function slowsplit(ctx, desync)
+	if not desync.dis.tcp then
+		if not desync.dis.icmp then instance_cutoff_shim(ctx, desync) end
+		return
+	end
+	direction_cutoff_opposite(ctx, desync)
+	local data = desync.reasm_data or desync.dis.payload
+	if #data>0 and direction_check(desync) and payload_check(desync) then
+		if replay_first(desync) then
+			local pos = resolve_multi_pos(data, desync.l7payload, desync.arg.pos or "1,midsld")
+			delete_pos_1(pos)
+			if #pos>0 then
+				local parts = {}
+				for i=0,#pos do
+					local pos_start = pos[i] or 1
+					local pos_end = i<#pos and pos[i+1]-1 or #data
+					local part = { off = pos_start-1, data = string.sub(data,pos_start,pos_end) }
+					if desync.arg.disorder then
+						table.insert(parts, 1, part)
+					else
+						table.insert(parts, part)
+					end
+				end
+				local delay = tonumber(desync.arg.delay) or 60
+				local first = tonumber(desync.arg.first) or 0
+				if b_debug then DLOG("slowsplit: "..#parts.." parts delay="..delay.." first="..first..(desync.arg.disorder and " disorder" or "")) end
+				if not slowsplit_send(desync, desync.dis.tcp.th_seq, parts, delay, first, desync_timer_name(desync)) then
+					return VERDICT_PASS
+				end
+				replay_drop_set(desync)
+				return desync.arg.nodrop and VERDICT_PASS or VERDICT_DROP
+			else
+				DLOG("slowsplit: no valid split positions")
+			end
+		else
+			DLOG("slowsplit: not acting on further replay pieces")
+		end
+		if replay_drop(desync) then
+			return desync.arg.nodrop and VERDICT_PASS or VERDICT_DROP
+		end
+	end
+end
+
+-- tlsrec - разрезать ClientHello на несколько TLS-записей : имя сайта рвётся внутри самого TLS.
+-- Сервер склеивает записи сам. Каждая новая запись добавляет в поток 5 байт заголовка, поэтому
+-- номера TCP у клиента и сервера расходятся. Функция до конца соединения исправляет их в каждом
+-- пакете : seq в исходящих, ack и SACK во входящих.
+-- Нужны conntrack, --wf-tcp-in, --in-range=a, --payload=all и out-range без ограничения.
+--
+-- standard args : fooling, ip_id, rawsend, reconstruct, ipfrag
+-- arg : pos=<posmarker list> - места разреза внутри записи. по умолчанию "midsld"
+-- arg : delay=<мс> - пауза между записями. по умолчанию 0
+-- arg : oneseg - не делить записи по отдельным TCP-пакетам
+local function tlsrec_hello(desync, st)
+	local parts = {}
+	if st.oneseg then
+		parts[1] = { off = 0, data = st.data }
+	else
+		local off = 0
+		for i, rec in ipairs(st.recs) do
+			parts[i] = { off = off, data = rec }
+			off = off + #rec
+		end
+	end
+	st.nsend = (st.nsend or 0) + 1
+	return slowsplit_send(desync, st.start, parts, st.delay, 0, desync.func_instance.."_"..st.start.."_"..st.nsend)
+end
+function tlsrec(ctx, desync)
+	local tcp = desync.dis.tcp
+	local ls = desync.track and desync.track.lua_state
+	if not tcp or not ls then
+		if not desync.dis.icmp then instance_cutoff_shim(ctx, desync) end
+		return
+	end
+	local st = ls.tlsrec
+	if not desync.outgoing then
+		if not st or bitand(tcp.th_flags, TH_ACK)==0 then return end
+		-- сервер считает байты вместе с добавленными заголовками. вернуть номера к счёту клиента
+		local function fix(n)
+			local rel = (n - st.start) % 4294967296
+			if rel==0 or rel>=0x80000000 then return n end
+			if rel >= st.olen + st.delta then return (n - st.delta) % 4294967296 end
+			-- приветствие принято частично : для клиента это "ещё ничего не принято"
+			return st.start
+		end
+		local changed = false
+		local ack = fix(tcp.th_ack)
+		if ack~=tcp.th_ack then
+			tcp.th_ack = ack
+			changed = true
+		end
+		local i = find_tcp_option(tcp.options, TCP_KIND_SACK)
+		if i then
+			local d = tcp.options[i].data
+			local out = ""
+			for p=1,#d-3,4 do
+				local a,b,c,e = string.byte(d, p, p+3)
+				local n = fix(((a*256+b)*256+c)*256+e)
+				out = out..string.char(math.floor(n/16777216)%256, math.floor(n/65536)%256, math.floor(n/256)%256, n%256)
+			end
+			if out~=d then
+				tcp.options[i].data = out
+				changed = true
+			end
+		end
+		if changed then return VERDICT_MODIFY end
+		return
+	end
+
+	if desync.replay and not replay_first(desync) then
+		-- остальные части собранного приветствия : оно уже отправлено целиком
+		if st then return VERDICT_DROP end
+		return
+	end
+	if st then
+		local rel = (tcp.th_seq - st.start) % 4294967296
+		if rel>=0x80000000 then return end
+		if rel >= st.olen then
+			tcp.th_seq = (tcp.th_seq + st.delta) % 4294967296
+			return VERDICT_MODIFY
+		end
+		if #desync.dis.payload>0 then
+			-- Windows повторяет приветствие : отправить разрезанное заново
+			DLOG("tlsrec: hello retransmission")
+			tlsrec_hello(desync, st)
+			return VERDICT_DROP
+		end
+		return
+	end
+	local data = desync.reasm_data or desync.dis.payload
+	if #data==0 then return end
+	if desync.l7payload~="tls_client_hello" or #data<50 or string.byte(data,1)~=0x16
+		or (string.byte(data,4)*256 + string.byte(data,5)) ~= #data-5
+	then
+		-- не TLS или запись не одна : в этом соединении делать нечего
+		DLOG("tlsrec: not a single-record tls client hello. cutoff")
+		instance_cutoff_shim(ctx, desync)
+		return
+	end
+	local pos = resolve_multi_pos(data, desync.l7payload, desync.arg.pos or "midsld")
+	local cut = {}
+	for i=1,#pos do
+		-- в первой записи остаётся не меньше 4 байт : заголовок сообщения handshake не рвётся
+		if pos[i]>=10 and pos[i]<=#data and pos[i]~=cut[#cut] then cut[#cut+1] = pos[i] end
+	end
+	if #cut==0 then
+		DLOG("tlsrec: no valid split positions. cutoff")
+		instance_cutoff_shim(ctx, desync)
+		return
+	end
+	local hdr = string.sub(data, 1, 3)
+	local recs = {}
+	for i=0,#cut do
+		local chunk = string.sub(data, cut[i] or 6, i<#cut and cut[i+1]-1 or #data)
+		recs[#recs+1] = hdr..string.char(math.floor(#chunk/256), #chunk%256)..chunk
+	end
+	st = {
+		start = tcp.th_seq, olen = #data, delta = 5*#cut,
+		recs = recs, data = table.concat(recs),
+		delay = tonumber(desync.arg.delay) or 0, oneseg = desync.arg.oneseg
+	}
+	if b_debug then DLOG("tlsrec: "..#recs.." records. stream grows by "..st.delta.." bytes") end
+	if not tlsrec_hello(desync, st) then return end
+	ls.tlsrec = st
+	return VERDICT_DROP
+end

@@ -1,0 +1,5 @@
+# Discord Voice Cloudflare Anycast Pin
+104.25.158.178 finland10000.discord.media finland10001.discord.media finland10002.discord.media finland10003.discord.media
+104.25.158.178 rotterdam10000.discord.media rotterdam10001.discord.media rotterdam10002.discord.media rotterdam10003.discord.media
+104.25.158.178 madrid10000.discord.media madrid10001.discord.media madrid10002.discord.media madrid10003.discord.media
+104.25.158.178 stockholm10000.discord.media stockholm10001.discord.media stockholm10002.discord.media stockholm10003.discord.media
