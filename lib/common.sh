@@ -1334,7 +1334,7 @@ _fw_batch_cmd() {
     -D) return 1 ;;
     -I)
       case "$2" in
-        POSTROUTING|PREROUTING) return 0 ;;
+        POSTROUTING|PREROUTING|FORWARD) return 0 ;;
         *)
           FW_BATCH_BUF="$FW_BATCH_BUF$table|$*
 "
@@ -1395,6 +1395,10 @@ _firewall_start_restore() {
       ipt_exec "$CMD" -t mangle -I POSTROUTING 1 -j "$IPT_GROUP_POST"
     ipt_exec "$CMD" -t mangle -C PREROUTING -j "$IPT_GROUP_PRE" 2>/dev/null || \
       ipt_exec "$CMD" -t mangle -I PREROUTING 1 -j "$IPT_GROUP_PRE"
+    if [ "$ENABLE_HOTSPOT" = "1" ]; then
+      ipt_exec "$CMD" -t mangle -C FORWARD -j "$IPT_GROUP_FWD" 2>/dev/null || \
+        ipt_exec "$CMD" -t mangle -I FORWARD 1 -j "$IPT_GROUP_FWD"
+    fi
     if [ "$CMD" = "iptables" ] && [ "$NAT_FIX" = "1" ]; then
       ipt_exec "$CMD" -t mangle -C POSTROUTING -m mark --mark "$MARK_PROCESSED" -j CONNMARK --set-xmark "$MARK_RENAT" 2>/dev/null || \
         ipt_exec "$CMD" -t mangle -I POSTROUTING 2 -m mark --mark "$MARK_PROCESSED" -j CONNMARK --set-xmark "$MARK_RENAT" 2>/dev/null

@@ -1431,7 +1431,6 @@ share_file_ok() {
   case "$1" in
     */../*) return 1 ;;   # «*» в шаблоне пропускает и «/» с «..»
     "$CONFFILE") ;;
-    "$CONFDIR"/hosts/*.txt) case "${1#"$CONFDIR"/hosts/}" in */*) return 1 ;; esac ;;
     # файлы стратегий — «Поделиться» из меню стратегии (путь даёт strategy-path)
     "$MODDIR/defaults/nfqws2.conf") ;;
     "$STRATEGIES_DIR"/*.conf) case "${1#"$STRATEGIES_DIR"/}" in */*) return 1 ;; esac ;;

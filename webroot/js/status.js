@@ -410,7 +410,7 @@ async function stat(quiet){
 
 /* Quiet auto-refresh while the screen is visible, skipped while busy */
 const POLL_PAGES = {control: 1, lists: 1};
-setInterval(() => {
+const statusPollTimer = setInterval(() => {
   if(document.visibilityState !== 'visible' || !POLL_PAGES[currentPage]) return;
   if(busyCount || svcBusy || editorCtx || openSheetId) return;
   stat(true);

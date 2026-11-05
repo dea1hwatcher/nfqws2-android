@@ -196,7 +196,7 @@ local function vname(slot, v)
 	local function one(x)
 		return names[slot .. "|" .. x] or names[(slot:match("^([^_]+)") or slot) .. "|" .. x] or ("#" .. x)
 	end
-	m = v and v > MUT_BASE and SM.mut[slot] and SM.mut[slot][v]
+	local m = v and v > MUT_BASE and SM.mut[slot] and SM.mut[slot][v]
 	if m then
 		local a = {}
 		for _, c in ipairs(m.ch) do a[#a + 1] = c.k .. "=" .. c.val end
