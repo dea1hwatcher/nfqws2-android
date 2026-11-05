@@ -2668,88 +2668,8 @@ user_action() { # <команда> [аргументы] -> описание | п
     smart-turbo) echo "turbo learning: ${2:-on}" ;;
     smart-reset) if [ "${2:-all}" = all ]; then echo "smart mode: cleared all learned data (all networks)"
       else echo "smart mode: cleared learned data for network $2"; fi ;;
-    pins-apply) echo "applied pins preset: $2" ;;
-    pins-reset) echo "reset pins" ;;
     clear-logs) echo "logs cleared" ;;
   esac
-}
-
-# ---------------------------------------------------------------- hosts pins
-get_target_hosts_file() {
-  if [ -f /data/adb/modules/hosts/system/etc/hosts ]; then
-    echo "/data/adb/modules/hosts/system/etc/hosts"
-  elif [ -w /system/etc/hosts ]; then
-    echo "/system/etc/hosts"
-  else
-    echo "$CONFDIR/hosts/active.txt"
-  fi
-}
-
-cmd_pins_list() {
-  local p name
-  mkdir -p "$CONFDIR/hosts" 2>/dev/null
-  for p in "$MODDIR"/defaults/hosts/*.txt "$CONFDIR"/hosts/*.txt; do
-    [ -f "$p" ] || continue
-    name="${p##*/}"
-    name="${name%.txt}"
-    case "$name" in active) continue ;; esac
-    printf '%s\t%s\n' "$name" "$p"
-  done
-}
-
-cmd_pins_status() {
-  local target
-  target=$(get_target_hosts_file)
-  if [ -f "$target" ] && grep -q "# BEGIN NFQWS2 PINS" "$target" 2>/dev/null; then
-    local preset
-    preset=$(sed -n 's/.*# BEGIN NFQWS2 PINS (\([^)]*\)).*/\1/p' "$target" | head -n 1)
-    echo "ACTIVE\t${preset:-custom}\t$target"
-  else
-    echo "INACTIVE\t$target"
-  fi
-}
-
-cmd_pins_apply() {
-  local preset="$1" src="" target tmp
-  [ -n "$preset" ] || { echo "Укажите имя пресета пинов" >&2; exit 1; }
-  if [ -f "$CONFDIR/hosts/$preset.txt" ]; then
-    src="$CONFDIR/hosts/$preset.txt"
-  elif [ -f "$MODDIR/defaults/hosts/$preset.txt" ]; then
-    src="$MODDIR/defaults/hosts/$preset.txt"
-  elif [ -f "$preset" ]; then
-    src="$preset"
-  else
-    echo "Пресет пинов '$preset' не найден" >&2; exit 1
-  fi
-
-  target=$(get_target_hosts_file)
-  mkdir -p "${target%/*}" 2>/dev/null
-  [ -f "$target" ] || touch "$target"
-
-  tmp="$STATE_DIR/hosts.pins.$$"
-  sed '/# BEGIN NFQWS2 PINS/,/# END NFQWS2 PINS/d' "$target" > "$tmp" 2>/dev/null || cat "$target" > "$tmp"
-
-  printf '\n# BEGIN NFQWS2 PINS (%s)\n' "$preset" >> "$tmp"
-  cat "$src" >> "$tmp"
-  printf '\n# END NFQWS2 PINS\n' >> "$tmp"
-
-  cp -f "$tmp" "$target" && rm -f "$tmp" || { rm -f "$tmp"; echo "Не удалось записать $target" >&2; exit 1; }
-  mkdir -p "$CONFDIR/hosts" 2>/dev/null
-  cp -f "$src" "$CONFDIR/hosts/active.txt" 2>/dev/null
-  echo OK
-}
-
-cmd_pins_reset() {
-  local target tmp
-  target=$(get_target_hosts_file)
-  if [ -f "$target" ]; then
-    tmp="$STATE_DIR/hosts.pins.$$"
-    sed '/# BEGIN NFQWS2 PINS/,/# END NFQWS2 PINS/d' "$target" > "$tmp" 2>/dev/null
-    cp -f "$tmp" "$target" 2>/dev/null
-    rm -f "$tmp"
-  fi
-  rm -f "$CONFDIR/hosts/active.txt"
-  echo OK
 }
 
 ua=$(user_action "$@")
@@ -3042,10 +2962,6 @@ EOF
         echo $(($(date +%s) + dur)) > "$SMART_TURBO_FILE"
         echo "Турбо-обучение включено на ${dur} сек" ;;
     esac ;;
-  pins-list) cmd_pins_list ;;
-  pins-status) cmd_pins_status ;;
-  pins-apply) cmd_pins_apply "$2" ;;
-  pins-reset) cmd_pins_reset ;;
   monet-system) cmd_monet_system ;;
   probe-cancel) cmd_probe_cancel ;;
   clear-logs) : > "$SERVICE_LOG"; : > "$NFQWS_LOG"; rm -f "$LOG_DIR/nfqws2-debug.log" "$LOG_DIR/auto.log"
@@ -3060,7 +2976,6 @@ EOF
     echo "         smart-status smart-sites smart-export smart-import-b64 smart-learn-once smart-bench smart-apply-variant smart-turbo smart-reset" >&2
     echo "         home-pause net-recheck upload share changelog" >&2
     echo "         current-network list-net-strategies clear-net-strategies googlevideo-discovery orchestra-status orchestra-lock orchestra-unlock orchestra-block orchestra-unblock orchestra-clear tg-affinity" >&2
-    echo "         pins-list pins-status pins-apply pins-reset" >&2
     echo "         list-catalogs get-catalog catalog-apply-module list-replaced-strategies restore-replaced-strategy" >&2
     exit 1 ;;
 esac
