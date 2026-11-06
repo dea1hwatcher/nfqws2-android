@@ -30,7 +30,8 @@ Parameters:
                         client sends ~1KB per ~8KB received, so
                         rst_bytes=1500 ≈ RST every ~10-15KB from server
                         at least one of rst_interval/rst_bytes must be set
-  ttl_fallback=N      - fixed TTL when autottl unavailable (default: 8)
+  ttl_fallback=N      - fixed TTL used only when no ip_autottl is requested
+                        (no default: an unsafe TTL is never guessed)
   fin_mode            - alternate RST+ACK and FIN+ACK
   src_range=rfc1918   - 10.x.x.x for spoofed source IPs
   src_range=cgn       - 100.64.x.x CGN range (default)
@@ -61,24 +62,27 @@ local function random_src_cgn()
 	return "\x64" .. string.char(64 + math.random(0, 63)) .. brandom(2)
 end
 
--- Get calibrated TTL/hop limit: reaches TSPU but dies before the server
+-- Get calibrated TTL/hop limit: reaches TSPU but dies before the server.
+-- Returns nil when no safe value is known. With ip_autottl requested a fixed
+-- fallback is NOT substituted: autottl exists precisely to keep the packet
+-- short of the server, and a guessed TTL (8 reaches most hosts) would deliver
+-- a valid RST carrying the client's real sequence number to the live session.
 local function get_calibrated_ttl(desync)
-	-- Try autottl from incoming_ttl (SYN-ACK or ipcache)
-	if desync.track and desync.track.incoming_ttl and desync.track.incoming_ttl > 0 then
-		-- Use ip6_autottl for IPv6, ip_autottl for IPv4
-		local attl_str = desync.dis.ip6 and desync.arg.ip6_autottl or desync.arg.ip_autottl
-		if attl_str then
-			local attl = parse_autottl(attl_str)
-			if attl then
-				local ttl = autottl(desync.track.incoming_ttl, attl)
-				if ttl then
-					return ttl, true
-				end
+	-- Use ip6_autottl for IPv6, ip_autottl for IPv4
+	local attl_str = desync.dis.ip6 and desync.arg.ip6_autottl or desync.arg.ip_autottl
+	if attl_str then
+		local attl = parse_autottl(attl_str)
+		if attl and desync.track and desync.track.incoming_ttl and desync.track.incoming_ttl > 0 then
+			local ttl = autottl(desync.track.incoming_ttl, attl)
+			if ttl then
+				return ttl, true
 			end
 		end
+		DLOG("rst_flood: autottl '"..attl_str.."' has no safe value, not injecting")
+		return nil, false
 	end
-	-- Fallback to fixed TTL
-	return tonumber(desync.arg.ttl_fallback) or 8, false
+	-- Without autottl the fixed TTL is the operator's explicit choice only
+	return tonumber(desync.arg.ttl_fallback), false
 end
 
 
@@ -95,7 +99,7 @@ Phase 2 (DATA): send calibrated RST by byte count or time to clear TSPU session 
 standard args : direction, fooling (ip_autottl), rawsend, reconstruct
 arg : flood_count=N (default 30)
 arg : rst_interval=N seconds (default 2)
-arg : ttl_fallback=N (default 8)
+arg : ttl_fallback=N - fixed TTL, used only when ip_autottl is not set
 arg : fin_mode - alternate RST and FIN
 arg : src_range=rfc1918|cgn (default cgn)
 arg : no_pollution - skip phase 1
@@ -137,6 +141,10 @@ function rst_flood(ctx, desync)
 	then
 		local count = tonumber(desync.arg.flood_count) or 30
 		local ttl, is_auto = get_calibrated_ttl(desync)
+		if not ttl then
+			-- no safe TTL: spoofed SYNs would reach the server too
+			return
+		end
 		local src_range = desync.arg.src_range or "cgn"
 		local gen_src = (src_range == "rfc1918") and random_src_rfc1918 or random_src_cgn
 
@@ -203,6 +211,13 @@ function rst_flood(ctx, desync)
 
 		if need_rst then
 			local ttl, is_auto = get_calibrated_ttl(desync)
+			if not ttl then
+				-- skip this attempt but keep the timers moving, otherwise every
+				-- following packet retries the same impossible TTL
+				st.last_rst_dt = dt
+				st.last_rst_bytes = out_bytes
+				return
+			end
 
 			local dis = deepcopy(desync.dis)
 			dis.payload = ""

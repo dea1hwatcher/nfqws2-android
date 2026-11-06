@@ -18,12 +18,13 @@ function http_aggressive(ctx, desync)
 		if replay_first(desync) then
 			-- Parse HTTP request
 			local hdis = http_dissect_req(data)
-			if not hdis or not hdis.headers.host then
+			local host_idx = hdis and array_field_search(hdis.headers, "header_low", "host")
+			if not host_idx then
 				DLOG("http_aggressive: cannot parse HTTP request or no Host header")
 				return
 			end
 
-			local host_pos = hdis.headers.host
+			local host_pos = hdis.headers[host_idx]
 			-- pos_end points to end of line (before \r\n), pos_value_start to start of value
 			local host_value = string.sub(data, host_pos.pos_value_start, host_pos.pos_end)
 
@@ -994,12 +995,13 @@ function http_seqovl_host(ctx, desync)
 	if #data>0 and desync.l7payload=="http_req" and direction_check(desync) then
 		if replay_first(desync) then
 			local hdis = http_dissect_req(data)
-			if not hdis or not hdis.headers.host then
+			local host_idx = hdis and array_field_search(hdis.headers, "header_low", "host")
+			if not host_idx then
 				DLOG("http_seqovl_host: no Host header found")
 				return
 			end
 
-			local host_pos = hdis.headers.host
+			local host_pos = hdis.headers[host_idx]
 			local real_host = string.sub(data, host_pos.pos_value_start, host_pos.pos_end)
 			local fake_host = desync.arg.fake_host or "google.com"
 
@@ -1155,6 +1157,10 @@ end
 -- HTTP with absolute URL
 -- Использует абсолютный URL в запросе: GET http://host/path HTTP/1.1
 -- Некоторые DPI не парсят URL, только Host header
+-- ВНИМАНИЕ: не используется каталогом. Перебор hdis.headers идёт по числовым
+-- ключам (name == "host" не срабатывает, header.name отсутствует), поэтому
+-- сборка запроса падает на nil; кроме того, длина запроса меняется, а seq
+-- последующих пакетов — нет.
 -- standard args : direction, payload
 -- arg : fake_host=<str> - фейковый хост для Host header (default google.com)
 function http_absolute_url(ctx, desync)
@@ -1166,12 +1172,13 @@ function http_absolute_url(ctx, desync)
 
 	if desync.l7payload=="http_req" and direction_check(desync) then
 		local hdis = http_dissect_req(desync.dis.payload)
-		if not hdis or not hdis.headers.host then
+		local host_idx = hdis and array_field_search(hdis.headers, "header_low", "host")
+		if not host_idx then
 			DLOG("http_absolute_url: cannot parse HTTP")
 			return
 		end
 
-		local real_host = string.sub(desync.dis.payload, hdis.headers.host.pos_value_start, hdis.headers.host.pos_end)
+		local real_host = string.sub(desync.dis.payload, hdis.headers[host_idx].pos_value_start, hdis.headers[host_idx].pos_end)
 		local fake_host = desync.arg.fake_host or "google.com"
 		local path = hdis.path or "/"
 
@@ -1220,12 +1227,13 @@ function http_triple_seqovl(ctx, desync)
 	if #data>0 and desync.l7payload=="http_req" and direction_check(desync) then
 		if replay_first(desync) then
 			local hdis = http_dissect_req(data)
-			if not hdis or not hdis.headers.host then
+			local host_idx = hdis and array_field_search(hdis.headers, "header_low", "host")
+			if not host_idx then
 				DLOG("http_triple_seqovl: no Host header")
 				return
 			end
 
-			local host_pos = hdis.headers.host
+			local host_pos = hdis.headers[host_idx]
 			local real_host = string.sub(data, host_pos.pos_value_start, host_pos.pos_end)
 			local host_len = #real_host
 			local fake_host = desync.arg.fake_host or "www.google.com"
@@ -1304,12 +1312,13 @@ function http_mgts_combo(ctx, desync)
 	if #data>0 and desync.l7payload=="http_req" and direction_check(desync) then
 		if replay_first(desync) then
 			local hdis = http_dissect_req(data)
-			if not hdis or not hdis.headers.host then
+			local host_idx = hdis and array_field_search(hdis.headers, "header_low", "host")
+			if not host_idx then
 				DLOG("http_mgts_combo: no Host header")
 				return
 			end
 
-			local host_pos = hdis.headers.host
+			local host_pos = hdis.headers[host_idx]
 			local real_host = string.sub(data, host_pos.pos_value_start, host_pos.pos_end)
 			local fake_host = desync.arg.fake_host or "www.google.com"
 
@@ -1876,12 +1885,13 @@ function http_header_shuffle(ctx, desync)
 
     if desync.l7payload=="http_req" and direction_check(desync) then
         local hdis = http_dissect_req(desync.dis.payload)
-        if not hdis or not hdis.headers.host then
+        local host_idx = hdis and array_field_search(hdis.headers, "header_low", "host")
+        if not host_idx then
             DLOG("http_header_shuffle: no Host header")
             return
         end
 
-        local host_pos = hdis.headers.host
+        local host_pos = hdis.headers[host_idx]
         local real_host = string.sub(desync.dis.payload, host_pos.pos_value_start, host_pos.pos_end)
         local fake_host = desync.arg.fake_host or "www.google.com"
 
@@ -1970,12 +1980,13 @@ function http_absolute_uri_v2(ctx, desync)
 
     if desync.l7payload=="http_req" and direction_check(desync) then
         local hdis = http_dissect_req(desync.dis.payload)
-        if not hdis or not hdis.headers.host then
+        local host_idx = hdis and array_field_search(hdis.headers, "header_low", "host")
+        if not host_idx then
             DLOG("http_absolute_uri_v2: cannot parse")
             return
         end
 
-        local host_pos = hdis.headers.host
+        local host_pos = hdis.headers[host_idx]
         local real_host = string.sub(desync.dis.payload, host_pos.pos_value_start, host_pos.pos_end)
         local fake_host = desync.arg.fake_host or "www.google.com"
 
@@ -2021,12 +2032,13 @@ function http_host_bytesplit(ctx, desync)
     if #data>0 and desync.l7payload=="http_req" and direction_check(desync) then
         if replay_first(desync) then
             local hdis = http_dissect_req(data)
-            if not hdis or not hdis.headers.host then
+            local host_idx = hdis and array_field_search(hdis.headers, "header_low", "host")
+            if not host_idx then
                 DLOG("http_host_bytesplit: no Host header")
                 return
             end
 
-            local host_pos = hdis.headers.host
+            local host_pos = hdis.headers[host_idx]
             local max_parts = tonumber(desync.arg.max_parts) or 5
 
             local opts = {
@@ -2323,8 +2335,13 @@ function http_inject_safe_header(ctx, desync)
 end
 
 -- ============================================================================
--- SAFE METHODEOL VARIANTS - обходят DPI, не ломают сервер
+-- METHODEOL VARIANTS - ПРЕФИКСНЫЕ: добавляют байты перед запросом
 -- ============================================================================
+-- ВНИМАНИЕ: префикс/вставка в payload увеличивает длину данных, отправляемых
+-- в TCP-поток, но не сдвигает sequence number последующих пакетов сокета.
+-- Сервер подтверждает уже другие байты, и на постоянном соединении поток
+-- рассогласуется. В каталоге эти модули не используются; для DPI-обхода
+-- применяйте seqovl/disorder (сдвиг влево за окно), а не префикс вперёд.
 
 -- Вариант 1: Только \r\n в начало (без обрезания User-Agent)
 -- Многие HTTP серверы игнорируют \r\n перед GET

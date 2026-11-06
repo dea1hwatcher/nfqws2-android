@@ -115,6 +115,35 @@ for f in "$REPO_DIR"/defaults/nfqws2.conf "$REPO_DIR"/strategies/*.conf; do
   else _fail "$b contains forbidden syntax: $out"; fi
 done
 
+# ── shipped presets stay runnable ─────────────────────────────────────────────
+section "shipped presets stay runnable"
+
+# fake without a blob raises 'blob' arg required, which aborts the whole Lua
+# chain for that packet: such an instance never desynchronises anything
+bad_fake=$(grep -hv '^[[:space:]]*#' "$REPO_DIR/defaults/nfqws2.conf" "$REPO_DIR"/strategies/*.conf |
+  grep -o -- '--lua-desync=fake:[^ ]*' | grep -v 'blob=' || true)
+assert_eq "" "$bad_fake" "every fake instance names a blob"
+
+# fool=<name> is looked up with _G[], so an unknown name throws in apply_fooling
+fool_list=$(grep -hov -- 'fool=[A-Za-z0-9_]*' "$REPO_DIR/defaults/nfqws2.conf" "$REPO_DIR"/strategies/*.conf |
+  sed 's/^fool=//' | sort -u)
+fn_list=$(grep -ho '^function [A-Za-z0-9_]*' "$REPO_DIR"/lua/*.lua | sed 's/^function //' | sort -u)
+missing_fool=$(printf '%s\n' "$fool_list" | while IFS= read -r n; do
+  [ -n "$n" ] || continue
+  printf '%s\n' "$fn_list" | grep -qx "$n" || printf '%s ' "$n"
+done)
+assert_eq "" "$missing_fool" "every fool= names a defined Lua function"
+
+# Helpers that insert bytes in front of the request change the payload length
+# without moving the socket's sequence numbers, so a keep-alive stream
+# desynchronises once the server acknowledges the inserted bytes.
+shifting=$(grep -hE -- 'http_(garbage_prefix|pipeline_fake|pipeline_fake_v2|header_shuffle|methodeol_safe|multi_crlf|mixed_prefix|xpadding|simple_bypass|fake_continuation|fake_xhost|inject_safe_header|oob_prefix|space_prefix|lf_prefix|tab_prefix|absolute_url)' \
+  "$REPO_DIR"/strategy-catalogs/*.list 2>/dev/null || true)
+assert_eq "" "$shifting" "the catalog ships no payload-shifting HTTP helpers"
+
+assert_no_file "$REPO_DIR/lua/silent-drop-detector.lua" \
+  "the never-loaded silent-drop detector is gone"
+
 # ── strategy references ───────────────────────────────────────────────────────
 section "strategy references resolve"
 

@@ -1,4 +1,4 @@
-# Consolidated UNIQUE strategies for TCP_HTTP (199 entries, deduplicated)
+# Consolidated UNIQUE strategies for TCP_HTTP (182 entries, deduplicated)
 --lua-desync=multidisorder:seqovl=700:seqovl_pattern=tls_google:tcp_flags_unset=ack
 --lua-desync=multidisorder:pos=1,host+2,sld+2,sld+5,sniext+1,sniext+2,endhost-2:seqovl=1
 --lua-desync=multisplit:pos=midsld
@@ -83,7 +83,6 @@
 --lua-desync=http_hostmod:case=lower
 --lua-desync=http_hostmod:case=upper
 --lua-desync=http_hostmod:case=mixed
---lua-desync=http_absolute_url:fake_host=www.google.com
 --lua-desync=http_seqovl_host:fake_host=www.google.com --lua-desync=multidisorder:pos=method+2,host+1
 --lua-desync=http_ipfrag:frag_size=24 --lua-desync=http_seqovl_host:fake_host=google.com
 --lua-desync=http_hostcase:spell=HoSt
@@ -93,33 +92,17 @@
 --lua-desync=fake:blob=fake_default_http:repeats=10:ip_ttl=1:ip6_ttl=1:badsum --lua-desync=http_methodeol --lua-desync=multisplit:pos=1,host+1,midsld
 --lua-desync=hostfakesplit:host=google.com:midhost=midsld
 --lua-desync=hostfakesplit:host=yandex.ru:midhost=midsld
---lua-desync=http_garbage_prefix:mode=crlf:amount=50
---lua-desync=http_garbage_prefix:mode=mixed:amount=100
---lua-desync=http_garbage_prefix:mode=spaces:amount=50
---lua-desync=http_pipeline_fake:fake_host=www.google.com
---lua-desync=http_pipeline_fake:fake_host=www.yandex.ru
---lua-desync=http_pipeline_fake_v2:fake_host=www.google.com:badsum
---lua-desync=http_header_shuffle:fake_host=www.google.com
 --lua-desync=http_host_bytesplit:max_parts=5
 --lua-desync=http_host_bytesplit:max_parts=10
---lua-desync=http_methodeol_safe
---lua-desync=http_multi_crlf:count=5
---lua-desync=http_multi_crlf:count=10
---lua-desync=http_mixed_prefix
---lua-desync=http_xpadding
---lua-desync=http_simple_bypass:prefix=\r\n:hostcase=HoSt
---lua-desync=http_simple_bypass:hostcase=HoSt
---lua-desync=http_garbage_prefix:mode=crlf:amount=50 --lua-desync=http_hostcase:spell=HoSt --lua-desync=multisplit:pos=1,host+1,midsld
---lua-desync=fake:blob=fake_default_http:repeats=20:ip_ttl=2:ip6_ttl=2:badsum --lua-desync=http_simple_bypass:prefix=\r\n:hostcase=HoSt
---lua-desync=fake:blob=fake_default_http:repeats=15:ip_ttl=2:ip6_ttl=2:badsum --lua-desync=http_methodeol_safe
---lua-desync=fake:blob=fake_default_http:repeats=15:ip_ttl=2:ip6_ttl=2:badsum --lua-desync=http_xpadding --lua-desync=multisplit:pos=1,host+1,midsld
---lua-desync=fake:blob=fake_default_http:repeats=30:ip_ttl=1:ip6_ttl=1:badsum:tcp_md5 --lua-desync=http_methodeol_safe --lua-desync=multidisorder:pos=1,host+1,midsld
---lua-desync=http_pipeline_fake_v2:fake_host=www.google.com:badsum --lua-desync=multidisorder:pos=host+1
---lua-desync=fake:blob=fake_default_http:repeats=20:ip_ttl=1:ip6_ttl=1:badsum --lua-desync=http_garbage_prefix:mode=crlf:amount=30 --lua-desync=http_header_shuffle:fake_host=www.google.com --lua-desync=multidisorder:pos=1,host+1
---lua-desync=fake:blob=fake_default_http:repeats=50:ip_ttl=1:ip6_ttl=1:badsum:tcp_md5 --lua-desync=http_garbage_prefix:mode=mixed:amount=50 --lua-desync=http_simple_bypass:prefix=\r\n:hostcase=HoSt --lua-desync=multidisorder:pos=1,host+1,midsld:seqovl=2
+--lua-desync=http_hostcase:spell=HoSt --lua-desync=multisplit:pos=1,host+1,midsld
+--lua-desync=fake:blob=fake_default_http:repeats=20:ip_ttl=2:ip6_ttl=2:badsum
+--lua-desync=fake:blob=fake_default_http:repeats=15:ip_ttl=2:ip6_ttl=2:badsum
+--lua-desync=fake:blob=fake_default_http:repeats=15:ip_ttl=2:ip6_ttl=2:badsum --lua-desync=multisplit:pos=1,host+1,midsld
+--lua-desync=fake:blob=fake_default_http:repeats=30:ip_ttl=1:ip6_ttl=1:badsum:tcp_md5 --lua-desync=multidisorder:pos=1,host+1,midsld
+--lua-desync=fake:blob=fake_default_http:repeats=20:ip_ttl=1:ip6_ttl=1:badsum --lua-desync=multidisorder:pos=1,host+1
+--lua-desync=fake:blob=fake_default_http:repeats=50:ip_ttl=1:ip6_ttl=1:badsum:tcp_md5 --lua-desync=multidisorder:pos=1,host+1,midsld:seqovl=2
 --lua-desync=http_method_obfuscate
 --lua-desync=http_version_downgrade
---lua-desync=http_fake_continuation
 --lua-desync=fake:blob=tls14:tcp_ack=-66000:ip_autottl=0,3-20:ip6_autottl=0,3-20:tls_mod=rnd,dupsid --lua-desync=multisplit:pos=sld+1:tcp_ack=-66000:ip_autottl=0,3-20:ip6_autottl=0,3-20
 --lua-desync=fake:blob=fake_default_tls:tls_mod=rnd,sni=www.google.com:repeats=3:tcp_ts=-600000 --lua-desync=fake:blob=tls_4pda:repeats=3:tcp_ts=-600000
 --lua-desync=send:repeats=2 --lua-desync=syndata:blob=tls_google:ip_autottl=-2,3-20 --lua-desync=multisplit:seqovl=700:seqovl_pattern=tls_google:tcp_flags_unset=ack

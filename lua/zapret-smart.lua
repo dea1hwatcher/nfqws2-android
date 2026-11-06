@@ -1144,9 +1144,6 @@ function smart(ctx, desync)
 				-- сброс от сервера — блокировка, только пока сервер не ответил
 				a.inseq = tostring(ANSWER)
 				local fail = standard_failure_detector(dd, crec)
-				if not fail and silent_drop_detector then
-					fail = silent_drop_detector(desync, crec, dd.arg or {})
-				end
 				if fail then
 					cs.done, cs.failed = true, true
 					on_err(slot, key, r, cs.v, n, t, pass, false, cs)
@@ -1272,9 +1269,6 @@ function smartstat(ctx, desync)
 		else
 			a.inseq = tostring(ANSWER)
 			local fail = standard_failure_detector(dd, crec)
-			if not fail and silent_drop_detector then
-				fail = silent_drop_detector(desync, crec, dd.arg or {})
-			end
 			if fail then res = "err" end
 		end
 		if res then cs.done = true end

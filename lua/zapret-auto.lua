@@ -54,7 +54,7 @@ function automate_host_record(desync)
 	if not autostate[askey][hostkey] then
 		autostate[askey][hostkey] = {}
 	end
-	return autostate[askey][hostkey]
+	return autostate[askey][hostkey], hostkey, askey
 end
 -- per-connection storage
 function automate_conn_record(desync)
@@ -309,6 +309,33 @@ end
 -- args for success detector - see standard_success_detector or your own detector
 -- args for hostkey generator - see standard_hostkey or your own generator
 -- test case: --in-range=-s34228 --lua-desync=circular --lua-desync=argdebug:strategy=1 --lua-desync=argdebug:strategy=2
+-- circular keeps one record per host for the life of the process. Hostname-less
+-- UDP flows create a record per destination address, so without a bound the
+-- table grows for as long as the daemon runs. Same order of magnitude as the
+-- live_fallback LRU.
+local CIRCULAR_MAX_HOSTS = 3000
+local circular_fifo, circular_first, circular_count = {}, 1, 0
+
+local function circular_bound(askey, hostkey, rec)
+	if next(rec) ~= nil then return end -- record was already known
+	circular_fifo[circular_first + circular_count] = { k = askey, h = hostkey, r = rec }
+	circular_count = circular_count + 1
+	while circular_count > CIRCULAR_MAX_HOSTS do
+		local old = circular_fifo[circular_first]
+		circular_fifo[circular_first] = nil
+		circular_first = circular_first + 1
+		circular_count = circular_count - 1
+		local owner = old and autostate and autostate[old.k]
+		-- identity check: a re-created record for the same host must survive
+		if owner and owner[old.h] == old.r then owner[old.h] = nil end
+	end
+	if circular_first > 4096 then
+		local compact = {}
+		for i = 0, circular_count - 1 do compact[i + 1] = circular_fifo[circular_first + i] end
+		circular_fifo, circular_first = compact, 1
+	end
+end
+
 function circular(ctx, desync)
 	local function count_strategies(hrec)
 		if not hrec.ctstrategy then
@@ -345,11 +372,12 @@ function circular(ctx, desync)
 		return
 	end
 
-	local hrec = automate_host_record(desync)
+	local hrec, hostkey, askey = automate_host_record(desync)
 	if not hrec then
 		DLOG("circular: passing with no tampering")
 		return
 	end
+	if hostkey then circular_bound(askey, hostkey, hrec) end
 
 	count_strategies(hrec)
 	if hrec.ctstrategy==0 then
