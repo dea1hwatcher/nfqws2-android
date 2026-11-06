@@ -432,6 +432,19 @@ cmd_doctor() {
   else
     row ok lint "$(M 'конфиг без замечаний' 'config has no findings')"
   fi
+
+  # same idea for the lists: entries the engine would ignore or read differently
+  local ll_out llerr llwarn
+  ll_out=$(lint_lists 2>/dev/null)
+  llerr=$(printf '%s' "$ll_out" | grep -c '^error' 2>/dev/null || true)
+  llwarn=$(printf '%s' "$ll_out" | grep -c '^warn' 2>/dev/null || true)
+  if [ "${llerr:-0}" -gt 0 ]; then
+    row fail lists "$(M "списки: $llerr ошибок, $llwarn предупреждений — nfqws2-ctl lint-lists" "lists: $llerr errors, $llwarn warnings — nfqws2-ctl lint-lists")"
+  elif [ "${llwarn:-0}" -gt 0 ]; then
+    row warn lists "$(M "списки: $llwarn предупреждений — nfqws2-ctl lint-lists" "lists: $llwarn warnings — nfqws2-ctl lint-lists")"
+  else
+    row ok lists "$(M 'списки без замечаний' 'lists have no findings')"
+  fi
   row ok auto_ports "$(M "активные порты: TCP: ${TCP_PORTS:-80,443} | UDP: ${UDP_PORTS:-443}" "active ports: TCP: ${TCP_PORTS:-80,443} | UDP: ${UDP_PORTS:-443}")"
   if [ "$NAT_FIX" = "1" ]; then
     local nat_hits
@@ -2520,6 +2533,77 @@ cmd_list_update() { # <имя списка>
   echo OK
 }
 
+# ---------------------------------------------------------------- lint-lists
+# Entries the engine will silently ignore or read differently than the user
+# expects: a wildcard, a URL with a scheme or path, a duplicate, a domain already
+# covered by a parent entry, or a domain that sits in an include and an exclude
+# list at once.
+lint_lists() { # prints <severity>\t<list>\t<message>; returns the error count
+  local l f payload out="" errn=0 allowpath
+  for l in user exclude auto probe_hosts; do
+    f="$LISTS_DIR/$l.list"
+    [ -s "$f" ] || continue
+    # probe lists hold host/path pairs for the availability checks, so a path is
+    # fine there and only bypass lists must be bare names
+    allowpath=0
+    [ "$l" = probe_hosts ] && allowpath=1
+    payload=$(awk -v list="$l" -v allowpath="$allowpath" '
+      function err(msg) { print "error\t" list "\t" msg }
+      function warn(msg) { print "warn\t" list "\t" msg }
+      function covered(d,   p) {
+        p = d
+        while (sub(/^[^.]+\./, "", p)) if (p in seen) return 1
+        return 0
+      }
+      { line = $0
+        sub(/\r$/, "", line)
+        gsub(/^[ \t]+|[ \t]+$/, "", line)
+        if (line == "" || line ~ /^#/) next
+        if (line ~ /\*/) { err("«" line "»: «*» nfqws2 не поддерживает — поддомены учитываются сами"); next }
+        if (!allowpath) {
+          if (line ~ /^[a-z]+:\/\// || line ~ /\//) { err("«" line "»: нужно только имя сайта, без схемы и пути"); next }
+          if (line ~ /:/) { err("«" line "»: домен с портом не поддерживается, уберите порт"); next }
+        } else {
+          sub(/\/.*$/, "", line)
+        }
+        if (tolower(line) ~ /[^a-z0-9._-]/) { err("«" line "»: недопустимые символы в имени"); next }
+        if (!(line ~ /\./)) { err("«" line "»: нет точки — это не домен"); next }
+        if (line in seen) { warn("«" line "»: дубликат"); next }
+        # probe targets may legitimately include both a site and its subdomain,
+        # so redundancy is only judged for the bypass lists
+        if (!allowpath && covered(line)) { warn("«" line "»: уже покрыт записью родительского домена"); next }
+        seen[line] = 1
+      }' "$f")
+    if [ -n "$payload" ]; then out="$out$payload
+"; fi
+  done
+
+  # the same domain in an include and an exclude list cancels out
+  local u="$LISTS_DIR/user.list" e="$LISTS_DIR/exclude.list"
+  if [ -s "$u" ] && [ -s "$e" ]; then
+    payload=$(awk '
+      NR == FNR { gsub(/^[ \t]+|[ \t]+$/, ""); if ($0 != "" && $0 !~ /^#/) inc[tolower($0)] = 1; next }
+      { line = $0; sub(/\r$/, "", line); gsub(/^[ \t]+|[ \t]+$/, "", line)
+        if (line == "" || line ~ /^#/) next
+        if (tolower(line) in inc) print "warn\tсписки\t«" line "»: есть и в user.list, и в exclude.list — исключение побеждает"
+      }' "$u" "$e")
+    if [ -n "$payload" ]; then out="$out$payload
+"; fi
+  fi
+
+  [ -n "$out" ] && printf '%s' "$out"
+  errn=$(printf '%s' "$out" | grep -c '^error' 2>/dev/null || true)
+  return "${errn:-0}"
+}
+
+cmd_lint_lists() {
+  local out rc
+  out=$(lint_lists)
+  rc=$?
+  [ -n "$out" ] && printf '%s\n' "$out"
+  [ "$rc" -eq 0 ]
+}
+
 # Список записан на диск, но служба его ещё не перечитала. Провал перезагрузки
 # говорим словами, а не глотаем: правка сделана, но в работу не пошла — это важно
 # знать. Код возврата не роняем, потому что основное действие уже выполнено; а вот
@@ -3126,6 +3210,7 @@ case "$1" in
   bench-strategies) cmd_bench_strategies "$2" ;;
   check-domain) cmd_check_domain "$2" ;;
   lint) cmd_lint "$2" ;;
+  lint-lists) cmd_lint_lists ;;
   domain-check) cmd_domain_check "$2" ;;
   home-pause)
     rm -f "$HOME_OVERRIDE_FILE"
@@ -3170,7 +3255,7 @@ EOF
     echo "         list-strategies get-strategy set-strategy strategy-get-b64 strategy-save-b64 strategy-reset" >&2
     echo "         import-add-b64 list-imports get-import-merged-b64 rename-import delete-import" >&2
     echo "         get-list save-list-b64 list-update add-domain clear-auto reset-lists set set-mode list-apps" >&2
-    echo "         get-logs export-logs clear-logs wifi-ssid backup-create backup-list backup-restore backup-restore-b64 probe-dpi probe-cancel net-info bench-strategies check-domain domain-check lint" >&2
+    echo "         get-logs export-logs clear-logs wifi-ssid backup-create backup-list backup-restore backup-restore-b64 probe-dpi probe-cancel net-info bench-strategies check-domain domain-check lint lint-lists" >&2
     echo "         smart-status smart-sites smart-export smart-import-b64 smart-learn-once smart-bench smart-apply-variant smart-turbo smart-reset" >&2
     echo "         home-pause net-recheck upload share changelog" >&2
     echo "         current-network list-net-strategies clear-net-strategies googlevideo-discovery orchestra-status orchestra-lock orchestra-unlock orchestra-block orchestra-unblock orchestra-clear tg-affinity" >&2

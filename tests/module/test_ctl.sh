@@ -619,6 +619,33 @@ assert_rc 0 "$ctl_rc" "the smart config passes lint"
 ctl doctor
 assert_contains "$ctl_out" "конфиг без замечаний" "doctor reports a clean config"
 
+# ── lint-lists ───────────────────────────────────────────────────────────────
+section "lint-lists: entries the engine would ignore"
+
+cat > "$LISTS_DIR/user.list" <<'X'
+example.com
+*.wild.example
+http://scheme.example/path
+sub.example.com
+dup.example.org
+dup.example.org
+X
+printf 'example.com\n' > "$LISTS_DIR/exclude.list"
+
+ctl lint-lists
+assert_rc 1 "$ctl_rc" "list findings make the command fail"
+assert_contains "$ctl_out" "«*» nfqws2 не поддерживает" "a wildcard entry is an error"
+assert_contains "$ctl_out" "без схемы и пути" "a URL instead of a name is an error"
+assert_contains "$ctl_out" "уже покрыт записью родительского домена" "a subdomain covered by its parent is reported"
+assert_contains "$ctl_out" "дубликат" "a duplicate is reported"
+assert_contains "$ctl_out" "и в user.list, и в exclude.list" "an include/exclude conflict is reported"
+
+printf 'example.net\n' > "$LISTS_DIR/user.list"
+printf 'example.org\n' > "$LISTS_DIR/exclude.list"
+ctl lint-lists
+assert_rc 0 "$ctl_rc" "clean lists pass"
+assert_eq "" "$ctl_out" "with nothing to report"
+
 # ── check-domain ─────────────────────────────────────────────────────────────
 section "check-domain"
 
