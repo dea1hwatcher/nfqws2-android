@@ -332,7 +332,9 @@ function renderDevRows(j){
   j = j || {};
   const lim = LIMITS.map(([k, label, jk]) =>
     '<div class="list-item clickable state" role="button" tabindex="0" aria-haspopup="dialog"' +
-      ' onclick="editLimit(' + jsArg(k) + ', ' + jsArg(t(label)) + ', ' + (+j[jk] || 15) + ')">' +
+      // the value is read in editLimit() at click time: the incremental render
+      // refreshes the row text, and a value baked into onclick would go stale
+      ' onclick="editLimit(' + jsArg(k) + ', ' + jsArg(t(label)) + ', ' + jsArg(jk) + ')">' +
       '<span class="li-text"><span class="li-primary">' + esc(t(label)) + '</span></span>' +
       '<span class="li-trail">' +
         '<span class="li-value">' + esc(j[jk] != null ? j[jk] : '—') + '</span>' + icon('chevron-right', 's24') +
@@ -461,7 +463,8 @@ async function setp(k, v){
     needRestart ? {label: t('Перезапустить'), fn: restartSvc} : null);
   stat();
 }
-async function editLimit(key, title, cur){
+async function editLimit(key, title, jk){
+  const cur = (S && S[jk] != null) ? +S[jk] : 15;
   const v = await mdPrompt(title, t('Целое число от 1 до 15.'), String(cur), t('Пакетов на соединение'), {type: 'number', inputmode: 'numeric'});
   if(v == null || v === '') return;
   const n = parseInt(v, 10);

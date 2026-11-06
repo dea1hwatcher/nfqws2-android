@@ -310,6 +310,34 @@ truthy(i18nJs.includes('"Удалить дубликаты"'), 'i18n has key У�
 truthy(i18nJs.includes('"Удалено дубликатов: {0}"'), 'i18n has key Удалено дубликатов');
 truthy(i18nJs.includes('"Дубликатов не найдено"'), 'i18n has key Дубликатов не найдено');
 
+// Every Russian literal handed to t() must exist in the dictionary: the EN
+// branch falls back to the Russian text, so a missing key is invisible until
+// someone switches the language (that is how the calibration screen shipped).
+sect('translation coverage');
+const i18nDictMatch = i18nJs.match(/EN\s*=\s*(\{[\s\S]*?\n\});/);
+truthy(!!i18nDictMatch, 'the EN dictionary can be parsed');
+const i18nKeys = i18nDictMatch ? new Set(Object.keys(vm.runInNewContext('(' + i18nDictMatch[1] + ')'))) : new Set();
+const jsDir = path.join(REPO, 'webroot', 'js');
+const missingKeys = [];
+for (const file of fs.readdirSync(jsDir)) {
+  if (file === 'i18n-en.js') continue;
+  const src = fs.readFileSync(path.join(jsDir, file), 'utf8');
+  const re = /t\(\s*'((?:[^'\\]|\\.)*)'/g;
+  let m;
+  while ((m = re.exec(src))) {
+    let key;
+    // evaluate the literal the way JS does: the dictionary holds the decoded
+    // value, so "\n" in the source has to become a real newline here too
+    try { key = vm.runInNewContext("'" + m[1] + "'"); } catch (e) { continue; }
+    if (!/[А-Яа-яЁё]/.test(key)) continue;   // not a UI string
+    if (/^\s*\+|\+\s*$/.test(key)) continue; // string concatenation artefact
+    if (key.includes('+ ') || key.includes("')")) continue;
+    if (!i18nKeys.has(key)) missingKeys.push(file + ': ' + key.replace(/\n/g, '\\n'));
+  }
+}
+eq(0, missingKeys.length,
+  'every Russian UI string has an English translation' + (missingKeys.length ? ' — missing: ' + missingKeys.join('; ') : ''));
+
 // Test deduplication logic in sandbox
 const editorJs = fs.readFileSync(path.join(REPO, 'webroot', 'js', 'editor.js'), 'utf8');
 const elements = {};

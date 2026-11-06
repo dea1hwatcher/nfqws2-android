@@ -7,6 +7,9 @@
    его отдельно для каждой сети. Здесь — состояние, выученное, обучение и сброс. */
 let SMS = null, smartTimer = null, smartView = null;
 let smartBenchRunning = false, smartBenchCancelled = false;
+// Every run gets a token: a cancelled run keeps streaming lines, and without it
+// the old stream would write into the new run's rows and even cancel it.
+let smartBenchRun = 0;
 let smartBenchSlot = 'tls', smartBenchDomain = '';
 let smartBenchResults = {}, smartBenchBest = null, smartBenchBadgeText = '';
 const isSmartMode = () => (typeof S !== 'undefined' && S.smart == 1) || (typeof currentStrategy !== 'undefined' ? currentStrategy === 'smart' : (SMS && SMS.active == 1));
@@ -343,8 +346,12 @@ async function toggleSmartBench(){
     smartBenchRunning = false;
     smartBenchBadgeText = t('Остановлено');
     renderSmart();
+    // a local flag alone leaves the ctl process probing and the uid-0 include
+    // rule installed on the device, so stop the run there too
+    await ctlx(['probe-cancel']);
     return;
   }
+  const run = ++smartBenchRun;
   smartBenchRunning = true;
   smartBenchCancelled = false;
   smartBenchResults = {};
@@ -354,9 +361,10 @@ async function toggleSmartBench(){
 
   const domain = (smartBenchDomain || '').trim();
   const args = domain ? ['smart-bench', domain, smartBenchSlot] : ['smart-bench', '', smartBenchSlot];
+  let sawBest = false;
 
   const onLine = line => {
-    if(smartBenchCancelled) return;
+    if(run !== smartBenchRun || smartBenchCancelled) return;
     const p = line.trim().split('\t');
     if(!p[0]) return;
     if(p[0] === 'SMART_BENCH_START'){
@@ -387,6 +395,7 @@ async function toggleSmartBench(){
         else listEl.insertAdjacentHTML('beforeend', html);
       }
     } else if(p[0] === 'SMART_BENCH_BEST'){
+      sawBest = true;
       const slot = p[1], v = +p[2] || 0, name = p[3] || ('#' + v), ok = +p[4] || 0, total = +p[5] || 0, avg_ms = +p[6] || 0;
       if(v > 0 && ok > 0){
         smartBenchBest = {slot, v, name, ok, total, avg_ms};
@@ -399,17 +408,29 @@ async function toggleSmartBench(){
     }
   };
 
+  let r = {code: 1, out: '', err: ''};
   try {
-    await ctlx(args, 180000, onLine);
+    r = await ctlx(args, 180000, onLine);
   } catch(e){
-    toast(t('Ошибка тестирования'));
+    r = {code: 1, out: '', err: String((e && e.message) || e)};
   }
+  if(run !== smartBenchRun) return; // a newer run owns the badge and the list
   smartBenchRunning = false;
   if(smartBenchCancelled){
     smartBenchBadgeText = t('Остановлено');
-  } else {
-    smartBenchBadgeText = t('Завершено');
+    renderSmart();
+    return;
   }
+  if(r.code || !sawBest){
+    // the run failed, ran out of the client timeout or found no tool; the ctl
+    // process may still be probing, so make sure it is stopped
+    await ctlx(['probe-cancel']);
+    smartBenchBadgeText = '';
+    renderSmart();
+    toast(errText(r, 'Тестирование не удалось'));
+    return;
+  }
+  smartBenchBadgeText = t('Завершено');
   renderSmart();
 }
 

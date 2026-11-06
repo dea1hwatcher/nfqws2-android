@@ -556,6 +556,19 @@ ctl list-apps refresh
 assert_rc 0 "$ctl_rc" "list-apps refresh exits 0"
 assert_contains "$ctl_out" "com.example.test" "refresh preserves rich cache when generator unavailable"
 
+# A generator that fails reflection prints an empty "[]" - that must not replace
+# the rich cache, or the WebUI loses every name and icon
+cat > "$MOCKBIN/app_process" <<'EOF'
+#!/bin/sh
+printf '[]\n'
+EOF
+chmod 0755 "$MOCKBIN/app_process"
+ctl list-apps refresh
+assert_rc 0 "$ctl_rc" "refresh with an empty generator result exits 0"
+assert_contains "$(cat "$STATE_DIR/apps_cache.json")" "com.example.test" \
+  "an empty [] does not wipe the cache"
+rm -f "$MOCKBIN/app_process"
+
 # Cold start with pm fallback
 rm -f "$STATE_DIR/apps_cache.json"
 mock_pm="$MOCKBIN/pm"

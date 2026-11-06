@@ -682,6 +682,19 @@ EN = {
   "Тестирование в умном режиме": "Benchmark in smart mode",
   "Включён умный режим. Перейти в Умный режим для калибровки вариантов без перезапуска службы?": "Smart mode is active. Switch to Smart mode to calibrate variants without restarting the service?",
   "В умный режим": "Go to Smart mode",
-  "Тестировать монолитные": "Test monolithic"
+  "Тестировать монолитные": "Test monolithic",
+  "Тестирование...": "Testing...",
+  "Запуск...": "Starting...",
+  "Остановлено": "Stopped",
+  "Завершено": "Done",
+  "Вариант {0}/{1}": "Variant {0}/{1}",
+  "Тестирование не удалось": "Benchmark failed",
+  "Умный режим сейчас не выбран.": "Smart mode is not selected right now.",
+  "Удачных {0} · с ошибками {1}": "Successful {0} · with errors {1}",
+  "Идёт ({0})": "Running ({0})",
+  "Соединения к зарубежным CDN (Cloudflare/Hetzner) обрываются после 16-20 КБ данных. Рекомендуется сегментация TCP пакетов и наложение 4pda (Universal V12).": "Connections to foreign CDNs (Cloudflare/Hetzner) break after 16-20 KB of data. TCP segmentation with a 4pda overlap (Universal V12) is recommended.",
+  "DPI инжектирует пакеты TCP RST и глушит сессии. Рекомендуется отправка фейкового ClientHello или Anti-Throttle (rst_flood).": "DPI injects TCP RST packets and silences the session. Sending a fake ClientHello or using Anti-Throttle (rst_flood) is recommended.",
+  "DPI молча отбрасывает пакеты без ответа. Рекомендуется стратегия с повышенным числом повторов (repeats=8) или Anti-Throttle.": "DPI silently drops packets without a reply. A strategy with more repeats (repeats=8) or Anti-Throttle is recommended.",
+  "KernelSU: в списке модулей удерживайте кнопку WebUI на карточке nfqws2 и выберите «Создать ярлык».\nMMRL и KsuWebUI: «Создать ярлык» в меню модуля.\nИконка ярлыка подставится из модуля сама.": "KernelSU: hold the WebUI button on the nfqws2 module card and pick «Create shortcut».\nMMRL and KsuWebUI: «Create shortcut» in the module menu.\nThe shortcut icon is taken from the module automatically."
 };
 

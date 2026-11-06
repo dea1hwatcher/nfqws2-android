@@ -263,6 +263,18 @@ ctl smart-apply-variant google 15
 assert_rc 0 "$ctl_rc" "smart-apply-variant succeeds without host (leader)"
 assert_contains "$(cat "$SMART_DIR/$f_net.tsv")" "youtube.com	15	15:3.0" "anchor host is set for the slot leader"
 
+# the engine keys its database by site key (two labels), so "www." must not be
+# stored verbatim: such a row would never be found again
+ctl smart-apply-variant tls 15 "www.example.net"
+assert_rc 0 "$ctl_rc" "smart-apply-variant accepts a www host"
+assert_contains "$(cat "$SMART_DIR/$f_net.tsv")" "example.net	15	15:3.0" "the pin is stored under the site key"
+
+ctl smart-apply-variant tls "5 or 6" bad.example
+assert_rc 1 "$ctl_rc" "a non-numeric variant is refused"
+
+ctl smart-apply-variant "tl s" 15 bad.example
+assert_rc 1 "$ctl_rc" "a malformed slot is refused"
+
 # smart-bench without running service fails cleanly
 ctl smart-bench "custom.example" tls
 assert_rc 1 "$ctl_rc" "smart-bench fails when service is not running"

@@ -428,6 +428,30 @@ const VIEWPORTS = [
     truthy(handlers.swCall.indexOf("'set'") >= 0 && handlers.swCall.indexOf('AUTOSTART') >= 0,
       `a switch row reaches setp() with its key intact (saw: ${handlers.swCall || 'no call'})`);
 
+    // Stopping the calibration run has to cancel it on the device: a local flag
+    // alone would leave the ctl process probing with the uid-0 include rule up.
+    const bench = await page.evaluate(async () => {
+      const originalCtlx = ctlx, originalPage = currentPage;
+      const started = [];
+      ctlx = args => {
+        started.push(args[0]);
+        return args[0] === 'probe-cancel' ? Promise.resolve({ code: 0, out: '', err: '' }) : new Promise(() => {});
+      };
+      currentPage = 'smart';
+      renderSmart();
+      toggleSmartBench();                       // start, never resolves
+      await new Promise(r => setTimeout(r, 0));
+      await toggleSmartBench();                 // stop
+      const badge = smartBenchBadgeText;
+      ctlx = originalCtlx;
+      currentPage = originalPage;
+      renderSmart();
+      return { started, badge };
+    });
+    truthy(bench.started.indexOf('smart-bench') >= 0 && bench.started.indexOf('probe-cancel') >= 0,
+      `stopping the calibration run cancels it on the device (saw: ${bench.started.join(', ') || 'no call'})`);
+    eq('Остановлено', bench.badge, 'and the badge says so');
+
     const swatch = await page.evaluate(async () => {
       const wait = () => new Promise(r => setTimeout(r, 120));
       const before = currentSeed;

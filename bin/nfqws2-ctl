@@ -589,6 +589,13 @@ cmd_export_logs() {
   rm -rf "$tmp"
 }
 
+# A JSON array that actually carries applications. An empty "[]" from a failed
+# reflection run must never replace a valid cache: the WebUI would fall back to
+# bare package names and lose every name and icon.
+apps_json_has_items() { # <json>
+  [ -n "$1" ] && printf '%s' "$1" | grep -q '^[[:space:]]*\[' && printf '%s' "$1" | grep -q '"pkg"'
+}
+
 cmd_list_apps() {
   local cache="$STATE_DIR/apps_cache.json"
   local refresh=0
@@ -633,7 +640,7 @@ cmd_list_apps() {
 
     local out
     out=$(CLASSPATH="$target" app_process /system/bin com.deathwatcher.PkgList --apps-list "$CONFDIR/apps.list" 2>/dev/null)
-    if [ -n "$out" ] && [ "${out#\[}" != "$out" ]; then
+    if apps_json_has_items "$out"; then
       if printf '%s\n' "$out" > "$tmp" 2>/dev/null && mv -f "$tmp" "$cache"; then
         printf '2\n' > "$cache.version" 2>/dev/null
       else
@@ -1849,11 +1856,35 @@ smart_variant_name() { # <slot> <v> -> имя варианта
   printf '%s' "$name"
 }
 
+# Ключ сайта так, как его хранит умный режим (lua site_key): два последних
+# лейбла, для общей зоны — три. IP и однословные имена остаются как есть.
+# Без этого закрепление по «www.example.com» создаёт строку, которую движок
+# никогда не найдёт: он ключует БД по example.com.
+smart_site_key() {
+  printf '%s' "$1" | awk '
+    BEGIN {
+      split("co com net org gov edu ac or ne go ltd plc gen nic mil biz info me in", a, " ")
+      for (i in a) sld2[a[i]] = 1
+      split("msk.ru spb.ru workers.dev pages.dev github.io herokuapp.com appspot.com vercel.app netlify.app web.app firebaseapp.com blogspot.com cloudfront.net azurewebsites.net", b, " ")
+      for (i in b) shared[b[i]] = 1
+    }
+    {
+      h = $0
+      if (h ~ /^[0-9.]+$/ || h ~ /:/) { print h; exit }
+      n = split(h, p, ".")
+      if (n <= 2) { print h; exit }
+      two = p[n-1] "." p[n]
+      if (two in shared || ((p[n-1] in sld2) && length(p[n]) == 2)) { print p[n-2] "." two; exit }
+      print two
+    }'
+}
+
 # smart-apply-variant <slot> <v> [host]
 # Закрепляет вариант за сайтом или делает его стартовым лидером в текущей сети
 cmd_smart_apply_variant() {
   local slot="${1:-tls}" v="$2" host="${3:-}"
-  [ -z "$v" ] && { echo "Не указан вариант" >&2; return 1; }
+  case "$slot" in ''|*[!a-z0-9_]*) echo "Неверный слот" >&2; return 1 ;; esac
+  case "$v" in ''|*[!0-9]*) echo "Неверный вариант" >&2; return 1 ;; esac
   local net
   net=$(cat "$SMART_NET_FILE" 2>/dev/null)
   { [ -z "$net" ] || [ "$net" = "offline" ]; } && net=$(cat "$SMART_NET_LAST" 2>/dev/null)
@@ -1868,7 +1899,7 @@ cmd_smart_apply_variant() {
   local tmp="$f.tmp.$$"
 
   if [ -n "$host" ]; then
-    local h_clean; h_clean=$(domain_norm "$host")
+    local h_clean; h_clean=$(smart_site_key "$(domain_norm "$host")")
     [ -n "$h_clean" ] || h_clean="$host"
     awk -F'\t' -v OFS='\t' -v s="$slot" -v h="$h_clean" -v v="$v" -v t="$now_ts" '
       BEGIN { found = 0 }
@@ -1948,6 +1979,7 @@ cmd_smart_bench() {
       *) slot="tls" ;;
     esac
   fi
+  case "$slot" in ''|*[!a-z0-9_]*) echo "Неверный слот" >&2; return 1 ;; esac
 
   local bench_key="#@bench-$slot"
   local cand_spec

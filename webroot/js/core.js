@@ -898,7 +898,9 @@ function toggleDevMode(){
   devMode = !devMode;
   store.set('nfq_dev', devMode ? '1' : '0');
   renderParams(S);
-  if(currentPage === 'settings') renderSettings();
+  // force: the incremental path only updates the live switches, and the
+  // developer block has to appear or disappear right away
+  if(currentPage === 'settings') renderSettings(true);
   toast(devMode ? t('Режим разработчика включён') : t('Режим разработчика выключен'));
 }
 (function bindSettingsPress(){
