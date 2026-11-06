@@ -526,6 +526,28 @@ firewall_stop >/dev/null 2>&1
 conf_reset
 load_conf >/dev/null 2>&1
 
+section "a firewall re-apply without a stop keeps POSTROUTING single"
+
+conf_reset
+load_conf >/dev/null 2>&1
+ipt_reset
+# На телефоне правила копились именно здесь: прямой путь _firewall_start вставляет
+# -I POSTROUTING 2/3, а защищён от повтора только restore-путь с проверкой -C.
+# iptables-restore убираем, чтобы firewall_start пошёл прямым путём, как на ядрах
+# без него.
+mv "$MOCKBIN/iptables-restore" "$SANDBOX/iptables-restore.off"
+mv "$MOCKBIN/ip6tables-restore" "$SANDBOX/ip6tables-restore.off"
+firewall_start >/dev/null 2>&1
+firewall_start >/dev/null 2>&1
+post="$MOCK_IPT_STORE/iptables/mangle/POSTROUTING"
+assert_eq "1" "$(grep -c -- '-j nfqws_post' "$post" 2>/dev/null)" "the outgoing jump is applied once"
+assert_eq "1" "$(grep -c 'CONNMARK --set-xmark 0x80000000' "$post" 2>/dev/null)" "the NAT_FIX save rule is not stacked"
+assert_eq "1" "$(grep -c 'MARK --set-xmark 0x0/0x40000000' "$post" 2>/dev/null)" "neither is the unmark rule"
+assert_eq "1" "$(grep -c -- '-j nfqws_pre' "$MOCK_IPT_STORE/iptables/mangle/PREROUTING" 2>/dev/null)" "and PREROUTING keeps a single jump"
+firewall_stop >/dev/null 2>&1
+mv "$SANDBOX/iptables-restore.off" "$MOCKBIN/iptables-restore"
+mv "$SANDBOX/ip6tables-restore.off" "$MOCKBIN/ip6tables-restore"
+
 section "VPN pause: active interface suspends the bypass"
 NFQWS_SYSNET="$SANDBOX/sysnet"; export NFQWS_SYSNET
 mkdir -p "$NFQWS_SYSNET"

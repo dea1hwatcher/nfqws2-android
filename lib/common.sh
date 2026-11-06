@@ -1569,6 +1569,12 @@ _firewall_start() {
     _fw_iface_rules "$CMD" "" ""
   fi
 
+  # Переприменение без stop (смена сети, home_check, net_recheck) копило эти
+  # правила: firewall_stop их дренирует, restore-путь защищён проверкой -C, а
+  # здесь вставка шла поверх прежней. Сначала снять всё, что уже стоит.
+  while $CMD -w -t mangle -D POSTROUTING -m mark --mark $MARK_PROCESSED -j CONNMARK --set-xmark $MARK_RENAT 2>/dev/null; do :; done
+  while $CMD -w -t mangle -D POSTROUTING -m mark --mark $MARK_PROCESSED -j MARK --set-xmark 0x0/0x40000000 2>/dev/null; do :; done
+
   $CMD -w -t mangle -I POSTROUTING 1 -j $IPT_GROUP_POST
   $CMD -w -t mangle -I PREROUTING 1 -j $IPT_GROUP_PRE
   if [ "$REAL_CMD" = "iptables" ] && [ "$NAT_FIX" = "1" ]; then
