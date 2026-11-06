@@ -523,6 +523,11 @@ out=$(MODDIR="$MODDIR" sh "$MODDIR/system/bin/zapret2-status")
 assert_rc 0 $? "zapret2-status executes successfully"
 assert_contains "$out" "Служба NFQWS2" "zapret2-status outputs status"
 
+# rollback needs a working snapshot to restore; the smoke test must not depend
+# on some earlier section having started the service, nor on a restart left
+# holding the service lock by a background helper
+rm -rf "$CONFDIR/state/service.lock"
+save_working_snapshot "$CONFFILE"
 out=$(MODDIR="$MODDIR" sh "$MODDIR/system/bin/zapret2-rollback")
 assert_rc 0 $? "zapret2-rollback executes successfully"
 
@@ -743,6 +748,14 @@ assert_contains "$ctl_out" "primary_media" "tg-affinity output contains primary_
 
 section "system/bin/zapret2-rollback and ctl rollback"
 
+# A running watchdog would restart the daemon and refresh the working snapshot
+# from the config this section deliberately spoils, so keep it out of the way.
+if [ -f "$CONFDIR/state/watchdog.pid" ]; then
+  kill "$(cat "$CONFDIR/state/watchdog.pid" 2>/dev/null)" 2>/dev/null
+  rm -f "$CONFDIR/state/watchdog.pid"
+fi
+printf 'WATCHDOG=0\n' >> "$CONFFILE"
+rm -rf "$CONFDIR/state/service.lock"
 save_working_snapshot "$CONFFILE"
 assert_file "$CONFDIR/state/snapshot_working/nfqws2.conf" "snapshot exists"
 echo "BAD_TEST_KEY=1" >> "$CONFFILE"
@@ -750,6 +763,7 @@ echo "BAD_TEST_KEY=1" >> "$CONFFILE"
 MODDIR="$MODDIR" sh "$MODDIR/system/bin/zapret2-rollback" >/dev/null 2>&1
 assert_rc 0 $? "zapret2-rollback succeeds"
 assert_not_contains "$(cat "$CONFFILE")" "BAD_TEST_KEY" "zapret2-rollback restored config"
+sed -i '/^WATCHDOG=0$/d' "$CONFFILE"
 
 # ── catalogs ──────────────────────────────────────────────────────────────────
 section "catalogs"

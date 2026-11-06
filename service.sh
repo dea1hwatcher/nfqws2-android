@@ -578,6 +578,25 @@ netwatch() {
   rm -f "$WN_PIDFILE" "$fifo" "$STATE_DIR/conf_seen.$$"
 }
 
+# Auto-restart streak, kept in a file: a watchdog that dies (or a reboot) must
+# not reset a failing loop into fast retries. A streak older than an hour counts
+# as a fresh problem.
+watchdog_fail_count() {
+  local f="$STATE_DIR/watchdog_fails" n=0 t=0 now
+  now=$(date +%s 2>/dev/null || echo 0)
+  if [ -f "$f" ]; then
+    read -r n t < "$f" 2>/dev/null
+    case "$n" in ''|*[!0-9]*) n=0 ;; esac
+    case "$t" in ''|*[!0-9]*) t=0 ;; esac
+    if [ "$now" -gt 0 ] && [ $((now - t)) -gt 3600 ]; then n=0; fi
+  fi
+  printf '%s' "$n"
+}
+watchdog_fail_set() {
+  mkdir -p "$STATE_DIR" 2>/dev/null
+  printf '%s %s\n' "$1" "$(date +%s 2>/dev/null || echo 0)" > "$STATE_DIR/watchdog_fails"
+}
+
 watchdog() {
   echo $$ > "$WD_PIDFILE"
   trap 'rm -f "$WD_PIDFILE"; exit 0' INT TERM EXIT
@@ -601,21 +620,30 @@ watchdog() {
         rollback
         continue
       fi
+      # the streak lives on disk: a reboot or a restarted watchdog must not turn
+      # a failing loop back into an endless fast retry
+      fails=$(watchdog_fail_count)
       fails=$((fails + 1))
+      watchdog_fail_set "$fails"
       log_msg "watchdog: nfqws2 is inactive, auto-restarting (#$fails)..."
       firewall_stop
       start
-      if [ "$fails" -ge 5 ]; then
-        log_msg "watchdog: frequent service crashes (#$fails), pausing 60s..."
-        sleep 60
-      else
-        sleep 2
-      fi
+      # first attempts are quick (crashes are usually transient), later ones back
+      # off so a broken configuration cannot spin forever
+      case "$fails" in
+        1|2|3) sleep 2 ;;
+        4) log_msg "watchdog: $fails restarts in a row — waiting a minute"; sleep 60 ;;
+        5) log_msg "watchdog: $fails restarts in a row — waiting five minutes"; sleep 300 ;;
+        *) log_msg "watchdog: $fails restarts in a row — waiting fifteen minutes" ; sleep 900 ;;
+      esac
       continue
     fi
 
-    # survived a full cycle: reset the fail counter
-    fails=0
+    # survived a full cycle: the streak is over
+    if [ "$fails" -ne 0 ]; then
+      fails=0
+      rm -f "$STATE_DIR/watchdog_fails" 2>/dev/null
+    fi
 
     # keep the daemon and watchdog protected from lmk
     dpid=$(cat "$PIDFILE" 2>/dev/null)

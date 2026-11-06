@@ -389,8 +389,22 @@ ctl set ENABLE_HOTSPOT 1
 assert_eq "" "$(ipt_rules POSTROUTING)" "a stopped service gets no firewall rules from a setting"
 ctl set ENABLE_HOTSPOT 0
 
-section "stopping puts the kernel settings back"
+section "the watchdog restart streak survives a restart"
 
+(
+  awk '/^watchdog_fail_count\(\)/,/^}/' "$MODDIR/service.sh" > "$SANDBOX/wd.sh"
+  awk '/^watchdog_fail_set\(\)/,/^}/' "$MODDIR/service.sh" >> "$SANDBOX/wd.sh"
+  . "$SANDBOX/wd.sh"
+  printf '3 %s\n' "$(date +%s)" > "$STATE_DIR/watchdog_fails"
+  assert_eq "3" "$(watchdog_fail_count)" "the streak is read back from the file"
+  printf '7 %s\n' "$(( $(date +%s) - 7200 ))" > "$STATE_DIR/watchdog_fails"
+  assert_eq "0" "$(watchdog_fail_count)" "a streak older than an hour counts as a fresh problem"
+  watchdog_fail_set 5
+  assert_eq "5" "$(awk '{print $1}' "$STATE_DIR/watchdog_fails")" "and the streak is written back"
+  rm -f "$STATE_DIR/watchdog_fails"
+)
+
+section "stopping puts the kernel settings back"
 mkdir -p "$STATE_DIR"
 printf 'net.core.rmem_max 111111\n' > "$STATE_DIR/sysctls"
 svc stop >/dev/null 2>&1
