@@ -827,22 +827,6 @@ save_strategy_receipt() { # [conffile]
   [ -n "$r" ] && printf '%s\n' "$r" > "$RECEIPT_FILE"
 }
 
-topology_fingerprint() { # [conffile]
-  local conf="${1:-$CONFFILE}"
-  local tp="" up="" ap="" bq="" lim="" am="" qn="" lims=""
-  if [ -f "$conf" ]; then
-    tp=$(grep -m1 -E '^[[:space:]]*TCP_PORTS=' "$conf" 2>/dev/null | sed 's/.*=//; s/["'\'' ]//g')
-    up=$(grep -m1 -E '^[[:space:]]*UDP_PORTS=' "$conf" 2>/dev/null | sed 's/.*=//; s/["'\'' ]//g')
-    ap=$(grep -m1 -E '^[[:space:]]*AUTO_PORTS=' "$conf" 2>/dev/null | sed 's/.*=//; s/["'\'' ]//g')
-    bq=$(grep -m1 -E '^[[:space:]]*BLOCK_QUIC=' "$conf" 2>/dev/null | sed 's/.*=//; s/["'\'' ]//g')
-    lim=$(grep -m1 -E '^[[:space:]]*LIMITER=' "$conf" 2>/dev/null | sed 's/.*=//; s/["'\'' ]//g')
-    am=$(grep -m1 -E '^[[:space:]]*APP_MODE=' "$conf" 2>/dev/null | sed 's/.*=//; s/["'\'' ]//g')
-    qn=$(grep -m1 -E '^[[:space:]]*NFQUEUE_NUM=' "$conf" 2>/dev/null | sed 's/.*=//; s/["'\'' ]//g')
-    lims=$(grep -E '^[#[:space:]]*NFQWS2_(TCP|UDP)_PKT_(OUT|IN)=' "$conf" 2>/dev/null | sort | tr '\n' ';')
-  fi
-  printf '%s|%s|%s|%s|%s|%s|%s|%s' "$tp" "$up" "${ap:-0}" "${bq:-0}" "$lim" "${am:-off}" "${qn:-300}" "$lims"
-}
-
 save_working_snapshot() { # [conffile]
   local conf="${1:-$CONFFILE}"
   mkdir -p "$SNAPSHOT_DIR" 2>/dev/null
@@ -1588,6 +1572,12 @@ _firewall_start() {
     [ -n "$TP" ] && _fw_add_rule "$CMD" $IPT_GROUP_FWD "" tcp sports "$TP" "" "$TARGET_IN_TCP"
 
     $CMD -w -t mangle -I FORWARD 1 -j $IPT_GROUP_FWD
+  else
+    # hotspot bypass was switched off: drop the old jump and chain, otherwise
+    # tethered clients keep being processed (and dropped) by stale rules
+    while $CMD -w -t mangle -D FORWARD -j $IPT_GROUP_FWD 2>/dev/null; do :; done
+    $CMD -w -t mangle -F $IPT_GROUP_FWD 2>/dev/null
+    $CMD -w -t mangle -X $IPT_GROUP_FWD 2>/dev/null
   fi
 }
 

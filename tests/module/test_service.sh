@@ -322,29 +322,86 @@ assert_rc 0 $? "protect_process handles empty pid gracefully"
 protect_process "99999999"
 assert_rc 0 $? "protect_process handles non-existent pid gracefully"
 
-section "topology_fingerprint and working snapshots"
+section "working snapshots"
 
-fp1=$(topology_fingerprint "$CONFFILE")
-assert_contains "$fp1" "80,443" "fingerprint captures TCP ports"
 save_working_snapshot "$CONFFILE"
 assert_file "$CONFDIR/state/snapshot_working/nfqws2.conf" "snapshot saved nfqws2.conf"
 
-section "zero-downtime daemon replace"
+section "restart stops the daemon before starting the new one"
 
 svc start >/dev/null 2>&1
 assert_file "$PIDFILE" "service is running before replace"
 old_pid=$(cat "$PIDFILE")
 
+: > "$SERVICE_LOG"
+MOCK_NFQWS_EBUSY=1
+export MOCK_NFQWS_EBUSY
 svc replace
-assert_rc 0 "$svc_rc" "replace succeeds"
-new_pid=$(cat "$PIDFILE")
+assert_rc 0 "$svc_rc" "replace succeeds with the queue reported busy"
+new_pid=$(cat "$PIDFILE" 2>/dev/null)
 assert_file "$PIDFILE" "pidfile exists after replace"
 if [ "$old_pid" != "$new_pid" ]; then
   _ok "replace switched daemon PID"
 else
   _fail "replace did not switch PID"
 fi
-assert_file "$MOCK_IPT_STORE/iptables/mangle/nfqws_post" "mangle rules are preserved across replace"
+log_text=$(cat "$SERVICE_LOG")
+assert_contains "$log_text" "stopping first" "the log explains why the daemon is stopped first"
+assert_not_contains "$log_text" "Zero-Downtime" "the zero-downtime claim is gone"
+assert_file "$MOCK_IPT_STORE/iptables/mangle/nfqws_post" "mangle rules are rebuilt after replace"
+unset MOCK_NFQWS_EBUSY
+
+section "invalid parameters keep the running daemon"
+
+: > "$SERVICE_LOG"
+old_pid=$(cat "$PIDFILE")
+MOCK_NFQWS_DRY_RUN_FAIL=2
+export MOCK_NFQWS_DRY_RUN_FAIL
+svc replace
+assert_rc 1 "$svc_rc" "replace refuses to stop on an invalid config"
+assert_eq "$old_pid" "$(cat "$PIDFILE")" "the running daemon is kept"
+kill -0 "$old_pid" 2>/dev/null
+assert_rc 0 $? "and it is still alive"
+unset MOCK_NFQWS_DRY_RUN_FAIL
+
+section "a failed restart falls back to the working snapshot"
+
+svc start >/dev/null 2>&1
+assert_file "$PIDFILE" "running before the failing restart"
+: > "$SERVICE_LOG"
+MOCK_NFQWS_FAIL=3
+export MOCK_NFQWS_FAIL
+svc replace
+assert_rc 1 "$svc_rc" "restart reports failure"
+assert_contains "$(cat "$SERVICE_LOG")" "restoring the last working snapshot" \
+  "and tries to come back on the previous configuration"
+unset MOCK_NFQWS_FAIL
+
+section "hotspot rules follow the setting"
+
+svc start >/dev/null 2>&1
+ctl set ENABLE_HOTSPOT 1
+assert_contains "$(ipt_rules FORWARD)" "-j nfqws_fwd" "enabling the hotspot adds the FORWARD jump"
+ctl set ENABLE_HOTSPOT 0
+assert_not_contains "$(ipt_rules FORWARD)" "nfqws_fwd" "disabling it removes the jump and the chain"
+svc stop >/dev/null 2>&1
+ctl set ENABLE_HOTSPOT 1
+assert_eq "" "$(ipt_rules POSTROUTING)" "a stopped service gets no firewall rules from a setting"
+ctl set ENABLE_HOTSPOT 0
+
+section "the service lock is not stolen"
+
+svc start >/dev/null 2>&1
+svc stop >/dev/null 2>&1
+mkdir "$CONFDIR/state/service.lock"
+: > "$SERVICE_LOG"
+svc start
+assert_rc 1 "$svc_rc" "a second start is refused while the lock is held"
+assert_contains "$(cat "$SERVICE_LOG")" "another start/replace holds" "and says why"
+if [ -d "$CONFDIR/state/service.lock" ]; then _ok "the foreign lock directory survives"
+else _fail "the foreign lock directory was removed"; fi
+assert_no_file "$PIDFILE" "and no daemon was started"
+rmdir "$CONFDIR/state/service.lock"
 
 section "rollback engine"
 

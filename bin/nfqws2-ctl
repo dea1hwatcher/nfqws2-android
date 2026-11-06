@@ -2893,7 +2893,11 @@ case "$1" in
       HOME_WIFI|WATCHDOG|VPN_PAUSE) sh "$SERVICE" home_check >/dev/null 2>&1 ;;
       WL_PAUSE) [ "$3" = 0 ] && rm -f "$WL_FILE"; sh "$SERVICE" home_check >/dev/null 2>&1 ;;
       SMART_LEARN) ;;
-      ENABLE_HOTSPOT|TCP_MSS_CLAMP) load_conf >/dev/null 2>&1; sh "$SERVICE" firewall_apply >/dev/null 2>&1 ;;
+      ENABLE_HOTSPOT|TCP_MSS_CLAMP)
+        load_conf >/dev/null 2>&1
+        # firewall_apply on a stopped service leaves NFQUEUE jumps (and the
+        # Meta QUIC reject) behind with no listener; the next start applies them
+        if is_running; then sh "$SERVICE" firewall_apply >/dev/null 2>&1; fi ;;
       # отдельная цепочка — меняется без перезапуска службы
       META_QUIC_REJECT) load_conf >/dev/null 2>&1; if is_running; then meta_quic_start; fi ;;
       NET_STRATEGY) load_conf >/dev/null 2>&1; sh "$SERVICE" net_check >/dev/null 2>&1; sh "$SERVICE" ensure_watchdog >/dev/null 2>&1 ;;

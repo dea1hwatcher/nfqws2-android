@@ -38,25 +38,44 @@ watchers_wanted() {
   { [ -f "$DESIRED_FILE" ] && { [ "$WATCHDOG" = "1" ] || smart_active; }; } || [ "$HOME_WIFI" = "1" ] || [ "$NET_STRATEGY" = "1" ] || [ "$VPN_PAUSE" = "1" ] || [ "$WL_PAUSE" = "1" ];
 }
 
+# One start/replace at a time. A lock older than two minutes was left by a
+# crashed run; home_check() uses the same rule for its own lock. A waiter stays
+# for up to 15 s: a watchdog auto-restart holds the lock for seconds on a slow
+# device, and failing the user's command meanwhile would be wrong.
+svc_lock_dir() { printf '%s/service.lock' "$STATE_DIR"; }
+svc_lock_acquire() { # [max ticks of 0.2s]
+  local lock i=0 max="${1:-75}"
+  lock=$(svc_lock_dir)
+  [ -n "$(find "$lock" -maxdepth 0 -mmin +2 2>/dev/null)" ] && rmdir "$lock" 2>/dev/null
+  while :; do
+    mkdir "$lock" 2>/dev/null && return 0
+    i=$((i + 1))
+    [ "$i" -ge "$max" ] && return 1
+    sleep 0.2
+  done
+}
+svc_lock_release() { rmdir "$(svc_lock_dir)" 2>/dev/null; }
+
 start() {
   if is_running; then
     echo "Служба nfqws2 уже запущена (PID $(cat "$PIDFILE"))"
     return 0
   fi
 
-  local lock="$STATE_DIR/service.lock"
-  if ! mkdir "$lock" 2>/dev/null; then
-    local wait_lock=0
-    while [ "$wait_lock" -lt 15 ]; do
-      sleep 0.2
-      if is_running; then
-        echo "Служба nfqws2 уже запущена (PID $(cat "$PIDFILE" 2>/dev/null))"
-        return 0
-      fi
-      [ -d "$lock" ] || break
-      wait_lock=$((wait_lock + 1))
-    done
-    mkdir "$lock" 2>/dev/null || true
+  # replace_daemon() holds the same lock and calls start() to bring the new
+  # process up; SVC_LOCK_HELD keeps start() from taking it a second time.
+  local own_lock=1
+  if [ "${SVC_LOCK_HELD:-0}" = "1" ]; then
+    own_lock=0
+  elif ! svc_lock_acquire; then
+    log_msg "start: another start/replace holds $(svc_lock_dir) — nothing started"
+    echo "Другой запуск уже выполняется" >&2
+    return 1
+  elif is_running; then
+    # while we waited for the lock another operation brought the daemon up
+    svc_lock_release
+    echo "Служба nfqws2 уже запущена (PID $(cat "$PIDFILE" 2>/dev/null))"
+    return 0
   fi
 
   _start_internal() {
@@ -136,14 +155,13 @@ start() {
     log_msg "nfqws2 started (PID $pid, Native Daemon)"
     update_description running
     save_working_snapshot
-    printf '%s' "$(topology_fingerprint "$CONFFILE")" > "$STATE_DIR/last_topology"
     ensure_watchdog
     return 0
   }
 
   local ret=0
   _start_internal || ret=$?
-  rmdir "$lock" 2>/dev/null
+  [ "$own_lock" = "1" ] && svc_lock_release
   return $ret
 }
 
@@ -153,96 +171,65 @@ replace_daemon() {
     return $?
   fi
 
-  local lock="$STATE_DIR/service.lock"
-  if ! mkdir "$lock" 2>/dev/null; then
-    local wait_lock=0
-    while [ "$wait_lock" -lt 15 ]; do
-      sleep 0.2
-      [ -d "$lock" ] || break
-      wait_lock=$((wait_lock + 1))
-    done
-    mkdir "$lock" 2>/dev/null || true
+  if ! svc_lock_acquire; then
+    log_msg "replace: another start/replace holds $(svc_lock_dir) — nothing done"
+    echo "Другой запуск уже выполняется" >&2
+    return 1
   fi
 
   _replace_internal() {
-    local old_pid
+    local old_pid err args dry_err start_rc
     old_pid=$(cat "$PIDFILE" 2>/dev/null)
-    [ -n "$old_pid" ] || { start; return $?; }
+    if [ -z "$old_pid" ]; then
+      log_msg "replace: no pidfile — restart skipped"
+      return 1
+    fi
 
-    local err
     err=$(validate_args_conf) || { log_msg "${err:-Error: arguments validation failed}"; return 1; }
     err=$(validate_strategy_blob_references "$CONFFILE") || { log_msg "${err:-Error: strategy blob or script file validation failed}"; return 1; }
 
-    log_msg "Zero-Downtime Daemon Replace..."
-    rotate_logs start
-
-    local args
     args=$(_startup_args)
     printf '%s\n' "$args" > "$ARGS_FILE"
 
-    local dry_err
     if ! dry_err=$(dry_run_check "$args"); then
       log_msg "Error: nfqws2 --dry-run check failed"
       printf '%s\n' "$dry_err" >> "$NFQWS_LOG"
-      log_msg "New strategy parameters are invalid — existing process PID $old_pid preserved without downtime."
+      log_msg "New strategy parameters are invalid — existing process PID $old_pid preserved"
       return 1
     fi
     save_strategy_receipt "$CONFFILE" 2>/dev/null || true
 
-    export Z2K_ORCHESTRA_FILE="$ORCHESTRA_MEMORY_FILE"
-    cd "$MODDIR/bin" || return 1
-    set -f
+    # The kernel allows one listener per NFQUEUE number: a second BIND answers
+    # -EBUSY, so a new daemon cannot run next to the old one. Stop first: a short
+    # gap is what actually happens, instead of a "zero downtime" attempt that
+    # always failed and logged a startup error on every restart.
+    log_msg "Restarting nfqws2 (NFQUEUE $NFQUEUE_NUM is exclusive, stopping first)"
+    rotate_logs start
+    stop >/dev/null 2>&1 || log_msg "replace: stop reported leftover rules — start will rebuild them"
 
-    # Start new daemon with temporary pidfile
-    local new_pidfile="$PIDFILE.new"
-    rm -f "$new_pidfile"
-    "$NFQWS_BIN" --daemon --pidfile="$new_pidfile" $args >> "$NFQWS_LOG" 2>&1
-    local res=$?
-    set +f
-
-    if [ "$res" -ne 0 ]; then
-      log_msg "Error: new nfqws2 exited with code $res — keeping old process PID $old_pid"
-      rm -f "$new_pidfile"
+    SVC_LOCK_HELD=1
+    start
+    start_rc=$?
+    SVC_LOCK_HELD=0
+    if [ "$start_rc" -ne 0 ]; then
+      # the new configuration cannot come up: put the last working one back so
+      # the phone is not left without a bypass until someone notices
+      log_msg "replace: restart failed — restoring the last working snapshot"
+      if rollback_to_snapshot && load_conf >/dev/null 2>&1; then
+        SVC_LOCK_HELD=1
+        start
+        start_rc=$?
+        SVC_LOCK_HELD=0
+        if [ "$start_rc" -eq 0 ]; then
+          log_msg "Rollback: service successfully restored from working snapshot"
+          printf '{"time":%d,"strategy":"%s","status":"restored"}\n' \
+            "$(date +%s 2>/dev/null || echo 0)" "$(get_current_strategy)" > "$STATE_DIR/last_rollback.json"
+        else
+          log_msg "replace: the snapshot did not start either"
+        fi
+      fi
       return 1
     fi
-
-    local new_pid=""
-    [ -f "$new_pidfile" ] && new_pid=$(cat "$new_pidfile" 2>/dev/null)
-    if [ -z "$new_pid" ] || ! wait_for_process "$new_pid" up 24; then
-      log_msg "Error: new nfqws2 failed to start — keeping old process PID $old_pid"
-      rm -f "$new_pidfile"
-      return 1
-    fi
-
-    # Atomically replace pidfile
-    mv -f "$new_pidfile" "$PIDFILE"
-    protect_process "$new_pid"
-    date +%s > "$STARTED_FILE"
-    awk '{ printf "%d\n", $1 * 100 }' /proc/uptime > "$STARTED_CS_FILE" 2>/dev/null
-
-    # Check topology change
-    local old_fp new_fp
-    old_fp=$(cat "$STATE_DIR/last_topology" 2>/dev/null)
-    new_fp=$(topology_fingerprint "$CONFFILE")
-    if [ "$old_fp" != "$new_fp" ]; then
-      log_msg "Firewall topology changed — updating iptables rules"
-      firewall_start
-    else
-      log_msg "Firewall topology unchanged — iptables rules preserved without reload (Zero Downtime)"
-    fi
-    printf '%s' "$new_fp" > "$STATE_DIR/last_topology"
-
-    # Gracefully stop old daemon
-    if [ -n "$old_pid" ] && kill -0 "$old_pid" 2>/dev/null; then
-      kill -TERM "$old_pid" 2>/dev/null
-      wait_for_process "$old_pid" down 10 || kill -KILL "$old_pid" 2>/dev/null
-    fi
-
-    acquire_wakelock
-    echo 1 > "$DESIRED_FILE"
-    log_msg "nfqws2 successfully updated (New PID $new_pid, Zero-Downtime Replace)"
-    update_description running
-    ensure_watchdog
 
     touch "$STATE_DIR/rollback_armed"
     (
@@ -267,7 +254,7 @@ replace_daemon() {
 
   local ret=0
   _replace_internal || ret=$?
-  rmdir "$lock" 2>/dev/null
+  svc_lock_release
   return $ret
 }
 
