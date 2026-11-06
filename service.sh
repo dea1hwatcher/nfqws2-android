@@ -166,6 +166,25 @@ start() {
   return $ret
 }
 
+# Restore the last working snapshot and bring the service up on it: used when a
+# restart fails, or when the new configuration comes up but passes no traffic.
+replace_restore_snapshot() {
+  rollback_to_snapshot || return 1
+  load_conf >/dev/null 2>&1 || return 1
+  SVC_LOCK_HELD=1
+  start
+  local rc=$?
+  SVC_LOCK_HELD=0
+  if [ "$rc" -eq 0 ]; then
+    log_msg "Rollback: service successfully restored from working snapshot"
+    printf '{"time":%d,"strategy":"%s","status":"restored"}\n' \
+      "$(date +%s 2>/dev/null || echo 0)" "$(get_current_strategy)" > "$STATE_DIR/last_rollback.json"
+  else
+    log_msg "replace: the snapshot did not start either"
+  fi
+  return "$rc"
+}
+
 replace_daemon() {
   if ! is_running; then
     start
@@ -200,6 +219,11 @@ replace_daemon() {
     fi
     save_strategy_receipt "$CONFFILE" 2>/dev/null || true
 
+    # Remember whether the *old* configuration passed traffic: only with a working
+    # baseline can a failing probe after the restart be blamed on the new one.
+    local base_ok=0
+    if health_probe; then base_ok=1; fi
+
     # The kernel allows one listener per NFQUEUE number: a second BIND answers
     # -EBUSY, so a new daemon cannot run next to the old one. Stop first: a short
     # gap is what actually happens, instead of a "zero downtime" attempt that
@@ -216,20 +240,23 @@ replace_daemon() {
       # the new configuration cannot come up: put the last working one back so
       # the phone is not left without a bypass until someone notices
       log_msg "replace: restart failed — restoring the last working snapshot"
-      if rollback_to_snapshot && load_conf >/dev/null 2>&1; then
-        SVC_LOCK_HELD=1
-        start
-        start_rc=$?
-        SVC_LOCK_HELD=0
-        if [ "$start_rc" -eq 0 ]; then
-          log_msg "Rollback: service successfully restored from working snapshot"
-          printf '{"time":%d,"strategy":"%s","status":"restored"}\n' \
-            "$(date +%s 2>/dev/null || echo 0)" "$(get_current_strategy)" > "$STATE_DIR/last_rollback.json"
-        else
-          log_msg "replace: the snapshot did not start either"
+      replace_restore_snapshot
+      return 1
+    fi
+
+    # A daemon that is alive is not yet a working bypass. Traffic was fine before
+    # the restart; if it is not fine now, twice in a row, the new configuration is
+    # at fault and the old one comes back.
+    if [ "$base_ok" = "1" ]; then
+      sleep 1
+      if ! health_probe; then
+        sleep 3
+        if ! health_probe; then
+          log_msg "replace: the new configuration passes no traffic — restoring the last working snapshot"
+          replace_restore_snapshot
+          return 1
         fi
       fi
-      return 1
     fi
 
     touch "$STATE_DIR/rollback_armed"

@@ -389,6 +389,53 @@ ctl set ENABLE_HOTSPOT 1
 assert_eq "" "$(ipt_rules POSTROUTING)" "a stopped service gets no firewall rules from a setting"
 ctl set ENABLE_HOTSPOT 0
 
+section "a restart whose configuration passes no traffic is rolled back"
+
+# Background helpers (a watchdog auto-restart) can hold the service lock between
+# the sections; drop them so the restart under test is not refused.
+for _p in "$WD_PIDFILE" "$WN_PIDFILE" "$WL_PIDFILE" "$SK_PIDFILE"; do
+  if [ -f "$_p" ]; then kill "$(cat "$_p" 2>/dev/null)" 2>/dev/null; rm -f "$_p"; fi
+done
+rm -rf "$CONFDIR/state/service.lock"
+
+# the old configuration passed traffic (first probe), the new one never does
+printf 'example.net\nexample.org\n' > "$LISTS_DIR/probe_hosts.list"
+cat > "$MOCKBIN/curl" <<'X'
+#!/bin/sh
+n=$(cat "$MOCK_DIR/curl_calls" 2>/dev/null || echo 0)
+n=$((n + 1)); printf '%s\n' "$n" > "$MOCK_DIR/curl_calls"
+[ "$n" -le 1 ] && exit 0
+exit 22
+X
+chmod 0755 "$MOCKBIN/curl"
+rm -f "$MOCK_DIR/curl_calls"
+svc start >/dev/null 2>&1
+: > "$SERVICE_LOG"
+svc replace
+assert_rc 1 "$svc_rc" "a restart that breaks traffic fails"
+assert_contains "$(cat "$SERVICE_LOG")" "passes no traffic" "and says the new configuration passes no traffic"
+assert_contains "$(cat "$SERVICE_LOG")" "restored from working snapshot" "the working snapshot is restored"
+assert_file "$PIDFILE" "and the service runs on the old configuration"
+assert_file "$CONFDIR/state/last_rollback.json" "the rollback is recorded"
+rm -f "$MOCKBIN/curl" "$MOCK_DIR/curl_calls"
+
+section "a restart that keeps working traffic alone does not roll back"
+
+printf 'example.net\n' > "$LISTS_DIR/probe_hosts.list"
+cat > "$MOCKBIN/curl" <<'X'
+#!/bin/sh
+exit 0
+X
+chmod 0755 "$MOCKBIN/curl"
+old_pid=$(cat "$PIDFILE" 2>/dev/null)
+: > "$SERVICE_LOG"
+svc replace
+assert_rc 0 "$svc_rc" "a healthy restart succeeds"
+assert_not_contains "$(cat "$SERVICE_LOG")" "passes no traffic" "and no rollback is mentioned"
+if [ "$(cat "$PIDFILE" 2>/dev/null)" != "$old_pid" ]; then _ok "the daemon was switched"
+else _fail "the daemon was not switched"; fi
+rm -f "$MOCKBIN/curl"
+
 section "the watchdog restart streak survives a restart"
 
 (

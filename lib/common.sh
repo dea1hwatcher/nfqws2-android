@@ -1600,11 +1600,15 @@ _firewall_start() {
 
     $CMD -w -t mangle -I FORWARD 1 -j $IPT_GROUP_FWD
   else
-    # hotspot bypass was switched off: drop the old jump and chain, otherwise
-    # tethered clients keep being processed (and dropped) by stale rules
-    while $CMD -w -t mangle -D FORWARD -j $IPT_GROUP_FWD 2>/dev/null; do :; done
-    $CMD -w -t mangle -F $IPT_GROUP_FWD 2>/dev/null
-    $CMD -w -t mangle -X $IPT_GROUP_FWD 2>/dev/null
+    # hotspot bypass is off: drop a jump and chain left by an earlier start.
+    # It is done on the kernel directly, not through the batch buffer: deletes
+    # are not buffered at all, and a `-F`/`-X` for a chain missing from that
+    # transaction makes iptables-restore fail (then nothing starts).
+    if "$REAL_CMD" -w -t mangle -S $IPT_GROUP_FWD >/dev/null 2>&1; then
+      while "$REAL_CMD" -w -t mangle -D FORWARD -j $IPT_GROUP_FWD 2>/dev/null; do :; done
+      "$REAL_CMD" -w -t mangle -F $IPT_GROUP_FWD 2>/dev/null
+      "$REAL_CMD" -w -t mangle -X $IPT_GROUP_FWD 2>/dev/null
+    fi
   fi
 }
 
@@ -1853,6 +1857,36 @@ sysctl_restore() {
   done < "$SYSCTL_STATE"
   rm -f "$SYSCTL_STATE" 2>/dev/null
   return 0
+}
+
+# ---------------------------------------------------------------- health probe
+# Two reference sites through the module, used by the restart gate. The list is
+# the user's own probe_hosts.list (a host/path pair contributes its host), so a
+# network where those sites are blocked by the provider fails the probe with the
+# old configuration too and no restart is blamed on it.
+health_hosts() {
+  local f="$LISTS_DIR/probe_hosts.list" h n=0
+  [ -s "$f" ] || return 0
+  while IFS= read -r h; do
+    h=$(printf '%s' "$h" | tr -d '\r' | sed -e 's/^[[:space:]]*//' -e 's#/.*$##' -e 's/[[:space:]]*$//')
+    case "$h" in ''|'#'*|*'*'*|*:*|*[!a-z0-9.-]*) continue ;; esac
+    printf '%s\n' "$h"
+    n=$((n + 1))
+    [ "$n" -ge 2 ] && break
+  done < "$f"
+}
+
+# 0 when at least one reference site opens. No list or no curl means no verdict:
+# the gate must never block a restart it cannot judge.
+health_probe() {
+  local hosts h
+  command -v curl >/dev/null 2>&1 || return 0
+  hosts=$(health_hosts)
+  [ -n "$hosts" ] || return 0
+  for h in $hosts; do
+    curl -s -k -o /dev/null -m 6 --connect-timeout 4 "https://$h/" >/dev/null 2>&1 && return 0
+  done
+  return 1
 }
 
 system_config() {

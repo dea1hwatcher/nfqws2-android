@@ -169,9 +169,12 @@ case "$CMD" in
     exit 0 ;;
   -S)
     f=$(chain_file "$1")
-    if [ -f "$f" ]; then
-      while IFS= read -r _line; do printf '%s\n' "$_line"; done < "$f"
+    if [ ! -f "$f" ]; then
+      # real iptables fails on a missing chain, and callers rely on that
+      echo "iptables: No chain/target/match by that name." >&2
+      exit 1
     fi
+    while IFS= read -r _line; do printf '%s\n' "$_line"; done < "$f"
     exit 0 ;;
   *)
     exit 0 ;;

@@ -1,0 +1,5 @@
+#!/bin/sh
+# No network in the regression sandbox: curl fails by default so the restart
+# health probe never reaches the internet (and never slows every restart).
+# Suites that need a verdict replace this file with their own stub.
+exit 22
