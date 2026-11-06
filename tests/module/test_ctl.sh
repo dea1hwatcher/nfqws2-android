@@ -60,16 +60,17 @@ assert_no_match "$ctl_out" '"pkt_limit_out":"' "no numeric field is ever quoted"
 section "json-status: running service"
 
 conf_reset
-# A live PID in the pidfile is enough for the running branch; actually starting
-# the service would build ~260 iptables rules through the stub, which costs
-# minutes on this machine and is covered by test_service.sh instead.
-sleep 300 &
-FAKE_PID=$!
-printf '%s\n' "$FAKE_PID" > "$CONFDIR/state/nfqws2.pid"
+# Starting the whole service would build ~260 iptables rules through the stub,
+# which costs minutes on this machine and is covered by test_service.sh instead:
+# here only the daemon is started, so is_running() has a pidfile to check.
+# The pidfile has to point at our binary, since is_running() verifies that the
+# process really is this module's nfqws2 — a stray sleep would not do.
+"$MODDIR/bin/nfqws2" --daemon --pidfile="$CONFDIR/state/nfqws2.pid" >/dev/null 2>&1
+FAKE_PID=$(cat "$CONFDIR/state/nfqws2.pid" 2>/dev/null)
 date +%s > "$CONFDIR/state/started_at"
 
 ctl is-running
-assert_rc 0 "$ctl_rc" "is-running returns 0 for a live pid"
+assert_rc 0 "$ctl_rc" "is-running returns 0 for our daemon"
 ctl json-status
 assert_contains "$ctl_out" '"running":true' "reports running=true"
 assert_contains "$ctl_out" "\"pid\":\"$FAKE_PID\"" "pid matches the pidfile"
@@ -89,9 +90,8 @@ section "json-status: a broken started_at never reaches the arithmetic"
 # json-status is the contract the whole WebUI parses. An empty or non-numeric
 # word is worse still in a quieter way: arithmetic reads it as 0, so uptime comes
 # out as `now`, i.e. "57 years". Both have to degrade to a plain 0.
-sleep 300 &
-BROKEN_PID=$!
-printf '%s\n' "$BROKEN_PID" > "$CONFDIR/state/nfqws2.pid"
+"$MODDIR/bin/nfqws2" --daemon --pidfile="$CONFDIR/state/nfqws2.pid" >/dev/null 2>&1
+BROKEN_PID=$(cat "$CONFDIR/state/nfqws2.pid" 2>/dev/null)
 for bad in '' 'garbage' '-5' '12x' '1+' '(' '2 2'; do
   printf '%s' "$bad" > "$CONFDIR/state/started_at"
   ctl json-status

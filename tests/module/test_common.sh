@@ -175,7 +175,24 @@ echo "999999" > "$PIDFILE"
 is_running; assert_rc 1 $? "dead pid is rejected"
 
 echo "$$" > "$PIDFILE"
-is_running; assert_rc 0 $? "live pid is accepted"
+# a live process that is not our binary — a recycled PID or another module's
+# copy of nfqws2 — must not read as our service, or the start is blocked forever
+is_running; assert_rc 1 $? "a live foreign pid is rejected"
+
+cat > "$SANDBOX/fake-nfqws2" <<'X'
+#!/bin/sh
+sleep 60
+X
+chmod 0755 "$SANDBOX/fake-nfqws2"
+sh "$SANDBOX/fake-nfqws2" &
+ours=$!
+printf '%s\n' "$ours" > "$PIDFILE"
+saved_bin="$NFQWS_BIN"
+NFQWS_BIN="$SANDBOX/fake-nfqws2"
+is_running; assert_rc 0 $? "our own process (as a script) is accepted"
+NFQWS_BIN="$saved_bin"
+kill "$ours" 2>/dev/null
+rm -f "$PIDFILE"
 
 # ── app_uid_count ─────────────────────────────────────────────────────────────
 section "app_uid_count"
@@ -554,6 +571,33 @@ assert_eq 'nfqws2-android' "$(sed -n 's/^id=//p' "$prop_test")" "module.prop id 
 assert_eq 'v2.0.4' "$(sed -n 's/^version=//p' "$prop_test")" "module.prop version is preserved"
 
 MODDIR="$old_moddir"
+
+# ── kernel-setting snapshot ──────────────────────────────────────────────────
+section "sysctl_apply remembers the old value and sysctl_restore puts it back"
+
+fixture="$SANDBOX/proc-sys"; mkdir -p "$fixture/net/core"
+printf '111111\n' > "$fixture/net/core/rmem_max"
+PROC_SYS_ROOT="$fixture"; export PROC_SYS_ROOT
+MOCK_SYSCTL_STORE="$MOCK_DIR/sysctl.store"; export MOCK_SYSCTL_STORE
+printf 'net.core.rmem_max 111111\n' > "$MOCK_SYSCTL_STORE"
+rm -f "$SYSCTL_STATE"
+
+sysctl_apply net.core.rmem_max 8388608
+assert_eq "8388608" "$(awk '$1=="net.core.rmem_max"{print $2}' "$MOCK_SYSCTL_STORE")" \
+  "the new value is applied"
+assert_eq "net.core.rmem_max 111111" "$(cat "$SYSCTL_STATE")" \
+  "and the previous value is remembered"
+
+sysctl_apply net.core.rmem_max 16777216
+assert_eq "1" "$(wc -l < "$SYSCTL_STATE" | tr -d ' ')" \
+  "the original is remembered only once"
+
+sysctl_restore
+assert_eq "111111" "$(awk '$1=="net.core.rmem_max"{print $2}' "$MOCK_SYSCTL_STORE")" \
+  "restore puts the previous value back"
+assert_no_file "$SYSCTL_STATE" "and clears the snapshot"
+
+unset PROC_SYS_ROOT MOCK_SYSCTL_STORE
 
 harness_finish
 

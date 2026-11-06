@@ -279,8 +279,10 @@ assert_rc 1 "$ctl_rc" "a malformed slot is refused"
 ctl smart-bench "custom.example" tls
 assert_rc 1 "$ctl_rc" "smart-bench fails when service is not running"
 
-# smart-bench with mock running daemon and curl stub
-printf '%s\n' "$$" > "$CONFDIR/state/nfqws2.pid"
+# smart-bench with a running daemon and a curl stub: the pidfile must point at
+# our binary, because is_running() verifies the process is really nfqws2
+"$MODDIR/bin/nfqws2" --daemon --pidfile="$CONFDIR/state/nfqws2.pid" >/dev/null 2>&1
+bench_pid=$(cat "$CONFDIR/state/nfqws2.pid" 2>/dev/null)
 cat > "$MOCKBIN/curl" <<'X'
 #!/bin/sh
 echo "HTTP/1.1 200 OK"
@@ -294,6 +296,7 @@ assert_contains "$ctl_out" "SMART_BENCH_START" "emits SMART_BENCH_START"
 assert_contains "$ctl_out" "SMART_BENCH_RES" "emits SMART_BENCH_RES"
 assert_contains "$ctl_out" "SMART_BENCH_BEST" "emits SMART_BENCH_BEST"
 assert_no_file "$CONFDIR/state/smart_bench" "smart_bench state is cleaned up"
+kill "$bench_pid" 2>/dev/null
 rm -f "$CONFDIR/state/nfqws2.pid"
 
 if [ -x "${NFQWS2_TEST_BIN:-}" ]; then

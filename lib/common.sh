@@ -274,7 +274,34 @@ is_running() {
   pid=$(cat "$PIDFILE" 2>/dev/null)
   case "$pid" in ''|0|*[!0-9]*) return 1 ;; esac
   kill -0 "$pid" 2>/dev/null || return 1
-  return 0
+  pid_is_ours "$pid"
+}
+
+# The PID in the pidfile can belong to a recycled process, or to another
+# nfqws2 (a different module): both would read as "the service is running" and
+# block a start forever. The process must point at our binary — as its own
+# executable for a real daemon, or as the script argument (the test stub runs
+# under sh). When /proc cannot be read the old check stands.
+pid_is_ours() { # <pid>
+  local pid="$1" bin exe argv
+  [ -r "/proc/$pid/cmdline" ] || return 0
+  bin=$(readlink -f "$NFQWS_BIN" 2>/dev/null)
+  [ -n "$bin" ] || return 0
+  exe=$(readlink "/proc/$pid/exe" 2>/dev/null)
+  case "$exe" in *" (deleted)") exe="${exe% (deleted)}" ;; esac
+  argv=$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null)
+  case "$exe" in "$bin") return 0 ;; esac
+  case " $argv " in *" $bin "*) return 0 ;; esac
+  return 1
+}
+
+# PIDs of our nfqws2 (not another module's copy of the same binary name)
+our_pids() {
+  command -v pidof >/dev/null 2>&1 || return 0
+  local p
+  for p in $(pidof nfqws2 2>/dev/null); do
+    pid_is_ours "$p" && printf '%s\n' "$p"
+  done
 }
 
 # Список должен кончаться переводом строки: nfqws2 дописывает выученные домены
@@ -1696,8 +1723,7 @@ restore_tether_offload() {
 # check both rc: firewall_ip6tables returns 0 when IPv6 is off, masking an iptables failure
 firewall_start() {
   local rc=0
-  sysctl -w net.netfilter.nf_conntrack_acct=1 >/dev/null 2>&1 ||
-    { [ -w /proc/sys/net/netfilter/nf_conntrack_acct ] && echo 1 > /proc/sys/net/netfilter/nf_conntrack_acct 2>/dev/null; }
+  sysctl_apply net.netfilter.nf_conntrack_acct 1
   FW_RESTORE_DIR="$STATE_DIR/firewall-restore"
   mkdir -p "$FW_RESTORE_DIR" 2>/dev/null
   if command -v iptables-restore >/dev/null 2>&1; then
@@ -1783,16 +1809,54 @@ release_wakelock() {
   return 0
 }
 
-system_config() {
-  sysctl -w net.netfilter.nf_conntrack_checksum=0 >/dev/null 2>&1
-  sysctl -w net.netfilter.nf_conntrack_tcp_be_liberal=1 >/dev/null 2>&1
-  sysctl -w net.ipv4.tcp_timestamps=1 >/dev/null 2>&1 || {
-    [ -w /proc/sys/net/ipv4/tcp_timestamps ] && echo 1 > /proc/sys/net/ipv4/tcp_timestamps 2>/dev/null
+SYSCTL_STATE="$STATE_DIR/sysctls"
+# the tests point this at a fixture tree; on the device it is the real one
+PROC_SYS_ROOT="${PROC_SYS_ROOT:-/proc/sys}"
+
+# Apply a kernel setting and remember the previous value once, so stop() can put
+# the phone back the way it was: a stopped module has no business leaving
+# netfilter and socket buffers retuned.
+sysctl_apply() { # <key> <value>
+  local key="$1" want="$2" node cur
+  node="$PROC_SYS_ROOT/$(printf '%s' "$key" | tr '.' '/')"
+  [ -e "$node" ] || return 0
+  cur=$(sysctl -n "$key" 2>/dev/null)
+  case "$cur" in ''|*[!0-9]*) cur="" ;; esac
+  [ "$cur" = "$want" ] && return 0
+  if [ -n "$cur" ]; then
+    mkdir -p "$STATE_DIR" 2>/dev/null
+    grep -q "^$key " "$SYSCTL_STATE" 2>/dev/null || printf '%s %s\n' "$key" "$cur" >> "$SYSCTL_STATE"
+  fi
+  sysctl -w "$key=$want" >/dev/null 2>&1 || {
+    [ -w "$node" ] && printf '%s\n' "$want" > "$node" 2>/dev/null
   }
-  sysctl -w net.core.rmem_max=8388608 >/dev/null 2>&1
-  sysctl -w net.core.wmem_max=8388608 >/dev/null 2>&1
-  sysctl -w net.core.rmem_default=2097152 >/dev/null 2>&1
-  sysctl -w net.core.netdev_max_backlog=16384 >/dev/null 2>&1
+  return 0
+}
+
+# Only a value we set ourselves is put back: anything changed meanwhile (by the
+# system or another tool) is left alone.
+sysctl_restore() {
+  local key old now
+  [ -f "$SYSCTL_STATE" ] || return 0
+  while read -r key old; do
+    if [ -z "$key" ] || [ -z "$old" ]; then continue; fi
+    now=$(sysctl -n "$key" 2>/dev/null)
+    if [ -n "$now" ] && [ "$now" != "$old" ]; then
+      sysctl -w "$key=$old" >/dev/null 2>&1
+    fi
+  done < "$SYSCTL_STATE"
+  rm -f "$SYSCTL_STATE" 2>/dev/null
+  return 0
+}
+
+system_config() {
+  sysctl_apply net.netfilter.nf_conntrack_checksum 0
+  sysctl_apply net.netfilter.nf_conntrack_tcp_be_liberal 1
+  sysctl_apply net.ipv4.tcp_timestamps 1
+  sysctl_apply net.core.rmem_max 8388608
+  sysctl_apply net.core.wmem_max 8388608
+  sysctl_apply net.core.rmem_default 2097152
+  sysctl_apply net.core.netdev_max_backlog 16384
 
   # Idle TCP connection lifetime in conntrack: do not shorten.
   # Previously set to 1200s (router value), but an Android phone is not a router:
@@ -1804,11 +1868,11 @@ system_config() {
   cur_est=$(sysctl -n net.netfilter.nf_conntrack_tcp_timeout_established 2>/dev/null)
   if [ -n "$cur_est" ] && [ "$cur_est" -lt 7200 ] 2>/dev/null; then
     log_msg "conntrack: nf_conntrack_tcp_timeout_established was $cur_est, restoring 432000 (kernel default): short timeout breaks push notifications"
-    sysctl -w net.netfilter.nf_conntrack_tcp_timeout_established=432000 >/dev/null 2>&1
+    sysctl_apply net.netfilter.nf_conntrack_tcp_timeout_established 432000
   fi
   if [ -n "$cur_max" ] && [ "$cur_max" -lt 16384 ] 2>/dev/null; then
     log_msg "conntrack: nf_conntrack_max was $cur_max, raising to 16384 (reference router value)"
-    sysctl -w net.netfilter.nf_conntrack_max=16384 >/dev/null 2>&1
+    sysctl_apply net.netfilter.nf_conntrack_max 16384
   fi
   setup_cli_symlinks
   return 0

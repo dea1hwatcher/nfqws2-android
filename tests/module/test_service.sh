@@ -389,8 +389,14 @@ ctl set ENABLE_HOTSPOT 1
 assert_eq "" "$(ipt_rules POSTROUTING)" "a stopped service gets no firewall rules from a setting"
 ctl set ENABLE_HOTSPOT 0
 
-section "the service lock is not stolen"
+section "stopping puts the kernel settings back"
 
+mkdir -p "$STATE_DIR"
+printf 'net.core.rmem_max 111111\n' > "$STATE_DIR/sysctls"
+svc stop >/dev/null 2>&1
+assert_no_file "$STATE_DIR/sysctls" "stop clears the sysctl snapshot taken at start"
+
+section "the service lock is not stolen"
 svc start >/dev/null 2>&1
 svc stop >/dev/null 2>&1
 mkdir "$CONFDIR/state/service.lock"

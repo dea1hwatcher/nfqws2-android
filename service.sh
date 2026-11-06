@@ -127,7 +127,8 @@ start() {
 
     local pid=""
     [ -f "$PIDFILE" ] && pid=$(cat "$PIDFILE" 2>/dev/null)
-    [ -n "$pid" ] || pid=$(pidof nfqws2 2>/dev/null | awk '{print $1}')
+    # a stray nfqws2 of another module must not be adopted as ours
+    [ -n "$pid" ] || pid=$(our_pids | head -n 1)
 
     if [ -z "$pid" ] || ! wait_for_process "$pid" up 24; then
       start_failed "Error: nfqws2 failed to start."
@@ -289,6 +290,8 @@ stop() {
     smartkill_chain del
   fi
   firewall_stop
+  # kernel settings we tuned for the bypass go back to what they were
+  sysctl_restore
   if [ -f "$PIDFILE" ]; then
     local pid
     pid=$(cat "$PIDFILE" 2>/dev/null)
@@ -298,9 +301,11 @@ stop() {
     fi
     rm -f "$PIDFILE"
   fi
-  if pidof nfqws2 >/dev/null 2>&1; then
-    pkill -9 -x nfqws2 2>/dev/null || kill -9 $(pidof nfqws2 2>/dev/null) 2>/dev/null || true
-  fi
+  # a leftover copy of our daemon still holds the queue: kill ours, not anyone
+  # else's nfqws2 process
+  local leftover p
+  leftover=$(our_pids)
+  for p in $leftover; do kill -9 "$p" 2>/dev/null; done
   sleep 0.1
 
   # a leftover chain still jumps to NFQUEUE with no listener, so the kernel

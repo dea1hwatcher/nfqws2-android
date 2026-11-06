@@ -11,6 +11,16 @@
 # Known options for unsupported_opts detection: lua-desync filter-tcp payload lua-init dry-run
 :
 
+# The background copy that keeps the pidfile process alive. It re-runs this very
+# script so that the process command line still names bin/nfqws2: is_running()
+# verifies the pidfile points at our binary, and a bare `sleep` would be
+# rejected as a recycled PID.
+case "${1:-}" in
+  __stay)
+    trap 'exit 0' TERM INT HUP
+    while :; do sleep 1; done ;;
+esac
+
 [ -n "$MOCK_NFQWS_ARGS_FILE" ] && printf '%s\n' "$*" > "$MOCK_NFQWS_ARGS_FILE"
 
 pidfile=""
@@ -52,7 +62,7 @@ if [ -n "${MOCK_NFQWS_EBUSY:-}" ] && [ -n "$pidfile" ]; then
 fi
 
 if [ -n "$pidfile" ]; then
-  sleep 86400 &
+  sh "$0" __stay &
   printf '%s\n' "$!" > "$pidfile"
 fi
 
