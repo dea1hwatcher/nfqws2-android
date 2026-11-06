@@ -19,6 +19,11 @@ sandbox_init
 load_common
 conf_reset
 printf 'WATCHDOG=0\n' >> "$CONFFILE"
+# Живой конфиг с нестандартным NFQWS_EXTRA_ARGS: merge_user_keys переносит только
+# стандартные $MODE_* ссылки, поэтому значение самой стратегии (см. sed ниже)
+# доходит до подбора как есть — многострочным.
+awk '/^NFQWS_EXTRA_ARGS=/ { print "NFQWS_EXTRA_ARGS=\"--hostlist=$LISTS_DIR/user.list\""; next } { print }' \
+  "$CONFFILE" > "$CONFFILE.t" && mv "$CONFFILE.t" "$CONFFILE"
 # the helper functions run in this shell too, and they read the same globals the
 # ctl reads ($NFQUEUE_NUM, $IPV6_ENABLED) — sourcing common.sh alone leaves them unset
 reload_conf
@@ -29,6 +34,11 @@ for f in "$MODDIR/strategies/"*.conf; do
   case "${f##*/}" in alt.conf|exp.conf) ;; *) rm -f "$f" ;; esac
 done
 printf 'www.youtube.com\nx.com\n' > "$LISTS_DIR/probe_bench.list"
+
+# Стратегия с многострочным NFQWS_EXTRA_ARGS: правка в WebUI даёт такие routinely,
+# и подбор обязан измерять её, а не превращать живой nfqws2.conf в файл, который
+# не читается из-за висящей кавычки.
+sed -i 's#^NFQWS_EXTRA_ARGS=.*#NFQWS_EXTRA_ARGS="$MODE_LIST\n                 --dpi-desync=split2"#' "$MODDIR/strategies/exp.conf"
 
 cat > "$MOCKBIN/curl" <<'X'
 #!/bin/sh
@@ -163,6 +173,28 @@ bench_chains_down
 assert_eq "" "$(find "$MOCK_IPT_STORE" -name 'nfqws_bench_*' -print 2>/dev/null)" "and the v4 chains are removed again"
 unset MOCK_IP6_FAIL
 
+# ── подстановка режима ────────────────────────────────────────────────────────
+section "bench: MODE_ALL substitution keeps the config readable"
+
+printf 'MODE_LIST="--hostlist=a.list"\nNFQWS_EXTRA_ARGS="$MODE_LIST\n                 --dpi-desync=split2"\nTCP_PORTS=443\n' > "$SANDBOX/ml.conf"
+bench_set_mode_all "$SANDBOX/ml.conf" "$SANDBOX/ml.out"
+assert_rc 0 "$?" "substitution on a multi-line value succeeds"
+assert_eq "3" "$(grep -c . "$SANDBOX/ml.out")" "the continuation line goes with the value it belonged to"
+assert_contains "$(cat "$SANDBOX/ml.out")" 'NFQWS_EXTRA_ARGS="$MODE_ALL"' "the mode is replaced"
+assert_not_contains "$(cat "$SANDBOX/ml.out")" "dpi-desync" "nothing of the old value survives"
+assert_contains "$(cat "$SANDBOX/ml.out")" "TCP_PORTS=443" "and the lines after it are untouched"
+( . "$SANDBOX/ml.out" ) 2>/dev/null
+assert_rc 0 "$?" "the result sources cleanly — the old sed left an unmatched quote here"
+
+printf 'A=1\nNFQWS_EXTRA_ARGS="$MODE_AUTO"\nB=2\n' > "$SANDBOX/one.conf"
+bench_set_mode_all "$SANDBOX/one.conf" "$SANDBOX/one.out"
+# одинарные кавычки: $MODE_ALL должен записать сам конфиг, а не раскрывать
+# переменную тестовой оболочки
+expected_one='A=1
+NFQWS_EXTRA_ARGS="$MODE_ALL"
+B=2'
+assert_eq "$expected_one" "$(cat "$SANDBOX/one.out")" "a single-line value is replaced in place"
+
 # ── parallel run ──────────────────────────────────────────────────────────────
 section "bench: parallel slots on their own queues"
 
@@ -185,6 +217,7 @@ assert_contains "$ctl_out" "BENCH_RES	1	alt	6	6" "the strategy whose probes reac
 assert_contains "$ctl_out" "BENCH_VERIFY	1	alt" "the winner is re-measured alone"
 assert_contains "$ctl_out" "BENCH_BEST	alt	6	6" "and stays the winner after verification"
 assert_match "$ctl_out" "BENCH_BEST	alt	6	6	[0-9]+	alt	-" "YouTube best is the winner; Discord best stays empty with no Discord success"
+assert_not_contains "$ctl_out" "exp	0	0	0	failed_start" "the strategy with a multi-line mode value is measured, not dropped"
 
 calls=$(cat "$MOCK_DIR/nfqws2.calls")
 assert_contains "$calls" "--daemon --pidfile=$STATE_DIR/bench_slot.0.pid" "slot 0 got its own pidfile"
@@ -193,6 +226,7 @@ assert_contains "$calls" "--qnum=302" "slot 1 binds the next queue"
 assert_not_contains "$calls" "--qnum=303" "no third instance with two slots"
 assert_contains "$calls" "--debug=@$STATE_DIR/bench_slot.0.log" "slot 0 logs to its own file, not the service log"
 assert_contains "$calls" "--hostlist-exclude=$LISTS_DIR/exclude.list" "the bench measures MODE_ALL, not the user's auto list"
+assert_eq "0" "$(printf '%s\n' "$calls" | grep -c 'dpi-desync=split2')" "the leftover tail of a multi-line value never reaches the engine"
 
 # the service is restarted once for the verification and once to restore the
 # original config — never once per strategy
@@ -280,6 +314,7 @@ assert_eq "" "$(find "$MOCK_IPT_STORE" -name 'nfqws_bench_*' -print 2>/dev/null)
 assert_eq "" "$(cut -f1 "$MOCK_DIR/curl.calls" | sort -u)" "serial probes need no local port"
 assert_eq "$((svc_before + 4))" "$(daemon300)" "serial: one restart per strategy plus the restore"
 assert_eq "3" "$(printf '%s\n' "$ctl_out" | grep -c '^BENCH_RUN')" "one BENCH_RUN per strategy"
+assert_not_contains "$ctl_out" "exp	0	0	0	failed_start" "the serial path measures the multi-line strategy too, instead of writing a config it cannot load"
 
 # curl without --local-port cannot pin a probe to a slot: the decision is made
 # before anything is started, so it is checked here rather than by another full

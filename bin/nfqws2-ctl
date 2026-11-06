@@ -2511,6 +2511,24 @@ bench_slot_stop() { # <i> — экземпляр и его файлы; прав�
   return 0
 }
 
+# Подменить режим на $MODE_ALL целиком. sed здесь не годится: у многострочного
+# NFQWS_EXTRA_ARGS он заменяет первую строку и оставляет хвост со висящей
+# кавычкой — такой nfqws2.conf не читает уже ни один `. "$CONFFILE"`. Чётность
+# кавычек считается так же, как в merge_user_keys (lib/common.sh).
+bench_set_mode_all() { # <источник> <приёмник>
+  local tmp="$2.tmp.$$"
+  awk '
+    function qcount(s,   t) { t = s; return gsub(/"/, "", t) }
+    /^NFQWS_EXTRA_ARGS=/ {
+      print "NFQWS_EXTRA_ARGS=\"$MODE_ALL\""
+      skip = qcount($0) % 2
+      next
+    }
+    skip { if (qcount($0) % 2) skip = 0; next }
+    { print }' "$1" > "$tmp" || { rm -f "$tmp"; return 1; }
+  mv -f "$tmp" "$2"
+}
+
 bench_slot_start() { # <i> <стратегия>
   local i="$1" st="$2" q conf log pidf args orch w=0
   q=$(bench_slot_q "$i")
@@ -2519,7 +2537,7 @@ bench_slot_start() { # <i> <стратегия>
   pidf="$STATE_DIR/bench_slot.$i.pid"
   bench_slot_stop "$i"
   build_strategy_conf "$st" "$conf.raw" || { rm -f "$conf.raw"; return 1; }
-  sed 's/^NFQWS_EXTRA_ARGS=.*/NFQWS_EXTRA_ARGS="$MODE_ALL"/' "$conf.raw" > "$conf" 2>/dev/null
+  bench_set_mode_all "$conf.raw" "$conf" || { rm -f "$conf.raw"; return 1; }
   rm -f "$conf.raw"
   validate_strategy_blob_references "$conf" >/dev/null 2>&1 || return 1
   args=$(bench_slot_args "$conf" "$q" "$log") || return 1
@@ -2678,8 +2696,7 @@ EOF
 bench_measure_serial() { # <idx> <стратегия> <хосты> <домен> <вид> <curl> <res> — через перезапуск службы
   local idx="$1" st="$2" hosts="$3" target="$4" kind="$5" bin="$6" res="$7"
   local patched="$STATE_DIR/strat_bench.$$.tmp" ready=false wait_i=0
-  if build_strategy_conf "$st" "$patched"; then
-    sed 's/^NFQWS_EXTRA_ARGS=.*/NFQWS_EXTRA_ARGS="$MODE_ALL"/' "$patched" > "$CONFFILE" 2>/dev/null
+  if build_strategy_conf "$st" "$patched" && bench_set_mode_all "$patched" "$CONFFILE"; then
     rm -f "$patched"
     echo "$st" > "$ACTIVE_FILE" 2>/dev/null
   else
