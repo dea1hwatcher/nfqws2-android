@@ -15,10 +15,23 @@
 # script so that the process command line still names bin/nfqws2: is_running()
 # verifies the pidfile points at our binary, and a bare `sleep` would be
 # rejected as a recycled PID.
+#
+# It also gives up: a suite killed with SIGKILL cannot stop its daemons, and an
+# orphan looping on `sleep 1` costs the machine a process spawn every second
+# forever — which then breaks the timing-sensitive sections of the next run.
+# The sandbox directory going away covers the clean case, the cap covers the
+# killed one, and thirty minutes is far beyond any suite's lifetime.
 case "${1:-}" in
   __stay)
     trap 'exit 0' TERM INT HUP
-    while :; do sleep 1; done ;;
+    root="${0%/mod/bin/nfqws2}"
+    i=0
+    while [ "$i" -lt 1800 ]; do
+      [ -d "$root" ] || exit 0
+      sleep 1
+      i=$((i + 1))
+    done
+    exit 0 ;;
 esac
 
 [ -n "$MOCK_NFQWS_ARGS_FILE" ] && printf '%s\n' "$*" > "$MOCK_NFQWS_ARGS_FILE"

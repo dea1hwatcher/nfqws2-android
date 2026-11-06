@@ -66,6 +66,30 @@ harness_summary() {
 
 SANDBOX=""
 
+# A run killed with SIGKILL leaves its mock daemon (`__stay`), its watchdog and
+# its hung `ctl lint` looping: each costs a process spawn per second, forever,
+# and on Windows that alone is enough to break the timing-sensitive suites that
+# follow. Only sandbox scripts whose sandbox directory is already gone are
+# signalled, so suites running in parallel are never disturbed.
+sweep_test_orphans() {
+  local line pid path
+  ps -ef 2>/dev/null | while IFS= read -r line; do
+    case "$line" in
+      *"/mod/bin/nfqws2 "*|*"/mod/bin/nfqws2-ctl "*|*"/mod/service.sh "*) ;;
+      *) continue ;;
+    esac
+    path=$(printf '%s\n' "$line" | grep -a -o '/[^ ]*nfqws2-test\.[A-Za-z0-9][A-Za-z0-9]*/mod' | head -1)
+    [ -n "$path" ] || continue
+    path="${path%/mod}"
+    [ -d "$path" ] && continue
+    pid=$(printf '%s\n' "$line" | awk '{print $2}')
+    case "$pid" in ''|*[!0-9]*) continue ;; esac
+    kill -9 "$pid" 2>/dev/null
+  done
+}
+
+sweep_test_orphans
+
 sandbox_init() {
   # Deliberately an explicit /tmp path rather than $TMPDIR: on Git Bash for
   # Windows TMPDIR holds a Windows path ("C:\Users\...\Temp"), and those
