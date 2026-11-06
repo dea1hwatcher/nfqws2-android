@@ -1815,33 +1815,39 @@ PROC_SYS_ROOT="${PROC_SYS_ROOT:-/proc/sys}"
 
 # Apply a kernel setting and remember the previous value once, so stop() can put
 # the phone back the way it was: a stopped module has no business leaving
-# netfilter and socket buffers retuned.
+# netfilter and socket buffers retuned. The node is read and written directly —
+# no `sysctl -n`/`-w` processes on every start.
 sysctl_apply() { # <key> <value>
   local key="$1" want="$2" node cur
   node="$PROC_SYS_ROOT/$(printf '%s' "$key" | tr '.' '/')"
   [ -e "$node" ] || return 0
-  cur=$(sysctl -n "$key" 2>/dev/null)
+  cur=$(tr -d ' \t\r\n' < "$node" 2>/dev/null)
   case "$cur" in ''|*[!0-9]*) cur="" ;; esac
   [ "$cur" = "$want" ] && return 0
   if [ -n "$cur" ]; then
     mkdir -p "$STATE_DIR" 2>/dev/null
     grep -q "^$key " "$SYSCTL_STATE" 2>/dev/null || printf '%s %s\n' "$key" "$cur" >> "$SYSCTL_STATE"
   fi
-  sysctl -w "$key=$want" >/dev/null 2>&1 || {
-    [ -w "$node" ] && printf '%s\n' "$want" > "$node" 2>/dev/null
-  }
+  if [ -w "$node" ]; then
+    printf '%s\n' "$want" > "$node" 2>/dev/null && return 0
+  fi
+  sysctl -w "$key=$want" >/dev/null 2>&1
   return 0
 }
 
 # Only a value we set ourselves is put back: anything changed meanwhile (by the
 # system or another tool) is left alone.
 sysctl_restore() {
-  local key old now
+  local key old node now
   [ -f "$SYSCTL_STATE" ] || return 0
   while read -r key old; do
     if [ -z "$key" ] || [ -z "$old" ]; then continue; fi
-    now=$(sysctl -n "$key" 2>/dev/null)
-    if [ -n "$now" ] && [ "$now" != "$old" ]; then
+    node="$PROC_SYS_ROOT/$(printf '%s' "$key" | tr '.' '/')"
+    now=$(tr -d ' \t\r\n' < "$node" 2>/dev/null)
+    if [ -z "$now" ] || [ "$now" = "$old" ]; then continue; fi
+    if [ -w "$node" ]; then
+      printf '%s\n' "$old" > "$node" 2>/dev/null
+    else
       sysctl -w "$key=$old" >/dev/null 2>&1
     fi
   done < "$SYSCTL_STATE"

@@ -60,20 +60,6 @@ case "$NAME" in
     esac
     exit 0 ;;
   sysctl|modprobe|ip|iptables-save|killall)
-    # sysctl keeps its values in a file store so tests can exercise the
-    # snapshot/restore logic (sysctl_apply/sysctl_restore)
-    if [ "$NAME" = "sysctl" ]; then
-      store="${MOCK_SYSCTL_STORE:-$MOCK_DIR/sysctls.store}"
-      case "$1" in
-        -n) grep "^$2 " "$store" 2>/dev/null | awk '{print $2}' ;;
-        -w)
-          key="${2%%=*}"; val="${2#*=}"
-          [ -f "$store" ] || : > "$store"
-          grep -v "^$key " "$store" > "$store.new" 2>/dev/null || : > "$store.new"
-          printf '%s %s\n' "$key" "$val" >> "$store.new"
-          mv -f "$store.new" "$store" ;;
-      esac
-    fi
     exit 0 ;;
   *)
     exit 0 ;;

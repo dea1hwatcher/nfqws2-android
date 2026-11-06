@@ -231,6 +231,153 @@ cmd_status() {
   if is_running; then firewall_ok && echo "Правила iptables: активны" || echo "Правила iptables: ОТСУТСТВУЮТ"; fi
 }
 
+# ---------------------------------------------------------------- lint
+# Mistakes --dry-run cannot see: it does not start Lua. Exactly this class was
+# found by hand once — fool=ts (a masking *name*, not a function), fake without
+# a blob, a step from a file that is not loaded through --lua-init, strategy
+# numbers without an orchestrator.
+lint_report() { printf '%s\t%s\t%s\n' "$1" "$2" "$3"; }
+
+# Prints findings as <severity>\t<where>\t<message>; returns the error count.
+lint_config() { # <conffile>
+  local target="$1" args d
+  [ -f "$target" ] || { echo "Файл не найден: $target" >&2; return 1; }
+  args=$( ( export CONFDIR MODDIR; . "$target" >/dev/null 2>&1 || exit 1; set_defaults; _startup_args ) 2>/dev/null ) || {
+    echo "Конфиг не читается: $target" >&2; return 1; }
+
+  d="$STATE_DIR/lint.$$"
+  rm -rf "$d"; mkdir -p "$d" || return 1
+
+  printf '%s\n' "$args" | tr ' ' '\n' | sed -n 's/^--lua-init=@//p' | grep -v '^$' > "$d/lua"
+  printf '%s\n' "$args" | tr ' ' '\n' | sed -n 's/^--blob=\([^:]*\):.*/\1/p' | grep -v '^$' > "$d/blobs"
+  : > "$d/funcs"; : > "$d/used"
+  if [ -s "$d/lua" ]; then
+    grep -h -o '^function [A-Za-z0-9_]*' $(cat "$d/lua") 2>/dev/null | sed 's/^function //' | sort -u > "$d/funcs"
+    cat $(cat "$d/lua") 2>/dev/null | awk '
+      /^function [A-Za-z0-9_]+\(/ { fn = $2; sub(/\(.*/, "", fn); next }
+      /^end[ \t]*$/ { fn = ""; next }
+      fn != "" {
+        s = $0
+        while (match(s, /(arg|fooling_options|ipid_options|reconstruct_options)\.[A-Za-z0-9_]+/)) {
+          split(substr(s, RSTART, RLENGTH), pp, ".")
+          print pp[2]
+          s = substr(s, RSTART + RLENGTH)
+        }
+      }' | sort -u > "$d/used"
+  fi
+  printf '%s' "$args" > "$d/args"
+
+  # the smart orchestrator reads strategy=N itself, so the tags are meaningful
+  # there even without circular
+  local smart=0
+  grep -q 'zapret-smart\.lua' "$d/lua" 2>/dev/null && smart=1
+
+  # a file, not a pipe: the catalogs and the argument string are fed to awk
+  # together, and a pipe here deadlocks on this project's test machines
+  {
+    echo '##FUNCS'; cat "$d/funcs"
+    echo '##USED';  cat "$d/used"
+    echo '##BLOBS'; cat "$d/blobs"
+    echo '##ARGS';  cat "$d/args"; echo
+  } > "$d/catalog"
+  awk -v smart="$smart" '
+    # standard engine arguments that never appear as arg.X in the lua sources,
+    # plus the blobs the engine itself provides (nfqws.c load_const_blob_to_collection)
+    BEGIN {
+      split("payload dir nodrop final ipfrag ipfrag_pos ipfrag_disorder tcp_md5 datanoack badsum badseq md5sig fool", std, " ")
+      for (i in std) known[std[i]] = 1
+      split("fake_default_tls fake_default_http fake_default_quic", bstd, " ")
+      for (i in bstd) builtin_blob[bstd[i]] = 1
+      pidx = 0
+    }
+    section == "" { }
+    /^##FUNCS$/ { section = "funcs"; next }
+    /^##USED$/  { section = "used";  next }
+    /^##BLOBS$/ { section = "blobs"; next }
+    /^##ARGS$/  { section = "args";  next }
+    section == "funcs" { if ($0 != "") { funcs[$0] = 1; nfuncs++ } next }
+    section == "used"  { if ($0 != "") { used[$0] = 1; nused++ } next }
+    section == "blobs" { if ($0 != "") blobs[$0] = 1; next }
+    section == "args"  { args = args $0; next }
+    function err(where, msg) { print "error\t" where "\t" msg; errors++ }
+    function warn(where, msg) { print "warn\t" where "\t" msg }
+    function info(where, msg) { print "info\t" where "\t" msg }
+    function flush() {
+      if (pidx == 0 && !pdesync && !pfilter) return
+      if (pdesync == 0) warn("профиль " pidx, "нет ни одного --lua-desync: перехватывает трафик, но ничего не делает")
+      if (!pfilter) warn("профиль " pidx, "нет фильтров --filter-tcp/udp/l7: подходит для любого трафика")
+      if (pstrats > 0) {
+        # inert tags are a note, not a fault: presets keep them as a reminder of
+        # the variant pairing they came from
+        if (!porch && !smart) info("профиль " pidx, "strategy=N без --lua-desync=circular (или learn): номера ни на что не влияют")
+        # the numbers must be 1..N without gaps; equal numbers may repeat when
+        # several steps share one strategy
+        nu = 0
+        for (fi in seen) nu++
+        for (fi = 1; fi <= nu; fi++) if (!(fi in seen)) { bad = bad " " fi }
+        if (bad != "") err("профиль " pidx, "номера strategy должны идти подряд с 1, нет:" bad)
+        delete seen; bad = ""
+      }
+      pdesync = 0; pfilter = 0; pstrats = 0; porch = 0
+    }
+    END {
+      # trailing tokens always form a profile
+      pidx++
+      n = split(args, t, " ")
+      for (i = 1; i <= n; i++) {
+        tok = t[i]
+        if (tok == "") continue
+        if (tok == "--new") { flush(); pidx++; continue }
+        if (tok ~ /^--filter-(tcp|udp|l7|icmp|ipp)/) { pfilter = 1; continue }
+        if (tok ~ /^--lua-desync=/) {
+          inst = substr(tok, 14)
+          fn = inst; sub(/:.*/, "", fn)
+          pdesync++
+          hasblob = 0
+          nk = split(inst, kv, ":")
+          for (j = 2; j <= nk; j++) {
+            key = kv[j]; sub(/=.*/, "", key)
+            val = kv[j]; if (val ~ /=/) sub(/^[^=]*=/, "", val)
+            if (key == "fool") {
+              if (!(val in funcs)) err(fn, "fool=" val ": такой lua-функции нет — fool это имя функции маскировки, а не вид маскировки")
+            } else if (key == "blob") {
+              hasblob = 1
+              blobval = val
+              # tls_client_hello_clone builds the blob itself at run time, so a
+              # blob it produced earlier in the profile needs no declaration
+              if (fn != "tls_client_hello_clone" && !(val in blobs) && !(val in builtin_blob) && !(val in dyn_blob) && val !~ /^0x/ && val !~ /^%/)
+                err(fn, "блоб «" val "» не объявлен: добавьте --blob=" val ":@файл")
+            } else if (key == "strategy") {
+              pstrats++
+              if (val ~ /^[0-9]+$/) seen[val + 0] = 1
+              if (fn == "circular" || fn == "learn") porch = 1
+              continue
+            }
+            if (nused > 0 && !(key in used) && !(key in known))
+              warn(fn, "параметр «" key "» не читает ни одна из подключённых lua-функций — проверьте имя")
+          }
+          if (fn == "tls_client_hello_clone" && hasblob) dyn_blob[blobval] = 1
+          if (fn == "fake" && !hasblob) err(fn, "fake без blob: шаг завершается ошибкой на каждом пакете и пакет уходит без изменений")
+          if (nfuncs > 0 && !(fn in funcs)) err(fn, "нет lua-функции «" fn "» среди подключённых через --lua-init")
+        }
+        if (tok ~ /^--lua-desync=(circular|learn)/) porch = 1
+      }
+      flush()
+      if (errors > 0) exit 1
+    }' "$d/catalog"
+  lint_rc=$?
+  rm -rf "$d"
+  return "$lint_rc"
+}
+
+cmd_lint() {
+  local out rc
+  out=$(lint_config "${1:-$CONFFILE}")
+  rc=$?
+  [ -n "$out" ] && printf '%s\n' "$out"
+  [ "$rc" -eq 0 ]
+}
+
 cmd_doctor() {
   row() { printf '%s\t%s\t%s\n' "$1" "$2" "$3"; }
   fmt_kb() {
@@ -270,6 +417,21 @@ cmd_doctor() {
     connmark_out) row warn limiter "$(M "нет connbytes: лимит вх./исх. $PKT_LIMIT_IN/$PKT_LIMIT_OUT пак. на соединение через CONNMARK" "no connbytes: in/out limit $PKT_LIMIT_IN/$PKT_LIMIT_OUT packets per connection via CONNMARK")" ;;
   esac
   row ok quota "$(M "квоты пакетов: исх. $PKT_LIMIT_OUT / вх. $PKT_LIMIT_IN ($lim)" "packet quotas: out $PKT_LIMIT_OUT / in $PKT_LIMIT_IN ($lim)")"
+
+  # the classes of mistake --dry-run cannot see (it never starts Lua)
+  local lint_out lrc lerr lwarn
+  lint_out=$(lint_config "$CONFFILE" 2>/dev/null); lrc=$?
+  lerr=$(printf '%s\n' "$lint_out" | grep -c '^error' 2>/dev/null || true)
+  lwarn=$(printf '%s\n' "$lint_out" | grep -c '^warn' 2>/dev/null || true)
+  if [ "${lerr:-0}" -gt 0 ]; then
+    row fail lint "$(M "конфиг: $lerr ошибок, $lwarn предупреждений — nfqws2-ctl lint" "config: $lerr errors, $lwarn warnings — nfqws2-ctl lint")"
+  elif [ "${lwarn:-0}" -gt 0 ]; then
+    row warn lint "$(M "конфиг: $lwarn предупреждений — nfqws2-ctl lint" "config: $lwarn warnings — nfqws2-ctl lint")"
+  elif [ "$lrc" -ne 0 ]; then
+    row fail lint "$(M 'конфиг не читается' 'config cannot be read')"
+  else
+    row ok lint "$(M 'конфиг без замечаний' 'config has no findings')"
+  fi
   row ok auto_ports "$(M "активные порты: TCP: ${TCP_PORTS:-80,443} | UDP: ${UDP_PORTS:-443}" "active ports: TCP: ${TCP_PORTS:-80,443} | UDP: ${UDP_PORTS:-443}")"
   if [ "$NAT_FIX" = "1" ]; then
     local nat_hits
@@ -2963,6 +3125,7 @@ case "$1" in
   probe-dpi) cmd_probe_dpi "${2:-all}" "$3" ;;
   bench-strategies) cmd_bench_strategies "$2" ;;
   check-domain) cmd_check_domain "$2" ;;
+  lint) cmd_lint "$2" ;;
   domain-check) cmd_domain_check "$2" ;;
   home-pause)
     rm -f "$HOME_OVERRIDE_FILE"
@@ -3007,7 +3170,7 @@ EOF
     echo "         list-strategies get-strategy set-strategy strategy-get-b64 strategy-save-b64 strategy-reset" >&2
     echo "         import-add-b64 list-imports get-import-merged-b64 rename-import delete-import" >&2
     echo "         get-list save-list-b64 list-update add-domain clear-auto reset-lists set set-mode list-apps" >&2
-    echo "         get-logs export-logs clear-logs wifi-ssid backup-create backup-list backup-restore backup-restore-b64 probe-dpi probe-cancel net-info bench-strategies check-domain domain-check" >&2
+    echo "         get-logs export-logs clear-logs wifi-ssid backup-create backup-list backup-restore backup-restore-b64 probe-dpi probe-cancel net-info bench-strategies check-domain domain-check lint" >&2
     echo "         smart-status smart-sites smart-export smart-import-b64 smart-learn-once smart-bench smart-apply-variant smart-turbo smart-reset" >&2
     echo "         home-pause net-recheck upload share changelog" >&2
     echo "         current-network list-net-strategies clear-net-strategies googlevideo-discovery orchestra-status orchestra-lock orchestra-unlock orchestra-block orchestra-unblock orchestra-clear tg-affinity" >&2

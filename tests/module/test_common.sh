@@ -578,13 +578,10 @@ section "sysctl_apply remembers the old value and sysctl_restore puts it back"
 fixture="$SANDBOX/proc-sys"; mkdir -p "$fixture/net/core"
 printf '111111\n' > "$fixture/net/core/rmem_max"
 PROC_SYS_ROOT="$fixture"; export PROC_SYS_ROOT
-MOCK_SYSCTL_STORE="$MOCK_DIR/sysctl.store"; export MOCK_SYSCTL_STORE
-printf 'net.core.rmem_max 111111\n' > "$MOCK_SYSCTL_STORE"
 rm -f "$SYSCTL_STATE"
 
 sysctl_apply net.core.rmem_max 8388608
-assert_eq "8388608" "$(awk '$1=="net.core.rmem_max"{print $2}' "$MOCK_SYSCTL_STORE")" \
-  "the new value is applied"
+assert_eq "8388608" "$(cat "$fixture/net/core/rmem_max")" "the new value is applied"
 assert_eq "net.core.rmem_max 111111" "$(cat "$SYSCTL_STATE")" \
   "and the previous value is remembered"
 
@@ -593,11 +590,11 @@ assert_eq "1" "$(wc -l < "$SYSCTL_STATE" | tr -d ' ')" \
   "the original is remembered only once"
 
 sysctl_restore
-assert_eq "111111" "$(awk '$1=="net.core.rmem_max"{print $2}' "$MOCK_SYSCTL_STORE")" \
+assert_eq "111111" "$(cat "$fixture/net/core/rmem_max")" \
   "restore puts the previous value back"
 assert_no_file "$SYSCTL_STATE" "and clears the snapshot"
 
-unset PROC_SYS_ROOT MOCK_SYSCTL_STORE
+unset PROC_SYS_ROOT
 
 harness_finish
 

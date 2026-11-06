@@ -584,6 +584,41 @@ assert_rc 0 "$ctl_rc" "list-apps with pm fallback exits 0"
 assert_contains "$ctl_out" "com.fallback.one" "list-apps fallback outputs package without prefix"
 rm -f "$mock_pm"
 
+# ── lint ─────────────────────────────────────────────────────────────────────
+section "lint: mistakes --dry-run cannot see"
+
+bad_conf="$SANDBOX/lint-bad.conf"
+cat > "$bad_conf" <<EOF
+NFQWS_BASE_ARGS="--lua-init=@\$LUA_DIR/zapret-lib.lua --lua-init=@\$LUA_DIR/zapret-antidpi.lua --blob=quic_initial:@\$BLOBS_DIR/quic_initial.bin"
+NFQWS_ARGS="--filter-tcp=443 --filter-l7=tls --payload=tls_client_hello
+            --lua-desync=fake:blob=undeclared_one
+            --lua-desync=fake
+            --lua-desync=nosuchfunction
+            --lua-desync=fake:blob=quic_initial:fool=ts:strategy=1
+            --lua-desync=multisplit:strategy=3"
+EOF
+
+ctl lint "$bad_conf"
+assert_rc 1 "$ctl_rc" "a broken config is rejected by lint"
+assert_contains "$ctl_out" "блоб «undeclared_one» не объявлен" "an undeclared blob is reported"
+assert_contains "$ctl_out" "fake без blob" "fake without a blob is reported"
+assert_contains "$ctl_out" "нет lua-функции «nosuchfunction»" "an unknown lua function is reported"
+assert_contains "$ctl_out" "fool=ts: такой lua-функции нет" "fool must name a lua function"
+assert_contains "$ctl_out" "номера strategy должны идти подряд" "strategy numbering gaps are reported"
+
+# the shipped presets must be clean: otherwise every user sees a warning
+ctl lint "$MODDIR/defaults/nfqws2.conf"
+assert_rc 0 "$ctl_rc" "the default config passes lint"
+assert_not_contains "$ctl_out" "error" "and has no errors"
+assert_not_contains "$ctl_out" "warn" "and no warnings"
+
+ctl lint "$MODDIR/strategies/smart.conf"
+assert_rc 0 "$ctl_rc" "the smart config passes lint"
+
+# the doctor shows the same result as a row
+ctl doctor
+assert_contains "$ctl_out" "конфиг без замечаний" "doctor reports a clean config"
+
 # ── check-domain ─────────────────────────────────────────────────────────────
 section "check-domain"
 
