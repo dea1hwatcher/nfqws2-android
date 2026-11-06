@@ -963,6 +963,9 @@ probe_tool() {
 }
 PROBE_APP_RULE=""
 setup_probe_app_rule() {
+  # подбор вызывает её на каждую стратегию: повторная вставка плодила бы
+  # одинаковые правила, а cleanup снимает только одно
+  [ -n "$PROBE_APP_RULE" ] && return 0
   if is_running && [ "$APP_MODE" = "include" ] && iptables -w -t mangle -L $IPT_GROUP_APP -n >/dev/null 2>&1; then
     PROBE_APP_RULE="-m owner --uid-owner 0 -j CONNMARK --set-xmark $MARK_INCLUDE"
     iptables -w -t mangle -I $IPT_GROUP_APP 1 $PROBE_APP_RULE 2>/dev/null
@@ -1027,6 +1030,11 @@ probe_attempt() { # <вид> <путь к утилите> <host[/путь]> [pro
   local host="${target%%/*}" path="${target#*/}"
   [ "$host" = "$path" ] && path="" || path="/$path"
   command -v timeout >/dev/null 2>&1 && to="timeout 10"
+  # Параллельный подбор держит пробу слота в его диапазоне локальных портов:
+  # только эти порты правило отдаёт в очередь слота, чужой трафик не задевается.
+  local lp=""
+  [ -n "${PROBE_LOCAL_PORT:-}" ] && lp="--local-port $PROBE_LOCAL_PORT"
+  [ "${PROBE_FORCE_IPV4:-0}" = "1" ] && lp="$lp -4"
   t0=$(uptime_cs)
   local tmp_body jar
   # $RANDOM is empty in busybox ash, and $$ is shared by every probe subshell,
@@ -1038,7 +1046,7 @@ probe_attempt() { # <вид> <путь к утилите> <host[/путь]> [pro
     1) # Plain HTTP (порт 80)
       local url="http://${host}:80${path:-/}"
       if [ "$kind" = "curl" ]; then
-        out=$($to "$bin" -s -L --max-redirs 5 -m 8 --connect-timeout 5 -o "$tmp_body" -A 'Mozilla/5.0' \
+        out=$($to "$bin" $lp -s -L --max-redirs 5 -m 8 --connect-timeout 5 -o "$tmp_body" -A 'Mozilla/5.0' \
           -b "$jar" -c "$jar" -w "\nREDIRECT_URL:%{redirect_url}\nHTTP_CODE:%{http_code}\n" "$url" 2>&1); rc=$?
       else
         out=$($to "$bin" wget -q -T 6 -O "$tmp_body" -U 'Mozilla/5.0' "$url" 2>&1); rc=$?
@@ -1048,13 +1056,13 @@ probe_attempt() { # <вид> <путь к утилите> <host[/путь]> [pro
       local url="https://${target}"
       if [ "$kind" = "curl" ]; then
         if [ "$host" = "gateway.discord.gg" ]; then
-          out=$($to "$bin" -s -k --tlsv1.2 --tls-max 1.2 \
+          out=$($to "$bin" $lp -s -k --tlsv1.2 --tls-max 1.2 \
             -H "Upgrade: websocket" -H "Connection: Upgrade" \
             -H "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==" -H "Sec-WebSocket-Version: 13" \
             -L --max-redirs 5 -m 8 --connect-timeout 5 -o "$tmp_body" -A 'Mozilla/5.0' \
             -b "$jar" -c "$jar" -w "\nREDIRECT_URL:%{redirect_url}\nHTTP_CODE:%{http_code}\n" "https://gateway.discord.gg/?v=10&encoding=json" 2>&1); rc=$?
         else
-          out=$($to "$bin" -s -k --tlsv1.2 --tls-max 1.2 -L --max-redirs 5 -m 8 --connect-timeout 5 -o "$tmp_body" -A 'Mozilla/5.0' \
+          out=$($to "$bin" $lp -s -k --tlsv1.2 --tls-max 1.2 -L --max-redirs 5 -m 8 --connect-timeout 5 -o "$tmp_body" -A 'Mozilla/5.0' \
             -b "$jar" -c "$jar" -w "\nREDIRECT_URL:%{redirect_url}\nHTTP_CODE:%{http_code}\n" "$url" 2>&1); rc=$?
         fi
       else
@@ -1065,13 +1073,13 @@ probe_attempt() { # <вид> <путь к утилите> <host[/путь]> [pro
       local url="https://${target}"
       if [ "$kind" = "curl" ]; then
         if [ "$host" = "gateway.discord.gg" ]; then
-          out=$($to "$bin" -s -k --tlsv1.3 \
+          out=$($to "$bin" $lp -s -k --tlsv1.3 \
             -H "Upgrade: websocket" -H "Connection: Upgrade" \
             -H "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==" -H "Sec-WebSocket-Version: 13" \
             -L --max-redirs 5 -m 8 --connect-timeout 5 -o "$tmp_body" -A 'Mozilla/5.0' \
             -b "$jar" -c "$jar" -w "\nREDIRECT_URL:%{redirect_url}\nHTTP_CODE:%{http_code}\n" "https://gateway.discord.gg/?v=10&encoding=json" 2>&1); rc=$?
         else
-          out=$($to "$bin" -s -k --tlsv1.3 -L --max-redirs 5 -m 8 --connect-timeout 5 -o "$tmp_body" -A 'Mozilla/5.0' \
+          out=$($to "$bin" $lp -s -k --tlsv1.3 -L --max-redirs 5 -m 8 --connect-timeout 5 -o "$tmp_body" -A 'Mozilla/5.0' \
             -b "$jar" -c "$jar" -w "\nREDIRECT_URL:%{redirect_url}\nHTTP_CODE:%{http_code}\n" "$url" 2>&1); rc=$?
         fi
       else
@@ -1085,7 +1093,7 @@ probe_attempt() { # <вид> <путь к утилите> <host[/путь]> [pro
         return
       fi
       if [ "$kind" = "curl" ] && "$bin" --help 2>&1 | grep -q '\-\-http3'; then
-        out=$($to "$bin" -s -k --http3-only -m 6 --connect-timeout 4 -o /dev/null \
+        out=$($to "$bin" $lp -s -k --http3-only -m 6 --connect-timeout 4 -o /dev/null \
           -A 'Mozilla/5.0' "https://${target}" 2>&1); rc=$?
       else
         echo "skip quic_unsupported"
@@ -2269,6 +2277,502 @@ cmd_smart_bench() {
   printf 'SMART_BENCH_BEST\t%s\t%s\t%s\t%s\t%s\t%s\n' "$slot" "$best_v" "$best_name" "$best_ok" "$best_total" "$best_ms"
 }
 
+# ---------------------------------------------------------------- подбор стратегий
+# Последовательный подбор перезапускает службу на каждую стратегию: тридцать
+# стратегий — тридцать обрывов пользовательских соединений. Параллельный путь
+# поднимает приватные экземпляры nfqws2 на своих очередях и меряет несколько
+# стратегий сразу, не трогая службу. Проба слота уходит в его очередь по
+# локальному порту: curl --local-port держит порт в диапазоне слота, а правило
+# --sport/--dport ловит только эти порты. Диапазон выбирается вне
+# ip_local_port_range и без единого сокета внутри, так что чужой трафик в
+# очередь подбора не попадает. NFQUEUE везде с --queue-bypass: мёртвый экземпляр
+# означает «пропустить без изменений», а не «потерять пакет».
+# Правила слота стоят до цепей службы, поэтому ограничитель пакетов на
+# соединение (PKT_LIMIT_*) к пробе не применяется. Победитель перепроверяется
+# через службу, где он есть: параллельный заезд — отсев, а не приговор.
+
+BENCH_CHAIN_OUT="nfqws_bench_out"
+BENCH_CHAIN_IN="nfqws_bench_in"
+BENCH_PORT_WIDTH=256   # TIME_WAIT держит порт около минуты, а слот за раунд открывает десятки соединений
+BENCH_SLOTS_MAX=4
+BENCH_PORT_BASE=0
+BENCH_ACTIVE=""
+BENCH_WORKERS=""
+BENCH_STATS=""
+BENCH_ROUND=""
+BENCH_TOTAL=0
+BENCH_PARALLEL_TRIED=0
+
+bench_slot_q() { printf '%s' "$((NFQUEUE_NUM + 1 + $1))"; }
+bench_slot_lo() { printf '%s' "$((BENCH_PORT_BASE + $1 * BENCH_PORT_WIDTH))"; }
+
+bench_slot_count() { # [свободные КБ] -> число слотов; BENCH_SLOTS задаёт вручную, 0 — последовательный путь
+  local n avail="${1:-}"
+  case "${BENCH_SLOTS:-}" in
+    ''|*[!0-9]*) ;;
+    *)
+      n="$BENCH_SLOTS"
+      [ "$n" -gt "$BENCH_SLOTS_MAX" ] && n="$BENCH_SLOTS_MAX"
+      printf '%s' "$n"
+      return 0 ;;
+  esac
+  [ -n "$avail" ] || avail=$(awk '/^MemAvailable:/ { print $2; exit }' /proc/meminfo 2>/dev/null)
+  case "$avail" in ''|*[!0-9]*) avail=0 ;; esac
+  # меньше 128 МБ свободных — лишний экземпляр опаснее, чем медленный подбор
+  if [ "$avail" -lt 131072 ]; then printf '0'; return 0; fi
+  # экземпляр с LuaJIT и hostlist'ами — десятки мегабайт; системе оставляем 256 МБ
+  n=$(( (avail - 262144) / 65536 ))
+  [ "$n" -gt "$BENCH_SLOTS_MAX" ] && n="$BENCH_SLOTS_MAX"
+  [ "$n" -lt 1 ] && n=1
+  printf '%s' "$n"
+}
+
+bench_ports_free() { # <lo> <hi> -> 0, если в диапазоне нет ни одного сокета
+  local f n
+  for f in "${PROC_NET_ROOT:-/proc/net}"/tcp "${PROC_NET_ROOT:-/proc/net}"/tcp6 \
+           "${PROC_NET_ROOT:-/proc/net}"/udp "${PROC_NET_ROOT:-/proc/net}"/udp6; do
+    [ -r "$f" ] || continue
+    # порт в /proc/net/* шестнадцатеричный, а strtonum есть только в gawk
+    n=$(awk -v lo="$1" -v hi="$2" '
+      function hex(h,   i, c, v, r) {
+        r = 0; h = toupper(h)
+        for (i = 1; i <= length(h); i++) {
+          c = substr(h, i, 1); v = index("0123456789ABCDEF", c) - 1
+          if (v < 0) return -1
+          r = r * 16 + v
+        }
+        return r
+      }
+      NR > 1 { p = hex(substr($2, index($2, ":") + 1)); if (p >= lo && p <= hi) c++ }
+      END { print c + 0 }' "$f" 2>/dev/null)
+    [ "${n:-0}" -gt 0 ] && return 1
+  done
+  return 0
+}
+
+bench_port_base() { # <слотов> -> первый порт диапазона слотов
+  local need=$(( $1 * BENCH_PORT_WIDTH )) lo hi cand r
+  r="${PROC_SYS_ROOT:-/proc/sys}/net/ipv4/ip_local_port_range"
+  lo=""; hi=""
+  [ -r "$r" ] && read -r lo hi < "$r" 2>/dev/null
+  case "$lo" in ''|*[!0-9]*) lo=32768 ;; esac
+  case "$hi" in ''|*[!0-9]*) hi=60999 ;; esac
+  for cand in $((hi + 1)) $((lo - need)); do
+    [ "$cand" -lt 10240 ] && continue
+    [ "$((cand + need - 1))" -gt 65535 ] && continue
+    if bench_ports_free "$cand" "$((cand + need - 1))"; then
+      printf '%s' "$cand"
+      return 0
+    fi
+  done
+  return 1
+}
+
+bench_curl_local_port() { # <curl> -> 0, если --local-port поддерживается
+  # --version печатает и выходит, но неизвестная опция ломает разбор раньше,
+  # чем до него доходит очередь: порядок аргументов и делает вызов проверкой.
+  # Диапазон заведомо корректный — иначе curl ответил бы кодом 2 и на новый.
+  "$1" --local-port 1024-65535 --version >/dev/null 2>&1 || return 1
+  return 0
+}
+
+bench_parallel_possible() { # <вид> <curl> -> "<слотов> <первый порт>", иначе код 1
+  local n base
+  [ "$1" = "curl" ] || return 1
+  case "$NFQUEUE_NUM" in ''|*[!0-9]*) return 1 ;; esac
+  n=$(bench_slot_count)
+  [ "$n" -gt 0 ] || return 1
+  [ "$((NFQUEUE_NUM + n))" -le 65535 ] || return 1
+  bench_curl_local_port "$2" || return 1
+  base=$(bench_port_base "$n") || return 1
+  printf '%s %s' "$n" "$base"
+}
+
+bench_jumps() { # <cmd> — переходы первыми: служба могла переприменить свои правила
+  local C="$1" hook chain
+  for hook in "POSTROUTING $BENCH_CHAIN_OUT" "PREROUTING $BENCH_CHAIN_IN"; do
+    chain="${hook#* }"
+    hook="${hook%% *}"
+    while $C -w -t mangle -D "$hook" -j "$chain" 2>/dev/null; do :; done
+    $C -w -t mangle -I "$hook" 1 -j "$chain" 2>/dev/null || return 1
+  done
+  return 0
+}
+
+bench_chains_up() {
+  local C
+  for C in iptables ip6tables; do
+    [ "$C" = "ip6tables" ] && [ "$IPV6_ENABLED" = "0" ] && continue
+    $C -w -t mangle -N $BENCH_CHAIN_OUT 2>/dev/null
+    $C -w -t mangle -N $BENCH_CHAIN_IN 2>/dev/null
+    $C -w -t mangle -F $BENCH_CHAIN_OUT 2>/dev/null || return 1
+    $C -w -t mangle -F $BENCH_CHAIN_IN 2>/dev/null || return 1
+    bench_jumps "$C" || return 1
+  done
+  return 0
+}
+
+bench_chains_down() {
+  local C
+  for C in iptables ip6tables; do
+    [ "$C" = "ip6tables" ] && ! command -v ip6tables >/dev/null 2>&1 && continue
+    while $C -w -t mangle -D POSTROUTING -j $BENCH_CHAIN_OUT 2>/dev/null; do :; done
+    while $C -w -t mangle -D PREROUTING -j $BENCH_CHAIN_IN 2>/dev/null; do :; done
+    $C -w -t mangle -F $BENCH_CHAIN_OUT 2>/dev/null
+    $C -w -t mangle -F $BENCH_CHAIN_IN 2>/dev/null
+    $C -w -t mangle -X $BENCH_CHAIN_OUT 2>/dev/null
+    $C -w -t mangle -X $BENCH_CHAIN_IN 2>/dev/null
+  done
+  return 0
+}
+
+bench_slot_rules() { # <i> — правила слота, только после того как экземпляр поднят
+  local i="$1" q lo hi C
+  q=$(bench_slot_q "$i"); lo=$(bench_slot_lo "$i"); hi=$((lo + BENCH_PORT_WIDTH - 1))
+  for C in iptables ip6tables; do
+    [ "$C" = "ip6tables" ] && [ "$IPV6_ENABLED" = "0" ] && continue
+    $C -w -t mangle -A $BENCH_CHAIN_OUT -p tcp --sport "$lo:$hi" -j NFQUEUE --queue-num "$q" --queue-bypass 2>/dev/null || return 1
+    $C -w -t mangle -A $BENCH_CHAIN_OUT -p udp --sport "$lo:$hi" -j NFQUEUE --queue-num "$q" --queue-bypass 2>/dev/null || return 1
+    $C -w -t mangle -A $BENCH_CHAIN_IN -p tcp --dport "$lo:$hi" -j NFQUEUE --queue-num "$q" --queue-bypass 2>/dev/null || return 1
+    $C -w -t mangle -A $BENCH_CHAIN_IN -p udp --dport "$lo:$hi" -j NFQUEUE --queue-num "$q" --queue-bypass 2>/dev/null || return 1
+  done
+  return 0
+}
+
+bench_round_reset() {
+  local C
+  for C in iptables ip6tables; do
+    [ "$C" = "ip6tables" ] && [ "$IPV6_ENABLED" = "0" ] && continue
+    $C -w -t mangle -F $BENCH_CHAIN_OUT 2>/dev/null
+    $C -w -t mangle -F $BENCH_CHAIN_IN 2>/dev/null
+  done
+  : > "$BENCH_ROUND"
+  BENCH_ACTIVE=""
+  BENCH_WORKERS=""
+  return 0
+}
+
+bench_slot_args() { # <conf слота> <очередь> <лог> -> аргументы приватного экземпляра
+  (
+    . "$1" >/dev/null 2>&1 || exit 1
+    set_defaults
+    NFQUEUE_NUM="$2"
+    NFQWS_LOG="$3"
+    LOG_LEVEL=0
+    validate_args_conf >/dev/null 2>&1 || exit 1
+    _startup_args
+  )
+}
+
+bench_slot_alive() { # <i>
+  local pidf="$STATE_DIR/bench_slot.$1.pid" pid
+  [ -f "$pidf" ] || return 1
+  pid=$(cat "$pidf" 2>/dev/null)
+  case "$pid" in ''|0|*[!0-9]*) return 1 ;; esac
+  kill -0 "$pid" 2>/dev/null || return 1
+  pid_is_ours "$pid"
+}
+
+# pidfile появляется раньше, чем демон привязывает очередь: правило, добавленное
+# в этот зазор, отдало бы первые пакеты пробы в обход стратегии (--queue-bypass).
+# Нет файла (песочница, ядро без netfilter) — проверять нечего, остаётся pidfile.
+bench_slot_bound() { # <i>
+  local f=/proc/net/netfilter/nfnetlink_queue q
+  [ -r "$f" ] || return 0
+  q=$(bench_slot_q "$1")
+  awk -v q="$q" '$1 == q { found = 1 } END { exit !found }' "$f" 2>/dev/null
+}
+
+bench_slot_stop() { # <i> — экземпляр и его файлы; правила снимает раунд
+  local i="$1" pid w=0
+  # отдельной строкой: в `local i="$1" pidf="…$i…"` шел разворачивает $i до
+  # присваивания, и путь уходил бы к слоту вызывающего, а не к аргументу
+  local pidf="$STATE_DIR/bench_slot.$i.pid"
+  if [ -f "$pidf" ]; then
+    pid=$(cat "$pidf" 2>/dev/null)
+    case "$pid" in
+      ''|0|*[!0-9]*) ;;
+      *)
+        # PID мог достаться чужому процессу — убиваем только свой
+        if kill -0 "$pid" 2>/dev/null && pid_is_ours "$pid"; then
+          kill -TERM "$pid" 2>/dev/null
+          while [ "$w" -lt 10 ]; do
+            kill -0 "$pid" 2>/dev/null || break
+            sleep 0.2 2>/dev/null || sleep 1
+            w=$((w + 1))
+          done
+          kill -0 "$pid" 2>/dev/null && kill -KILL "$pid" 2>/dev/null
+        fi ;;
+    esac
+    rm -f "$pidf"
+  fi
+  rm -f "$STATE_DIR/bench_slot.$i.conf" "$STATE_DIR/bench_slot.$i.conf.raw" \
+        "$STATE_DIR/bench_slot.$i.log" "$STATE_DIR/bench_slot.$i.orchestra.json"
+  return 0
+}
+
+bench_slot_start() { # <i> <стратегия>
+  local i="$1" st="$2" q conf log pidf args orch w=0
+  q=$(bench_slot_q "$i")
+  conf="$STATE_DIR/bench_slot.$i.conf"
+  log="$STATE_DIR/bench_slot.$i.log"
+  pidf="$STATE_DIR/bench_slot.$i.pid"
+  bench_slot_stop "$i"
+  build_strategy_conf "$st" "$conf.raw" || { rm -f "$conf.raw"; return 1; }
+  sed 's/^NFQWS_EXTRA_ARGS=.*/NFQWS_EXTRA_ARGS="$MODE_ALL"/' "$conf.raw" > "$conf" 2>/dev/null
+  rm -f "$conf.raw"
+  validate_strategy_blob_references "$conf" >/dev/null 2>&1 || return 1
+  args=$(bench_slot_args "$conf" "$q" "$log") || return 1
+  [ -n "$args" ] || return 1
+  dry_run_check "$args" >/dev/null 2>&1 || return 1
+  # память оркестратора — своя копия: экземпляры подбора не пишут в файл службы
+  orch="$STATE_DIR/bench_slot.$i.orchestra.json"
+  rm -f "$orch"
+  [ -f "$ORCHESTRA_MEMORY_FILE" ] && cp -f "$ORCHESTRA_MEMORY_FILE" "$orch" 2>/dev/null
+  rm -f "$pidf"
+  (
+    cd "$MODDIR/bin" || exit 1
+    set -f
+    Z2K_ORCHESTRA_FILE="$orch"
+    export Z2K_ORCHESTRA_FILE
+    "$NFQWS_BIN" --daemon --pidfile="$pidf" $args >> "$log" 2>&1
+  ) || return 1
+  while [ "$w" -lt 10 ]; do
+    [ -f "$pidf" ] && break
+    sleep 0.2 2>/dev/null || sleep 1
+    w=$((w + 1))
+  done
+  bench_slot_alive "$i" || return 1
+  w=0
+  while [ "$w" -lt 10 ]; do
+    bench_slot_bound "$i" && return 0
+    bench_slot_alive "$i" || return 1
+    sleep 0.2 2>/dev/null || sleep 1
+    w=$((w + 1))
+  done
+  return 1
+}
+
+bench_slots_purge() { # хвосты прерванного подбора: экземпляры и цепи прошлых запусков
+  local i=0
+  while [ "$i" -lt "$BENCH_SLOTS_MAX" ]; do
+    bench_slot_stop "$i"
+    i=$((i + 1))
+  done
+  bench_chains_down
+}
+
+bench_screen() { # <вид> <curl> <res> <метка> -> 0, если стратегия прошла отсев
+  local kind="$1" bin="$2" res="$3" f="$STATE_DIR/bench_screen.$4.$$.tmp" r_yt r_dc
+  # каждой пробе свой файл: общий `> file` и `>> file` из двух фоновых подоболочек
+  # теряют строку, если truncate случается после первой записи
+  ( probe_attempt "$kind" "$bin" "redirector.googlevideo.com" 3 > "$f.yt" ) &
+  ( probe_attempt "$kind" "$bin" "gateway.discord.gg" 3 > "$f.dc" ) &
+  wait
+  r_yt=$(cat "$f.yt" 2>/dev/null)
+  r_dc=$(cat "$f.dc" 2>/dev/null)
+  rm -f "$f.yt" "$f.dc"
+  if [ "${r_yt%% *}" != "ok" ] && [ "${r_dc%% *}" != "ok" ]; then
+    printf 'yt\t3\t%s\n' "$r_yt" >> "$res"
+    printf 'dc\t3\t%s\n' "$r_dc" >> "$res"
+    return 1
+  fi
+  return 0
+}
+
+bench_hosts_probe() { # <вид> <curl> <список хостов> <res>
+  local kind="$1" bin="$2" hosts="$3" res="$4" h batch=0
+  while IFS= read -r h; do
+    [ -z "$h" ] && continue
+    case "$h" in \#*) continue ;; esac
+    (
+      local k=1 r
+      while [ "$k" -le 3 ]; do
+        r=$(probe_attempt "$kind" "$bin" "$h" "$k")
+        printf '%s\t%s\t%s\n' "$h" "$k" "$r" >> "$res"
+        k=$((k + 1))
+      done
+    ) &
+    batch=$((batch + 1))
+    if [ "$batch" -ge 5 ]; then
+      wait
+      batch=0
+    fi
+  done < "$hosts"
+  wait
+}
+
+bench_failed() { # <idx> <стратегия> <причина> [всего]
+  local idx="$1" st="$2" reason="$3" total="${4:-0}"
+  printf 'BENCH_RES\t%s\t%s\t0\t%s\t0\t%s\t0\t0\n' "$idx" "$st" "$total" "$reason"
+  printf '%s\t%s\t0\t%s\t0\t%s\t0\t0\t99999\t99999\n' "$idx" "$st" "$total" "$reason" >> "$BENCH_STATS"
+}
+
+bench_aggregate() { # <res> <idx> <стратегия> — печатает BENCH_RES и копит статистику
+  local res="$1" idx="$2" st="$3" h_val k r_val r_st r_detail
+  local ok_cnt=0 total_cnt=0 sum_ms=0 fail_reasons="" is_yt is_dc
+  local yt_ok=0 yt_sum=0 dc_ok=0 dc_sum=0
+  while IFS="$(printf '\t')" read -r h_val k r_val; do
+    [ -z "$r_val" ] && continue
+    r_st="${r_val%% *}"; r_detail="${r_val#* }"
+    total_cnt=$((total_cnt + 1))
+    is_yt=0; is_dc=0
+    case "$h_val" in *youtube*|*googlevideo*) is_yt=1 ;; esac
+    case "$h_val" in *discord*) is_dc=1 ;; esac
+    if [ "$r_st" = "ok" ]; then
+      ok_cnt=$((ok_cnt + 1))
+      sum_ms=$((sum_ms + ${r_detail:-0}))
+      if [ "$is_yt" -eq 1 ]; then yt_ok=$((yt_ok + 1)); yt_sum=$((yt_sum + ${r_detail:-0})); fi
+      if [ "$is_dc" -eq 1 ]; then dc_ok=$((dc_ok + 1)); dc_sum=$((dc_sum + ${r_detail:-0})); fi
+    else
+      fail_reasons="$fail_reasons $r_detail"
+    fi
+  done < "$res"
+  local avg_ms=0 yt_avg=99999 dc_avg=99999 top_fail="-"
+  [ "$ok_cnt" -gt 0 ] && avg_ms=$((sum_ms / ok_cnt))
+  [ "$yt_ok" -gt 0 ] && yt_avg=$((yt_sum / yt_ok))
+  [ "$dc_ok" -gt 0 ] && dc_avg=$((dc_sum / dc_ok))
+  if [ -n "$fail_reasons" ]; then
+    top_fail=$(printf '%s\n' $fail_reasons | sort | uniq -c | sort -nr | head -1 | awk '{print $2}')
+    [ -z "$top_fail" ] && top_fail="-"
+  fi
+  printf 'BENCH_RES\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$idx" "$st" "$ok_cnt" "$total_cnt" "$avg_ms" "$top_fail" "$yt_ok" "$dc_ok"
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    "$idx" "$st" "$ok_cnt" "$total_cnt" "$avg_ms" "$top_fail" "$yt_ok" "$dc_ok" "$yt_avg" "$dc_avg" >> "$BENCH_STATS"
+}
+
+# Последняя строка на idx побеждает: перепроверка победителя заменяет его
+# параллельный результат, а не добавляется к нему.
+bench_best_line() { # -> idx<TAB>имя<TAB>ok<TAB>всего<TAB>среднее<TAB>yt<TAB>dc
+  if [ ! -s "$BENCH_STATS" ]; then
+    printf '%s\t%s\t0\t0\t0\t%s\t%s\n' - - - -
+    return 0
+  fi
+  awk -F'\t' '
+    { i = $1
+      if (!(i in seen)) { seen[i] = 1; order[++n] = i }
+      name[i] = $2; ok[i] = $3 + 0; tot[i] = $4 + 0; avg[i] = $5 + 0
+      yt[i] = $7 + 0; yta[i] = $9 + 0; dc[i] = $8 + 0; dca[i] = $10 + 0 }
+    END {
+      bo = -1; ba = 0; bt = 0; bi = "-"; bn = "-"; by = ""; bd = ""
+      byo = 0; bya = 0; bdo = 0; bda = 0
+      for (j = 1; j <= n; j++) {
+        i = order[j]
+        if (ok[i] > bo || (ok[i] == bo && bo > 0 && avg[i] < ba)) { bo = ok[i]; bt = tot[i]; ba = avg[i]; bi = i; bn = name[i] }
+        if (yt[i] > byo || (yt[i] == byo && byo > 0 && yta[i] < bya)) { byo = yt[i]; bya = yta[i]; by = name[i] }
+        if (dc[i] > bdo || (dc[i] == bdo && bdo > 0 && dca[i] < bda)) { bdo = dc[i]; bda = dca[i]; bd = name[i] }
+      }
+      if (bo <= 0) { bi = "-"; bn = "-"; bo = 0; bt = 0; ba = 0 }
+      if (by == "") by = "-"
+      if (bd == "") bd = "-"
+      printf "%s\t%s\t%d\t%d\t%d\t%s\t%s\n", bi, bn, bo, bt, ba, by, bd
+    }' "$BENCH_STATS"
+}
+
+bench_best_read() { # заполняет b_idx b_name b_ok b_total b_avg b_yt b_dc вызывающего
+  IFS="$(printf '\t')" read -r b_idx b_name b_ok b_total b_avg b_yt b_dc <<EOF
+$(bench_best_line)
+EOF
+}
+
+bench_measure_serial() { # <idx> <стратегия> <хосты> <домен> <вид> <curl> <res> — через перезапуск службы
+  local idx="$1" st="$2" hosts="$3" target="$4" kind="$5" bin="$6" res="$7"
+  local patched="$STATE_DIR/strat_bench.$$.tmp" ready=false wait_i=0
+  if build_strategy_conf "$st" "$patched"; then
+    sed 's/^NFQWS_EXTRA_ARGS=.*/NFQWS_EXTRA_ARGS="$MODE_ALL"/' "$patched" > "$CONFFILE" 2>/dev/null
+    rm -f "$patched"
+    echo "$st" > "$ACTIVE_FILE" 2>/dev/null
+  else
+    rm -f "$patched"
+    return 1
+  fi
+
+  sh "$SERVICE" restart >/dev/null 2>&1
+
+  while [ "$wait_i" -lt 8 ]; do
+    if is_running; then ready=true; break; fi
+    sleep 0.3 2>/dev/null || sleep 1
+    wait_i=$((wait_i + 1))
+  done
+  [ "$ready" = "true" ] || return 1
+
+  setup_probe_app_rule
+  : > "$res"
+  if [ -z "$target" ]; then
+    bench_screen "$kind" "$bin" "$res" "$idx" || return 0
+  fi
+  bench_hosts_probe "$kind" "$bin" "$hosts" "$res"
+  return 0
+}
+
+bench_slot_probe() { # <порты> <idx> <res> <хосты> <домен> <вид> <curl>
+  PROBE_LOCAL_PORT="$1"
+  PROBE_FORCE_IPV4=0
+  # при выключенном IPv6 служба его не перехватывает — мерить надо IPv4
+  [ "$IPV6_ENABLED" = "0" ] && PROBE_FORCE_IPV4=1
+  local idx="$2" res="$3" hosts="$4" target="$5" kind="$6" bin="$7"
+  : > "$res"
+  if [ -z "$target" ]; then
+    bench_screen "$kind" "$bin" "$res" "$idx" || return 0
+  fi
+  bench_hosts_probe "$kind" "$bin" "$hosts" "$res"
+}
+
+bench_round_run() { # <хосты> <домен> <вид> <curl> — пробы слотов раунда и разбор
+  local hosts="$1" target="$2" kind="$3" bin="$4" C i idx st res lo hi
+  for C in iptables ip6tables; do
+    [ "$C" = "ip6tables" ] && [ "$IPV6_ENABLED" = "0" ] && continue
+    bench_jumps "$C"
+  done
+  while IFS="$(printf '\t')" read -r i idx st res; do
+    [ -z "$res" ] && continue
+    case " $BENCH_ACTIVE " in *" $i "*) ;; *) continue ;; esac
+    lo=$(bench_slot_lo "$i"); hi=$((lo + BENCH_PORT_WIDTH - 1))
+    ( bench_slot_probe "$lo-$hi" "$idx" "$res" "$hosts" "$target" "$kind" "$bin" ) &
+    BENCH_WORKERS="$BENCH_WORKERS $!"
+  done < "$BENCH_ROUND"
+  wait
+  while IFS="$(printf '\t')" read -r i idx st res; do
+    [ -z "$res" ] && continue
+    case " $BENCH_ACTIVE " in *" $i "*) ;; *) continue ;; esac
+    # умерший под пробой экземпляр мерил бы «голый» трафик: результат не годится
+    if bench_slot_alive "$i"; then
+      bench_aggregate "$res" "$idx" "$st"
+    else
+      bench_failed "$idx" "$st" failed_start
+    fi
+    rm -f "$res"
+    bench_slot_stop "$i"
+  done < "$BENCH_ROUND"
+}
+
+bench_parallel_run() { # <слотов> <список стратегий> <хосты> <домен> <вид> <curl>
+  local nslots="$1" list="$2" hosts="$3" target="$4" kind="$5" bin="$6"
+  local i=0 idx st res
+  bench_chains_up || return 1
+  while IFS="$(printf '\t')" read -r idx st; do
+    [ -z "$st" ] && continue
+    [ "$i" = "0" ] && bench_round_reset
+    printf 'BENCH_RUN\t%s\t%s\t%s\n' "$idx" "$st" "$BENCH_TOTAL"
+    res="$STATE_DIR/bench_res.$idx.$$.tmp"
+    printf '%s\t%s\t%s\t%s\n' "$i" "$idx" "$st" "$res" >> "$BENCH_ROUND"
+    if bench_slot_start "$i" "$st" && bench_slot_rules "$i"; then
+      BENCH_ACTIVE="$BENCH_ACTIVE $i"
+    else
+      bench_slot_stop "$i"
+      bench_failed "$idx" "$st" failed_start
+    fi
+    i=$((i + 1))
+    if [ "$i" -ge "$nslots" ]; then
+      bench_round_run "$hosts" "$target" "$kind" "$bin"
+      i=0
+    fi
+  done < "$list"
+  [ "$i" -gt 0 ] && bench_round_run "$hosts" "$target" "$kind" "$bin"
+  bench_chains_down
+  return 0
+}
+
 cmd_bench_strategies() {
   local target_domain="$1"
   local tool kind bin orig_strat orig_running=false
@@ -2282,8 +2786,31 @@ cmd_bench_strategies() {
   if is_running; then orig_running=true; fi
   cp -f "$CONFFILE" "$STATE_DIR/bench_orig.$$.conf" 2>/dev/null
 
+  BENCH_STATS="$STATE_DIR/bench_stats.$$.tmp"
+  BENCH_ROUND="$STATE_DIR/bench_round.$$.tmp"
+  local strat_list="$STATE_DIR/bench_strats.$$.tmp"
+  : > "$BENCH_STATS"
+  : > "$BENCH_ROUND"
+
   bench_cleanup() {
-    rm -f "$STATE_DIR/probe.pid" "$STATE_DIR/probe_bench_default.$$.list" "$STATE_DIR/probe_bench_custom.$$.list" "$STATE_DIR/bench_res.$$.tmp" "$STATE_DIR/strat_bench.$$.tmp"
+    # прерванный заезд: пробы не должны пережить очистку и снова насыпать
+    # временных файлов поверх уже восстановленного конфига
+    local cw
+    for cw in $BENCH_WORKERS; do
+      kill_descendants "$cw"
+    done
+    BENCH_WORKERS=""
+    rm -f "$STATE_DIR/probe.pid" "$STATE_DIR/probe_bench_default.$$.list" "$STATE_DIR/probe_bench_custom.$$.list" \
+          "$STATE_DIR/bench_res."*".$$.tmp" "$STATE_DIR/bench_screen."*".$$.tmp"* "$STATE_DIR/strat_bench.$$.tmp" \
+          "$BENCH_STATS" "$BENCH_ROUND" "$strat_list" "$strat_list.raw"
+    if [ "$BENCH_PARALLEL_TRIED" = "1" ]; then
+      bench_chains_down
+      local ci=0
+      while [ "$ci" -lt "$BENCH_SLOTS_MAX" ]; do
+        bench_slot_stop "$ci"
+        ci=$((ci + 1))
+      done
+    fi
     cleanup_probe_app_rule
     if [ -f "$STATE_DIR/bench_orig.$$.conf" ]; then
       cp -f "$STATE_DIR/bench_orig.$$.conf" "$CONFFILE" 2>/dev/null
@@ -2316,154 +2843,64 @@ cmd_bench_strategies() {
       > "$bench_hosts_file"
   fi
 
-  local strats
-  strats=$(list_strategies 2>/dev/null | cut -f1 | tr -d '\r' | grep -v '^default$' || true)
-  strats="default $strats"
-
-  local best_name="" best_ok=0 best_total=0 best_ms=99999
-  local best_yt="" best_yt_ok=0 best_yt_ms=99999
-  local best_dc="" best_dc_ok=0 best_dc_ms=99999
-  local strat_idx=0 total_strats
-  total_strats=$(printf '%s\n' $strats | wc -w | tr -d ' ')
-
-  printf 'BENCH_START\t%s\n' "$total_strats"
-
-  for st in $strats; do
+  local st
+  { printf 'default\n'; list_strategies 2>/dev/null | cut -f1 | tr -d '\r' | grep -v '^default$'; } > "$strat_list.raw"
+  BENCH_TOTAL=0
+  while IFS= read -r st; do
     [ -z "$st" ] && continue
-    printf 'BENCH_RUN\t%s\t%s\t%s\n' "$strat_idx" "$st" "$total_strats"
+    printf '%s\t%s\n' "$BENCH_TOTAL" "$st" >> "$strat_list"
+    BENCH_TOTAL=$((BENCH_TOTAL + 1))
+  done < "$strat_list.raw"
+  rm -f "$strat_list.raw"
 
-    local patched="$STATE_DIR/strat_bench.$$.tmp"
-    if build_strategy_conf "$st" "$patched"; then
-      sed 's/^NFQWS_EXTRA_ARGS=.*/NFQWS_EXTRA_ARGS="$MODE_ALL"/' "$patched" > "$CONFFILE" 2>/dev/null
-      rm -f "$patched"
-      echo "$st" > "$ACTIVE_FILE" 2>/dev/null
-    else
-      rm -f "$patched"
-      printf 'BENCH_RES\t%s\t%s\t0\t0\t0\tfailed_start\t0\t0\n' "$strat_idx" "$st"
-      strat_idx=$((strat_idx + 1))
-      continue
-    fi
+  printf 'BENCH_START\t%s\n' "$BENCH_TOTAL"
 
-    sh "$SERVICE" restart >/dev/null 2>&1
+  local nslots=0 p
+  p=$(bench_parallel_possible "$kind" "$bin") || p=""
+  nslots="${p%% *}"; BENCH_PORT_BASE="${p#* }"
+  case "$nslots" in ''|*[!0-9]*) nslots=0 ;; esac
+  case "$BENCH_PORT_BASE" in ''|*[!0-9]*) nslots=0 ;; esac
 
-    local ready=false wait_i=0
-    while [ "$wait_i" -lt 8 ]; do
-      if is_running; then ready=true; break; fi
-      sleep 0.3 2>/dev/null || sleep 1
-      wait_i=$((wait_i + 1))
-    done
+  if [ "$nslots" -gt 0 ]; then
+    BENCH_PARALLEL_TRIED=1
+    bench_slots_purge
+    printf 'BENCH_MODE\tparallel\t%s\n' "$nslots"
+    bench_parallel_run "$nslots" "$strat_list" "$bench_hosts_file" "$target_domain" "$kind" "$bin" || nslots=0
+  fi
 
-    if [ "$ready" != "true" ]; then
-      printf 'BENCH_RES\t%s\t%s\t0\t0\t0\tfailed_start\t0\t0\n' "$strat_idx" "$st"
-      strat_idx=$((strat_idx + 1))
-      continue
-    fi
-
-    setup_probe_app_rule
-
-    # Tier 1 Screening: fast screening on YouTube and Discord
-    if [ -z "$target_domain" ]; then
-      local t1_res="$STATE_DIR/t1_res.$$.tmp"
-      ( printf 'yt\t%s\n' "$(probe_attempt "$kind" "$bin" "redirector.googlevideo.com" 3)" ) > "$t1_res" &
-      ( printf 'dc\t%s\n' "$(probe_attempt "$kind" "$bin" "gateway.discord.gg" 3)" ) >> "$t1_res" &
-      wait
-      local r_yt r_dc yt_st dc_st
-      r_yt=$(grep '^yt	' "$t1_res" 2>/dev/null | cut -f2-)
-      r_dc=$(grep '^dc	' "$t1_res" 2>/dev/null | cut -f2-)
-      rm -f "$t1_res"
-      yt_st="${r_yt%% *}"
-      dc_st="${r_dc%% *}"
-      if [ "$yt_st" != "ok" ] && [ "$dc_st" != "ok" ]; then
-        local f_reason="${r_yt#* }"
-        [ -z "$f_reason" ] && f_reason="${r_dc#* }"
-        [ -z "$f_reason" ] && f_reason="screen_fail"
-        printf 'BENCH_RES\t%s\t%s\t0\t2\t0\t%s\t0\t0\n' "$strat_idx" "$st" "$f_reason"
-        strat_idx=$((strat_idx + 1))
-        continue
-      fi
-    fi
-
-    local tmp_res="$STATE_DIR/bench_res.$$.tmp"
-    : > "$tmp_res"
-    local h batch=0
-    while IFS= read -r h; do
-      [ -z "$h" ] && continue
-      case "$h" in \#*) continue ;; esac
-      (
-        local k=1
-        while [ "$k" -le 3 ]; do
-          local r
-          r=$(probe_attempt "$kind" "$bin" "$h" "$k")
-          printf '%s\t%s\t%s\n' "$h" "$k" "$r" >> "$tmp_res"
-          k=$((k + 1))
-        done
-      ) &
-      batch=$((batch + 1))
-      if [ "$batch" -ge 5 ]; then
-        wait
-        batch=0
-      fi
-    done < "$bench_hosts_file"
-    wait
-
-    local ok_cnt=0 total_cnt=0 sum_ms=0 fail_reasons=""
-    local yt_ok_cnt=0 yt_sum_ms=0 dc_ok_cnt=0 dc_sum_ms=0
-    while IFS="$(printf '\t')" read -r h_val k r_val; do
-      [ -z "$r_val" ] && continue
-      local r_st="${r_val%% *}" r_detail="${r_val#* }"
-      total_cnt=$((total_cnt + 1))
-      local is_yt=0 is_dc=0
-      case "$h_val" in *youtube*|*googlevideo*) is_yt=1 ;; esac
-      case "$h_val" in *discord*) is_dc=1 ;; esac
-      if [ "$r_st" = "ok" ]; then
-        ok_cnt=$((ok_cnt + 1))
-        sum_ms=$((sum_ms + ${r_detail:-0}))
-        if [ "$is_yt" -eq 1 ]; then yt_ok_cnt=$((yt_ok_cnt + 1)); yt_sum_ms=$((yt_sum_ms + ${r_detail:-0})); fi
-        if [ "$is_dc" -eq 1 ]; then dc_ok_cnt=$((dc_ok_cnt + 1)); dc_sum_ms=$((dc_sum_ms + ${r_detail:-0})); fi
+  if [ "$nslots" = "0" ]; then
+    printf 'BENCH_MODE\tserial\n'
+    local idx res
+    while IFS="$(printf '\t')" read -r idx st; do
+      [ -z "$st" ] && continue
+      printf 'BENCH_RUN\t%s\t%s\t%s\n' "$idx" "$st" "$BENCH_TOTAL"
+      res="$STATE_DIR/bench_res.$idx.$$.tmp"
+      if bench_measure_serial "$idx" "$st" "$bench_hosts_file" "$target_domain" "$kind" "$bin" "$res"; then
+        bench_aggregate "$res" "$idx" "$st"
       else
-        fail_reasons="$fail_reasons $r_detail"
+        bench_failed "$idx" "$st" failed_start
       fi
-    done < "$tmp_res"
-    rm -f "$tmp_res"
+      rm -f "$res"
+    done < "$strat_list"
+  fi
 
-    local avg_ms=0
-    if [ "$ok_cnt" -gt 0 ]; then avg_ms=$((sum_ms / ok_cnt)); fi
-
-    local top_fail="-"
-    if [ -n "$fail_reasons" ]; then
-      top_fail=$(printf '%s\n' $fail_reasons | sort | uniq -c | sort -nr | head -1 | awk '{print $2}')
-      [ -z "$top_fail" ] && top_fail="-"
+  local b_idx b_name b_ok b_total b_avg b_yt b_dc
+  bench_best_read
+  # Победитель параллельного заезда перепроверяется в одиночку, через службу:
+  # четыре экземпляра делят CPU, и цифры заезда могли быть не про стратегию.
+  if [ "$nslots" -gt 0 ] && [ "$b_idx" != "-" ]; then
+    printf 'BENCH_VERIFY\t%s\t%s\n' "$b_idx" "$b_name"
+    local vres="$STATE_DIR/bench_res.verify.$$.tmp"
+    if bench_measure_serial "$b_idx" "$b_name" "$bench_hosts_file" "$target_domain" "$kind" "$bin" "$vres"; then
+      bench_aggregate "$vres" "$b_idx" "$b_name"
+    else
+      bench_failed "$b_idx" "$b_name" failed_start
     fi
+    rm -f "$vres"
+  fi
+  bench_best_read
 
-    printf 'BENCH_RES\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$strat_idx" "$st" "$ok_cnt" "$total_cnt" "$avg_ms" "$top_fail" "$yt_ok_cnt" "$dc_ok_cnt"
-
-    if [ "$ok_cnt" -gt "$best_ok" ] || { [ "$ok_cnt" -eq "$best_ok" ] && [ "$best_ok" -gt 0 ] && [ "$avg_ms" -lt "$best_ms" ]; }; then
-      best_ok="$ok_cnt"
-      best_total="$total_cnt"
-      best_ms="$avg_ms"
-      best_name="$st"
-    fi
-
-    local yt_avg=99999
-    if [ "$yt_ok_cnt" -gt 0 ]; then yt_avg=$((yt_sum_ms / yt_ok_cnt)); fi
-    if [ "$yt_ok_cnt" -gt "$best_yt_ok" ] || { [ "$yt_ok_cnt" -eq "$best_yt_ok" ] && [ "$best_yt_ok" -gt 0 ] && [ "$yt_avg" -lt "$best_yt_ms" ]; }; then
-      best_yt_ok="$yt_ok_cnt"
-      best_yt_ms="$yt_avg"
-      best_yt="$st"
-    fi
-
-    local dc_avg=99999
-    if [ "$dc_ok_cnt" -gt 0 ]; then dc_avg=$((dc_sum_ms / dc_ok_cnt)); fi
-    if [ "$dc_ok_cnt" -gt "$best_dc_ok" ] || { [ "$dc_ok_cnt" -eq "$best_dc_ok" ] && [ "$best_dc_ok" -gt 0 ] && [ "$dc_avg" -lt "$best_dc_ms" ]; }; then
-      best_dc_ok="$dc_ok_cnt"
-      best_dc_ms="$dc_avg"
-      best_dc="$st"
-    fi
-
-    strat_idx=$((strat_idx + 1))
-  done
-
-  if [ "$best_ok" -gt 0 ] && [ "$kind" = "curl" ]; then
+  if [ "$b_ok" -gt 0 ] && [ "$kind" = "curl" ]; then
     local quic_test_h="www.youtube.com"
     if [ -n "$target_domain" ]; then
       quic_test_h="$target_domain"
@@ -2480,10 +2917,7 @@ cmd_bench_strategies() {
   bench_cleanup
   trap - EXIT INT TERM
 
-  [ -z "$best_name" ] && best_name="-"
-  [ -z "$best_yt" ] && best_yt="-"
-  [ -z "$best_dc" ] && best_dc="-"
-  printf 'BENCH_BEST\t%s\t%s\t%s\t%s\t%s\t%s\n' "$best_name" "$best_ok" "$best_total" "$best_ms" "$best_yt" "$best_dc"
+  printf 'BENCH_BEST\t%s\t%s\t%s\t%s\t%s\t%s\n' "$b_name" "$b_ok" "$b_total" "$b_avg" "$b_yt" "$b_dc"
 }
 
 cmd_probe_dpi() {

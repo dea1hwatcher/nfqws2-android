@@ -152,8 +152,11 @@ queue_suite "module: white lists" sh "$HERE/module/test_whitelist.sh"
 
 if [ "$FAST" = 1 ]; then
   queue_skip "module: service and firewall" "--fast"
+  queue_skip "module: strategy bench" "--fast"
 else
   queue_suite "module: service and firewall" sh "$HERE/module/test_service.sh"
+  # restart-heavy: every serial-path scenario restarts the service per strategy
+  queue_suite "module: strategy bench" sh "$HERE/module/test_bench.sh"
 fi
 
 if [ -z "$NODE_BIN" ]; then
