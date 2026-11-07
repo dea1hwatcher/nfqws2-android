@@ -410,11 +410,19 @@ X
 chmod 0755 "$MOCKBIN/curl"
 rm -f "$MOCK_DIR/curl_calls"
 svc start >/dev/null 2>&1
+# config B differs from the config the snapshot holds: the rollback has to bring
+# A back, and the failing start must not have overwritten the snapshot with B
+sed -i 's/^TCP_PORTS=.*/TCP_PORTS="9"/' "$CONFFILE"
 : > "$SERVICE_LOG"
 svc replace
 assert_rc 1 "$svc_rc" "a restart that breaks traffic fails"
 assert_contains "$(cat "$SERVICE_LOG")" "passes no traffic" "and says the new configuration passes no traffic"
 assert_contains "$(cat "$SERVICE_LOG")" "restored from working snapshot" "the working snapshot is restored"
+assert_eq "80,443,1984,2053,2083,2087,2096,5222,8443" \
+  "$(grep '^TCP_PORTS=' "$CONFFILE" | head -1 | sed 's/^TCP_PORTS=//; s/"//g')" \
+  "the rollback restores the pre-replace settings, not the ones that just failed"
+assert_eq "0" "$(grep -c 'TCP_PORTS="9"' "$SNAPSHOT_DIR/nfqws2.conf" 2>/dev/null || true)" \
+  "the configuration that passed no traffic never became the working snapshot"
 assert_file "$PIDFILE" "and the service runs on the old configuration"
 assert_file "$CONFDIR/state/last_rollback.json" "the rollback is recorded"
 rm -f "$MOCKBIN/curl" "$MOCK_DIR/curl_calls"

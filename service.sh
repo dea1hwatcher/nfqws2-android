@@ -155,7 +155,13 @@ start() {
     echo 1 > "$DESIRED_FILE"
     log_msg "nfqws2 started (PID $pid, Native Daemon)"
     update_description running
-    save_working_snapshot
+    # During a replace the traffic verdict for this configuration is not known
+    # yet: replace_daemon saves the snapshot only after the gate agrees, so a
+    # configuration that starts but passes no traffic never becomes the "working"
+    # one that a rollback restores.
+    if [ "${SVC_DEFER_SNAPSHOT:-0}" != "1" ]; then
+      save_working_snapshot
+    fi
     ensure_watchdog
     return 0
   }
@@ -233,8 +239,10 @@ replace_daemon() {
     stop >/dev/null 2>&1 || log_msg "replace: stop reported leftover rules — start will rebuild them"
 
     SVC_LOCK_HELD=1
+    SVC_DEFER_SNAPSHOT=1
     start
     start_rc=$?
+    SVC_DEFER_SNAPSHOT=0
     SVC_LOCK_HELD=0
     if [ "$start_rc" -ne 0 ]; then
       # the new configuration cannot come up: put the last working one back so
@@ -258,6 +266,10 @@ replace_daemon() {
         fi
       fi
     fi
+
+    # Past the verdict — good, or with no baseline to judge against — this
+    # configuration is what the phone should fall back to.
+    save_working_snapshot
 
     touch "$STATE_DIR/rollback_armed"
     (
