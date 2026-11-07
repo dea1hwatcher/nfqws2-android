@@ -334,10 +334,18 @@ lint_config() { # <conffile>
           fn = inst; sub(/:.*/, "", fn)
           pdesync++
           hasblob = 0
+          step_pos = ""
+          step_seqovl = ""
+          step_badsum = 0
+          step_badseq = 0
           nk = split(inst, kv, ":")
           for (j = 2; j <= nk; j++) {
             key = kv[j]; sub(/=.*/, "", key)
             val = kv[j]; if (val ~ /=/) sub(/^[^=]*=/, "", val)
+            if (key == "pos") step_pos = val
+            if (key == "seqovl") step_seqovl = val
+            if (key == "badsum") step_badsum = 1
+            if (key == "badseq") step_badseq = 1
             if (key == "fool") {
               if (!(val in funcs)) err(fn, "fool=" val ": такой lua-функции нет — fool это имя функции маскировки, а не вид маскировки")
             } else if (key == "blob") {
@@ -358,6 +366,18 @@ lint_config() { # <conffile>
           }
           if (fn == "tls_client_hello_clone" && hasblob) dyn_blob[blobval] = 1
           if (fn == "fake" && !hasblob) err(fn, "fake без blob: шаг завершается ошибкой на каждом пакете и пакет уходит без изменений")
+          if (fn == "multidisorder" && step_seqovl != "") {
+            if (step_pos ~ /^1(,|$)/ && step_seqovl ~ /^[0-9]+$/ && (step_seqovl + 0) >= 1)
+              warn(fn, "seqovl=" step_seqovl " при первом pos=1: в multidisorder оверлап обязан быть меньше первого сплита (< pos[1]), движок отменит наложение")
+          }
+          if (fn == "fakeddisorder") {
+            if (step_pos == "1")
+              err(fn, "pos=1 в fakeddisorder: деление на позиции 0 запрещено ядром zapret2 (cannot split), шаг будет пропущен")
+            else if (step_pos ~ /,/)
+              warn(fn, "pos=" step_pos " в fakeddisorder: функция ожидает одиночный маркер позиции, а не список через запятую")
+          }
+          if (fn == "multisplit" && (step_badsum || step_badseq))
+            warn(fn, "badsum/badseq на multisplit ломает оригинальные данные TCP: используйте fakedsplit или fake")
           if (nfuncs > 0 && !(fn in funcs)) err(fn, "нет lua-функции «" fn "» среди подключённых через --lua-init")
         }
         if (tok ~ /^--lua-desync=(circular|learn)/) porch = 1
@@ -2486,6 +2506,19 @@ bench_slot_bound() { # <i>
   awk -v q="$q" '$1 == q { found = 1 } END { exit !found }' "$f" 2>/dev/null
 }
 
+bench_slot_seq() { # <i> -> счётчик пакетов очереди слота i (id_sequence)
+  local f=/proc/net/netfilter/nfnetlink_queue q
+  [ -r "$f" ] || return 0
+  q=$(bench_slot_q "$1")
+  awk -v q="$q" '$1 == q { print $8; exit }' "$f" 2>/dev/null
+}
+
+bench_queue_seq() { # [queue_num] -> счётчик пакетов очереди
+  local f=/proc/net/netfilter/nfnetlink_queue q="${1:-$NFQUEUE_NUM}"
+  [ -r "$f" ] || return 0
+  awk -v q="$q" '$1 == q { print $8; exit }' "$f" 2>/dev/null
+}
+
 # Подменить режим на $MODE_ALL целиком. sed здесь не годится: у многострочного
 # NFQWS_EXTRA_ARGS он заменяет первую строку и оставляет хвост со висящей
 # кавычкой — такой nfqws2.conf не читает уже ни один `. "$CONFFILE"`. Чётность
@@ -2709,11 +2742,20 @@ bench_measure_serial() { # <idx> <стратегия> <хосты> <домен> 
   [ "$ready" = "true" ] || return 1
 
   setup_probe_app_rule
+  local sb="" sa=""
+  sb=$(bench_queue_seq "$NFQUEUE_NUM")
   : > "$res"
   if [ -z "$target" ]; then
     bench_screen "$kind" "$bin" "$res" "$idx" || return 0
   fi
   bench_hosts_probe "$kind" "$bin" "$hosts" "$res"
+  sa=$(bench_queue_seq "$NFQUEUE_NUM")
+  if [ -n "$sb" ] && [ -n "$sa" ] && [ "$sa" -le "$sb" ]; then
+    if grep -q '[[:space:]]ok[[:space:]]' "$res" 2>/dev/null; then
+      : > "$res"
+      printf 'all\t1\tfail queue_bypass\n' >> "$res"
+    fi
+  fi
   return 0
 }
 
@@ -2776,9 +2818,14 @@ bench_round_run() { # <хосты> <домен> <вид> <curl> — пробы �
     [ "$C" = "ip6tables" ] && [ "$IPV6_ENABLED" = "0" ] && continue
     bench_jumps "$C"
   done
+  local seq_file="$STATE_DIR/bench_seq_before.$$.tmp"
+  rm -f "$seq_file"
   while IFS="$(printf '\t')" read -r i idx st res; do
     [ -z "$res" ] && continue
     case " $BENCH_ACTIVE " in *" $i "*) ;; *) continue ;; esac
+    local sb
+    sb=$(bench_slot_seq "$i")
+    [ -n "$sb" ] && printf '%s\t%s\n' "$i" "$sb" >> "$seq_file"
     lo=$(bench_slot_lo "$i"); hi=$((lo + BENCH_PORT_WIDTH - 1))
     ( bench_slot_probe "$lo-$hi" "$idx" "$res" "$hosts" "$target" "$kind" "$bin" ) &
     BENCH_WORKERS="$BENCH_WORKERS $!"
@@ -2786,6 +2833,7 @@ bench_round_run() { # <хосты> <домен> <вид> <curl> — пробы �
   wait
   if ! bench_jumps_in_order; then
     # ничего не агрегируем: эти пробы могла мерить живая служба
+    rm -f "$seq_file"
     return 1
   fi
   while IFS="$(printf '\t')" read -r i idx st res; do
@@ -2793,13 +2841,29 @@ bench_round_run() { # <хосты> <домен> <вид> <curl> — пробы �
     case " $BENCH_ACTIVE " in *" $i "*) ;; *) continue ;; esac
     # умерший под пробой экземпляр мерил бы «голый» трафик: результат не годится
     if bench_slot_alive "$i"; then
-      bench_aggregate "$res" "$idx" "$st"
+      local bypass=0
+      if [ -s "$seq_file" ]; then
+        local sb sa
+        sb=$(awk -v slot="$i" '$1 == slot { print $2; exit }' "$seq_file" 2>/dev/null)
+        sa=$(bench_slot_seq "$i")
+        if [ -n "$sb" ] && [ -n "$sa" ] && [ "$sa" -le "$sb" ]; then
+          if grep -q '[[:space:]]ok[[:space:]]' "$res" 2>/dev/null; then
+            bypass=1
+          fi
+        fi
+      fi
+      if [ "$bypass" -eq 1 ]; then
+        bench_failed "$idx" "$st" queue_bypass
+      else
+        bench_aggregate "$res" "$idx" "$st"
+      fi
     else
       bench_failed "$idx" "$st" failed_start
     fi
     rm -f "$res"
     bench_slot_stop "$i"
   done < "$BENCH_ROUND"
+  rm -f "$seq_file"
 }
 
 bench_round_finish() { # <хосты> <домен> <вид> <curl> — раунд с одной пересъёмкой
