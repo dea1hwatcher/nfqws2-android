@@ -299,6 +299,21 @@ assert_no_file "$CONFDIR/state/smart_bench" "smart_bench state is cleaned up"
 kill "$bench_pid" 2>/dev/null
 rm -f "$CONFDIR/state/nfqws2.pid"
 
+section "every Google variant has a name and every name a variant"
+# Zapret-Manager 5.040 (StrYoutube Yv34, Yv35) — варианты 45, 46 слота google
+gv=$(awk '/^SMART_GOOGLE="/{f=1} f{ while (match($0, /strategy=[0-9]+/)) { print substr($0, RSTART + 9, RLENGTH - 9); $0 = substr($0, RSTART + RLENGTH) } } f && /"$/ && !/^SMART_GOOGLE="/{f=0}' "$REPO_DIR/strategies/smart.conf" | sort -un | tr '\n' ' ')
+gn=$(sed -n 's/^#@google \([0-9]*\) .*/\1/p' "$REPO_DIR/strategies/smart.conf" | sort -un | tr '\n' ' ')
+assert_eq "$gv" "$gn" "the variants of the google slot and their names match"
+assert_contains "$(grep '^#@google 4[56] ' "$REPO_DIR/strategies/smart.conf")" "Manager: Yv35" "Yv34 and Yv35 of Zapret-Manager are in"
+assert_contains "$(grep 'strategy=45' "$REPO_DIR/strategies/smart.conf")" "hostfakesplit:host=google.com:tcp_flags_unset=ack:badsum:repeats=3" "Yv34: datanoack is tcp_flags_unset=ack in zapret2"
+# замер 07.11.2026 на МТС: Yv34 — 15 из 15, Yv35 — 3 из 5
+assert_contains "$(grep 'slot=google' "$REPO_DIR/strategies/smart.conf")" ",43-45:" "Yv34 and googlevideo #1, #2 (15 of 15 in the benchmark) are in the base set"
+assert_not_contains "$(grep 'slot=google' "$REPO_DIR/strategies/smart.conf")" "46" "Yv35 (3 of 5) waits in the extended pool"
+assert_eq "" "$(grep -o 'slot=tls[a-z_0-9]*:pass=14:base=[0-9,-]*' "$REPO_DIR/strategies/smart.conf" | grep -v 'base=1,4-6,8,')" "hardcorp74 #1 (95%, the most checks) is in the base set of every TLS slot"
+# eduncey #4: fooling=ts из zapret 1 — порча и фейкового ClientHello, а не только
+# hostfakesplit; без неё фейк доходил до сервера — 16 сбросов из 16
+assert_contains "$(grep 'strategy=35' "$REPO_DIR/strategies/smart.conf" | grep 'fake:blob=tls_clienthello')" "tcp_ts=-600000" "eduncey #4: the fake ClientHello is fooled too"
+
 if [ -x "${NFQWS2_TEST_BIN:-}" ]; then
   section "the orchestrator itself (inside nfqws2)"
   H="$SANDBOX/smarthome"; mkdir -p "$H/state" "$H/smart" "$H/logs"
@@ -306,6 +321,15 @@ if [ -x "${NFQWS2_TEST_BIN:-}" ]; then
     --lua-init=@zapret-auto.lua --lua-init=@zapret-smart.lua "--lua-init=SMART_TEST_HOME='$H'" --lua-init=@"$TESTS_DIR/lua/test_smart.lua" 2>&1)
   assert_contains "$out" "PASS" "tests/lua/test_smart.lua passes"
   printf '%s\n' "$out" | grep -E '^   FAIL' || true
+elif command -v luajit >/dev/null 2>&1; then
+  # без nfqws2 — в обычном LuaJIT: то немногое, что nfqws2 даёт скриптам
+  # (битовые операции, журнал, часы), — в tests/lua/luajit-prelude.lua
+  section "the orchestrator itself (LuaJIT, no nfqws2 binary)"
+  H="$SANDBOX/smarthome"; mkdir -p "$H/state" "$H/smart" "$H/logs"
+  out=$(cd "$REPO_DIR/lua" && luajit -e "dofile('$TESTS_DIR/lua/luajit-prelude.lua')" -e "SMART_TEST_HOME='$H'" \
+    -e "dofile('zapret-lib.lua') dofile('zapret-antidpi.lua') dofile('zapret-auto.lua') dofile('zapret-smart.lua') dofile('$TESTS_DIR/lua/test_smart.lua')" 2>&1)
+  assert_contains "$out" "PASS" "tests/lua/test_smart.lua passes"
+  printf '%s\n' "$out" | grep -E '^   FAIL|^luajit:' || true
 fi
 
 harness_finish

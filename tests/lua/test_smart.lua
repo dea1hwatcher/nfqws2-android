@@ -698,5 +698,69 @@ end
 section("slots are separate")
 check(okconn("b.example", "quic") == 1, "the same site in another slot starts fresh")
 
+section("a variant that just worked on the same servers is tried first by a site that never opened")
+-- SoundCloud на CloudFront: API (graph.soundcloud.com) открывался на варианте,
+-- а картинки и музыка (i1/al.sndcdn.com) на тех же адресах (одна /24) — свой
+-- сайт без единой удачи, и перебор до этого варианта так и не дошёл
+local function ipconn(h, ip) local c = conn(h); c.ip = ip; return c end
+local function ipok(h, ip) local c = ipconn(h, ip); local v = packet(c, { slot = "cdn" }); packet(c, { incoming = true, seq = 18000, slot = "cdn" }); return v end
+local function ipfail(h, ip) local c = ipconn(h, ip); local v = packet(c, { slot = "cdn" }); for i = 1, 3 do packet(c, { retrans = true, slot = "cdn" }) end; return v end
+later(400)
+local api, media = "api-like.example", "media-like.example"
+for _, v in ipairs({ 1, 1, 2, 2 }) do later(); ipfail(api, "18.165.122.6") end
+check(rec(api, "cdn").cur == 3, "the API site found its variant by search: 3")
+later(); check(ipok(api, "18.165.122.48") == 3, "and opens on it")
+later(); check(ipfail(media, "18.165.122.19") == 1, "a new site on the same servers (/24) starts as any new site: the start does not change")
+later(); ipfail(media, "18.165.122.19")
+check(rec(media, "cdn").cur == 3, "but it never opened, and after two errors it goes to the variant that works on its servers (3): " .. rec(media, "cdn").cur)
+-- сайт, что ещё ни разу не открылся, на смене варианта — тоже к нему, а не
+-- к следующему по номеру
+-- в сети лучшие — 1 и 2 (на других серверах они открывают всё), а на
+-- серверах SoundCloud работает только 3
+for k = 1, 40 do
+	local h = "net-" .. k .. ".example"
+	later(1); packet(ipconn(h, "99.0." .. k .. ".1"), { slot = "cdn" }); rec(h, "cdn").cur = (k % 2) + 1
+	ipok(h, "99.0." .. k .. ".1")
+end
+later(); local lead = ipok("fresh.example", "77.7.7.7")
+check(lead == 1 or lead == 2, "1 and 2 are now the best in the network: new sites elsewhere start on them: " .. tostring(lead))
+local img = "img-like.example"
+later(); ipfail(img, "10.1.1.5")
+local imgv = rec(img, "cdn").cur
+check(imgv == 1 or imgv == 2, "a site on other servers starts on the network's best and fails: " .. imgv)
+later(); ipok(api, "10.1.1.9")
+later(); ipfail(img, "10.1.1.5")
+check(rec(img, "cdn").cur == 3, "after its second error it goes to the variant that just worked on its servers (3), not by the network's statistics: " .. rec(img, "cdn").cur)
+-- сайт, что сам уже работал, выбирает по своей истории, как прежде
+local own = "own-like.example"
+later(); ipok(own, "10.2.2.1"); later(); ipok(own, "10.2.2.1")
+local ownv = rec(own, "cdn").cur
+check(ownv == 1 or ownv == 2, "a site that works on its own variant keeps it")
+later(); ipok(api, "10.2.2.7")
+check(rec(own, "cdn").cur == ownv, "a neighbour's success does not move it")
+
+section("hostfakesplit_alt: the parts go in the altorder=1 order of zapret 1")
+-- начало, фейковое имя (с порчей), конец, настоящее имя; порча — только у фейка
+do
+	local sent, keep = {}, { rawsend_payload_segmented, resolve_range, rawsend_opts, rawsend_opts_base, reconstruct_opts,
+		direction_check, payload_check, replay_first, replay_drop_set, direction_cutoff_opposite, genhost }
+	rawsend_payload_segmented = function(d, part, off, opts) sent[#sent + 1] = { part = part, off = off, fool = opts.fooling }; return true end
+	resolve_range = function() return { 5, 9 } end            -- имя — байты 5..9 (с 1)
+	rawsend_opts = function() return {} end; rawsend_opts_base = function() return {} end; reconstruct_opts = function() return {} end
+	direction_check = function() return true end; payload_check = function() return true end
+	replay_first = function() return true end; replay_drop_set = function() end; direction_cutoff_opposite = function() end
+	genhost = function(n, h) return string.rep("f", n) end
+	local data = "AAAAhosthBBBB"                           -- 4 байта, имя «hosth», 4 байта
+	local v = hostfakesplit_alt(nil, { dis = { tcp = {}, payload = data }, arg = { host = "www.google.com", tcp_ts = "-600000" }, l7payload = "tls_client_hello" })
+	local order = {}
+	for _, x in ipairs(sent) do order[#order + 1] = x.part .. "@" .. x.off end
+	check(table.concat(order, " ") == "AAAA@0 fffff@4 BBBB@9 hosth@4", "before, fake host, after, real host: " .. table.concat(order, " "))
+	check(sent[2].fool.tcp_ts == "-600000", "the fake host gets the fooling")
+	check(sent[1].fool.tcp_ts == nil and sent[4].fool.tcp_ts == nil, "the real parts do not")
+	check(v == VERDICT_DROP, "and the original packet is dropped")
+	rawsend_payload_segmented, resolve_range, rawsend_opts, rawsend_opts_base, reconstruct_opts,
+		direction_check, payload_check, replay_first, replay_drop_set, direction_cutoff_opposite, genhost = unpack(keep)
+end
+
 io.write("\n", failed == 0 and "PASS" or "FAIL", "  ", total - failed, " of ", total, " checks passed\n")
 os.exit(failed == 0 and 0 or 1)

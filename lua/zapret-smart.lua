@@ -121,6 +121,16 @@ local MUT_MAX = 32          -- подстроек на набор вариант
 local MUT_DEPTH = 3         -- изменённых параметров в одной подстройке, не больше
 local MUT_EVERY = 30        -- сек: новая подстройка в наборе — не чаще
 local TUNE_GAP = 600        -- сек: подстраивать вариант одного сайта — не чаще
+-- Соседи по серверам: у сервиса на CDN несколько сайтов на одних адресах
+-- (SoundCloud на CloudFront: API — soundcloud.com, картинки и музыка —
+-- sndcdn.com). Вариант, что только что открыл один из них, — следующий, что
+-- пробует сайт, ещё ни разу не открывшийся на этих адресах (та же /24 или
+-- /48): по общей статистике сети перебор до него мог не дойти вовсе
+-- (sndcdn.com перебрал два десятка вариантов, кроме того, что открывал
+-- soundcloud.com). Стартовый вариант нового сайта это не меняет: на одних
+-- /24 у Cloudflare — тысячи чужих сайтов
+local NEAR_TIME = 3600      -- сек: столько помним удачу варианта на адресах
+local NEAR_MAX = 4096       -- адресных блоков на набор вариантов, не больше
 
 -- Общие зоны: сайт в них — на уровень глубже
 local SLD2 = { co = 1, com = 1, net = 1, org = 1, gov = 1, edu = 1, ac = 1, ["or"] = 1, ne = 1, go = 1,
@@ -559,6 +569,7 @@ local function check_net()
 	if SM.net then save() end
 	local prev = SM.net
 	SM.net = net
+	SM.near = {}                 -- и соседи по серверам
 	if load_net(net) then
 		DLOG("smart: network '" .. net .. "': loaded")
 		SJ("network " .. net .. ": learned data loaded")
@@ -658,8 +669,49 @@ local function win_count(r)
 	return e, o
 end
 
+-- блок адресов сервера: IPv4 — /24, IPv6 — /48 (первые три группы)
+local function ip_block(ip)
+	if not ip then return nil end
+	local b4 = ip:match("^(%d+%.%d+%.%d+)%.%d+$")
+	if b4 then return b4 end
+	local g1, g2, g3 = ip:match("^(%x+):(%x+):(%x+):")
+	return g1 and (g1 .. ":" .. g2 .. ":" .. g3) or nil
+end
+local function near_put(slot, ip, v, t)
+	local b = ip_block(ip)
+	if not b then return end
+	SM.near = SM.near or {}
+	local ns = SM.near[slot]
+	if not ns then ns = { n = 0, m = {} }; SM.near[slot] = ns end
+	if not ns.m[b] then
+		ns.n = ns.n + 1
+		if ns.n > NEAR_MAX then
+			ns.n = 0
+			for k, x in pairs(ns.m) do if t - x.t > NEAR_TIME then ns.m[k] = nil else ns.n = ns.n + 1 end end
+			if ns.n >= NEAR_MAX then ns.m, ns.n = {}, 0 end
+			ns.n = ns.n + 1
+		end
+	end
+	ns.m[b] = { v = v, t = t }
+end
+-- вариант, что недавно открыл какой-то сайт на этих адресах (если он ещё в наборе)
+local function near_get(slot, ip, n, t)
+	local b = ip_block(ip)
+	local ns = b and SM.near and SM.near[slot]
+	local x = ns and ns.m[b]
+	if not x or t - x.t > NEAR_TIME then return nil end
+	local base = base_of(slot, x.v)
+	if base > n or not allowed(slot, base) then return nil end
+	if x.v > MUT_BASE and not mutant(slot, x.v) then return nil end
+	return x.v
+end
+
 local function on_ok(slot, r, v, t, c)
 	count(r, slot, "ok", v, 1, t)
+	-- запоминаем только «особый» вариант: не лучший в сети (с лучшего новые
+	-- сайты и так начинают). На одних /24 у Cloudflare — тысячи чужих сайтов,
+	-- и общий вариант сети не должен из-за соседства подменяться чем попало
+	if c and c.ip and v ~= c.pass and c.n and v ~= leader(slot, c.n, c.first or 1, c.pass) then near_put(slot, c.ip, v, t) end
 	r.everok = true
 	if c then c.okt = c.okt or t end
 	if v == r.cur then win_push(r, c, 1); r.cooln[v] = 0 end
@@ -766,6 +818,16 @@ local function on_err(slot, key, r, v, n, t, pass, mid, c)
 			if not bs then SM.mutt[slot] = t end
 			DLOG("smart: " .. key .. ": tuning variant " .. base .. " as " .. nxt .. " (" .. ch_str(SM.mut[slot][nxt].ch) .. ")")
 			SJ(key .. ": " .. vname(slot, v) .. " failing — " .. (bs and "using successful tuning: " or "trying tuning: ") .. vname(slot, nxt))
+		end
+	end
+	-- сайт ни разу не открывался, а на его адресах только что открылся другой
+	-- сайт — сначала его вариант (если этот сайт на нём ещё не ломался)
+	if not nxt and not r.everok then
+		local nv = near_get(slot, c and c.ip, n, t)
+		if nv and nv ~= v and nv ~= pass and (r.err[nv] or 0) < 1 and not ((r.cool[nv] or 0) > t) then
+			nxt = nv
+			SJ(key .. ": " .. vname(slot, v) .. " → " .. vname(slot, nv) .. " — just opened neighbour site on same IP block")
+			tuned = true
 		end
 	end
 	nxt = nxt or next_strategy(slot, r, n, t, pass)
@@ -1053,7 +1115,7 @@ function smart(ctx, desync)
 	if crec and not crec.smart then
 		-- новое соединение идёт на текущем варианте сайта; его итог засчитается
 		-- этому варианту, даже если сайт к тому времени перейдёт на другой
-		crec.smart = { maxin = 0, tin = t, v = r.cur, key = key, slot = slot, n = n, pass = pass, t = t }
+		crec.smart = { maxin = 0, tin = t, v = r.cur, key = key, slot = slot, n = n, pass = pass, t = t, first = tonumber(desync.arg.first) or 1 }
 		-- прежнее соединение к этому сайту замерло на 14–17 КБ и браузер скоро
 		-- открыл новое — это обрыв по объёму. Ответ, который просто уложился в
 		-- эти размеры, так не выглядит: новое соединение сразу после него не нужно
@@ -1280,4 +1342,48 @@ function smartstat(ctx, desync)
 	if st.dirty and t - st.saved >= SAVE_EVERY then stat_save(st, home) end
 	-- решено — экземпляр больше не нужен этому соединению
 	if cs.done and ctx then instance_cutoff_shim(ctx, desync) end
+end
+
+-- ---------------------------------------------------------------- hostfakesplit_alt
+-- hostfakesplit с порядком частей из zapret 1 (--dpi-desync-hostfakesplit-mod=
+-- altorder=1): начало, фейковое имя, конец ClientHello, настоящее имя. В
+-- zapret2 параметра altorder у hostfakesplit нет, и стратегии, переведённые с
+-- zapret 1 (Flowseal ALT13 через eduncey, YouTube из Zapret-Manager), молча
+-- шли обычным порядком — фейк имени без порчи и не туда, куда задумано.
+-- По next_hostfakesplit из zapret2-next (MIT, (c) 2026 Zapret 2 NEXT
+-- contributors), который сам — по hostfakesplit bol-van (zapret2, MIT).
+-- Порча (tcp_ts, badsum…), repeats и ip_id — только у фейка, как у
+-- hostfakesplit; blob и optional — тоже как у него
+function hostfakesplit_alt(ctx, desync)
+	if not desync.dis.tcp then
+		if not desync.dis.icmp then instance_cutoff_shim(ctx, desync) end
+		return
+	end
+	direction_cutoff_opposite(ctx, desync)
+	if desync.arg.optional and desync.arg.blob and not blob_exist(desync, desync.arg.blob) then
+		DLOG("hostfakesplit_alt: blob '" .. desync.arg.blob .. "' not found. skipped")
+		return
+	end
+	local data = blob_or_def(desync, desync.arg.blob) or desync.reasm_data or desync.dis.payload
+	if #data > 0 and direction_check(desync) and payload_check(desync) then
+		if replay_first(desync) then
+			local pos = resolve_range(data, desync.l7payload, "host,endhost-1", true)
+			if pos then
+				DLOG("hostfakesplit_alt: host range " .. (pos[1] - 1) .. "-" .. (pos[2] - 1))
+				local orig = { rawsend = rawsend_opts_base(desync), reconstruct = {}, ipfrag = {},
+					ipid = desync.arg, fooling = { tcp_ts_up = desync.arg.tcp_ts_up } }
+				local fake = { rawsend = rawsend_opts(desync), reconstruct = reconstruct_opts(desync), ipfrag = {},
+					ipid = desync.arg, fooling = desync.arg }
+				if not rawsend_payload_segmented(desync, string.sub(data, 1, pos[1] - 1), 0, orig) then return VERDICT_PASS end
+				if not rawsend_payload_segmented(desync, genhost(pos[2] - pos[1] + 1, desync.arg.host), pos[1] - 1, fake) then return VERDICT_PASS end
+				if not rawsend_payload_segmented(desync, string.sub(data, pos[2] + 1), pos[2], orig) then return VERDICT_PASS end
+				if not rawsend_payload_segmented(desync, string.sub(data, pos[1], pos[2]), pos[1] - 1, orig) then return VERDICT_PASS end
+				replay_drop_set(desync)
+				return desync.arg.nodrop and VERDICT_PASS or VERDICT_DROP
+			end
+		end
+		if replay_drop(desync) then
+			return desync.arg.nodrop and VERDICT_PASS or VERDICT_DROP
+		end
+	end
 end
