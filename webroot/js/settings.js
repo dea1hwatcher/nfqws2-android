@@ -270,7 +270,7 @@ function applyRestoredUi(raw){
       const ui = JSON.parse(unb64(line));
       UI_KEYS.forEach(k => { if(ui[k] != null) store.set(k, String(ui[k])); });
       LANG = store.get('nfq_lang') === 'en' ? 'en' : 'ru';
-      devMode = store.get('nfq_dev') === '1';
+      devMode = store.get('nfq_dev') !== '0';
       currentMode = store.get('m3_mode') || 'auto';
       const sd = (store.get('m3_seed') || '').toLowerCase();
       if(/^#[0-9a-f]{6}$/.test(sd)) currentSeed = sd;

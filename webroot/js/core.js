@@ -893,7 +893,7 @@ document.querySelectorAll('.nav-dest').forEach(b => onLongPress(b, null, () => {
   if(f) openMenu(b, f(), {scrim: true});
 }));
 
-let devMode = store.get('nfq_dev') === '1';
+let devMode = store.get('nfq_dev') !== '0';
 function toggleDevMode(){
   devMode = !devMode;
   store.set('nfq_dev', devMode ? '1' : '0');
