@@ -436,7 +436,7 @@ assert_rc 0 "$ctl_rc" "doctor runs to completion"
 assert_match "$ctl_out" "^(ok|warn|fail|info)	" "doctor emits tab-separated severity rows"
 assert_contains "$ctl_out" "NFQUEUE" "doctor checks the NFQUEUE target"
 assert_contains "$ctl_out" "limiter" "doctor reports the limiter in use"
-assert_contains "$ctl_out" "ОЗУ" "doctor reports memory consumption"
+assert_contains "$ctl_out" "RAM" "doctor reports memory consumption"
 assert_contains "$ctl_out" "$(printf 'info\tnat_fix\t')" "NAT counters are diagnostic, not proof of traffic handling"
 
 MOCK_IPT_NAT_LIST_FILE="$SANDBOX/nat-counters.txt"

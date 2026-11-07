@@ -403,16 +403,16 @@ cmd_doctor() {
   fmt_kb() {
     local k="$1"
     if [ "$k" -ge 1024 ] 2>/dev/null; then
-      printf '%d.%d %s' "$((k / 1024))" "$(( (k % 1024) * 10 / 1024 ))" "$(M МБ MB)"
+      printf '%d.%d MB' "$((k / 1024))" "$(( (k % 1024) * 10 / 1024 ))"
     else
-      printf '%d %s' "$k" "$(M КБ KB)"
+      printf '%d KB' "$k"
     fi
   }
   local arch
   [ "$(id -u)" = "0" ] && row ok root "uid 0" || row fail root "$(M 'нужен root' 'root required')"
   arch=$(getprop ro.product.cpu.abi 2>/dev/null)
   row ok abi "$arch, $(M ядро kernel) $(uname -r)"
-  [ -x "$NFQWS_BIN" ] && row ok nfqws2 "$(ls -l "$NFQWS_BIN" | awk '{print $5}') $(M байт bytes)" \
+  [ -x "$NFQWS_BIN" ] && row ok nfqws2 "$(ls -l "$NFQWS_BIN" | awk '{print $5}') bytes" \
     || row fail nfqws2 "$(M 'бинарник не найден или не исполняемый' 'binary is missing or not executable')"
   if [ -x "$NFQWS_BIN" ]; then
     local _dry_err
@@ -551,31 +551,31 @@ cmd_doctor() {
         [ -n "$_res_pages" ] && _rss=$(( _res_pages * 4 ))
       fi
       if [ -n "$_rss" ] && [ "$_rss" -ge 0 ] 2>/dev/null; then
-        _ram_text="$(fmt_kb "$_rss") (VmRSS: ${_rss} $(M КБ KB))"
+        _ram_text="$(fmt_kb "$_rss") (VmRSS: ${_rss} KB)"
         if [ -n "$_hwm" ] && [ "$_hwm" -gt "$_rss" ] 2>/dev/null; then
-          _ram_text="$_ram_text, $(M пик peak) $(fmt_kb "$_hwm")"
+          _ram_text="$_ram_text, peak $(fmt_kb "$_hwm")"
         fi
-        row ok "$(M 'ОЗУ' 'RAM')" "$_ram_text"
+        row ok RAM "$_ram_text"
       else
-        row info "$(M 'ОЗУ' 'RAM')" "$(M 'не удалось определить' 'could not determine')"
+        row info RAM "$(M 'не удалось определить' 'could not determine')"
       fi
     else
-      row info "$(M 'ОЗУ' 'RAM')" "$(M 'процесс недоступен в /proc' 'process unavailable in /proc')"
+      row info RAM "$(M 'процесс недоступен в /proc' 'process unavailable in /proc')"
     fi
     _cg=$(cat "/proc/$_pid/cgroup" 2>/dev/null | tr '\n' ' ')
     row info cgroup "${_cg:-$(M недоступно unavailable)}"
   elif [ "$(cat "$HOME_PAUSED_FILE" 2>/dev/null)" = "@vpn" ]; then
     row info process "$(M "пауза: активен VPN" "paused: VPN active")"
-    row info "$(M 'ОЗУ' 'RAM')" "$(M 'пауза' 'paused')"
+    row info RAM "$(M 'пауза' 'paused')"
   elif [ "$(cat "$HOME_PAUSED_FILE" 2>/dev/null)" = "@wl" ]; then
     row info process "$(M 'пауза: у оператора белые списки' 'paused: the operator turned on white lists')"
-    row info "$(M 'ОЗУ' 'RAM')" "$(M 'пауза' 'paused')"
+    row info RAM "$(M 'пауза' 'paused')"
   elif [ -f "$HOME_PAUSED_FILE" ]; then
     row info process "$(M "пауза: домашняя Wi-Fi «$(cat "$HOME_PAUSED_FILE")»" "paused: home Wi-Fi “$(cat "$HOME_PAUSED_FILE")”")"
-    row info "$(M 'ОЗУ' 'RAM')" "$(M 'пауза' 'paused')"
+    row info RAM "$(M 'пауза' 'paused')"
   else
     row info process "$(M 'не запущен' 'not running')"
-    row info "$(M 'ОЗУ' 'RAM')" "$(M 'не запущен' 'not running')"
+    row info RAM "$(M 'не запущен' 'not running')"
   fi
   if grep -q "nfqws2-android" /sys/power/wake_lock 2>/dev/null; then
     row ok wakelock "$(M удерживается held)"

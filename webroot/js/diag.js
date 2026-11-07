@@ -3,20 +3,10 @@
 let diagRam = '';
 let argsRaw = '';
 
-function formatRamEn(str){
-  if(!str) return '';
-  return str
-    .replace(/МБ/gi, 'MB')
-    .replace(/КБ/gi, 'KB')
-    .replace(/пик/gi, 'peak')
-    .replace(/байт/gi, 'bytes');
-}
-
 function renderArgs(){
   if(!$('args')) return;
-  const ramEn = formatRamEn(diagRam);
   const header = (S && S.running && S.pid)
-    ? 'PID ' + S.pid + (ramEn ? ' · RAM: ' + ramEn : '') + '\n\n'
+    ? 'PID ' + S.pid + (diagRam ? ' · RAM: ' + diagRam : '') + '\n\n'
     : '';
   $('args').textContent = header + (argsRaw || t('Служба ещё не запускалась'));
 }
