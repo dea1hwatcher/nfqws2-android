@@ -623,6 +623,9 @@ exit 0
 EOF
 chmod 0755 "$MOCKBIN/ip"
 MOCK_OPERATOR=25001; MOCK_OPERATOR_NAME=MTS; NW_RECHECK="1 2 4"; export MOCK_OPERATOR MOCK_OPERATOR_NAME NW_RECHECK
+for _p in "$WD_PIDFILE" "$WN_PIDFILE" "$WL_PIDFILE" "$SK_PIDFILE"; do
+  if [ -f "$_p" ]; then kill "$(cat "$_p" 2>/dev/null)" 2>/dev/null; rm -f "$_p"; fi
+done
 rm -f "$STATE_DIR/smart_net" "$STATE_DIR/smart_net_last" "$CONFDIR/smart/nets.tsv"
 svc stop >/dev/null 2>&1
 printf 'WATCHDOG=1\n' >> "$CONFFILE"

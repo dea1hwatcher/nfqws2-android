@@ -383,8 +383,7 @@ reload_lists() {
 }
 
 # Start a helper unless it already runs. Returns 0 when it was just started,
-# 1 when it is running or the precondition failed. ensure_watchdog uses this
-# to raise netwatch only alongside the watchdog
+# 1 when it is running or the precondition failed.
 ensure_helper() {
   local pf="$1" sub="$2"; shift 2
   # bare "$@" is a no-op with no args in dash, but be explicit about it
@@ -409,7 +408,7 @@ ensure_watchdog() {
   is_running && ensure_helper "$SK_PIDFILE" smartkill smart_active
   ensure_helper "$WL_PIDFILE" wlwatch wl_wanted
   watchers_wanted || return 0
-  ensure_helper "$WD_PIDFILE" watchdog || return 0
+  ensure_helper "$WD_PIDFILE" watchdog
   ensure_netwatch
 }
 
