@@ -465,8 +465,7 @@ const VIEWPORTS = [
     truthy(swatch.clicked && /^#[0-9a-f]{6}$/.test(swatch.after) && swatch.after !== swatch.before,
       'a palette swatch reaches applyMonet() and changes the seed');
 
-    const containerToggle = await page.evaluate(async () => {
-      const wait = () => new Promise(r => setTimeout(r, 60));
+    const containerStyle = await page.evaluate(async () => {
       const getRadii = el => {
         const parts = getComputedStyle(el).borderRadius.split(/\s+/).map(v => parseFloat(v));
         if (parts.length === 1) return [parts[0], parts[0], parts[0], parts[0]];
@@ -474,20 +473,11 @@ const VIEWPORTS = [
         if (parts.length === 3) return [parts[0], parts[1], parts[2], parts[1]];
         return parts;
       };
-      openMonetModal(); await wait();
-      const toggle = document.querySelector('#containers-toggle');
-      if (!toggle) return { found: false };
-      toggle.click(); await wait();
       const row = document.querySelector('#sws .list-item');
-      const offRadius = getRadii(row);
-      toggle.click(); await wait();
-      const onRadius = getRadii(row);
-      closeSheet();
-      return { found: true, offRadius, onRadius };
+      return { onRadius: row ? getRadii(row) : null };
     });
-    truthy(containerToggle.found, 'containers toggle is present in theme sheet');
-    eq('8,8,8,8', containerToggle.offRadius.join(','), 'disabling containers flattens list items to 8dp');
-    eq('16,16,4,4', containerToggle.onRadius.join(','), 're-enabling containers restores stacked corners');
+    truthy(containerStyle.onRadius, 'list item found in #sws');
+    eq('16,16,4,4', containerStyle.onRadius.join(','), 'containers stacked corners are active by default');
 
     await ctx.close();
   }

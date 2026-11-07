@@ -117,9 +117,6 @@ function isDark(){
 function isAnimationsDisabled(){
   return store.get('m3_no_animations') === 'true' || store.get('m3_animations') === 'false';
 }
-function isNavCapsule(){
-  return store.get('m3_nav_capsule') === 'true';
-}
 function isMonochrome(){
   return store.get('m3_monochrome') === 'true' || currentSeed === '#757575';
 }
@@ -281,7 +278,6 @@ const ROLE_VAR = {
 function applyTheme(skipUI){
   const dark = isDark();
   const amoled = store.get('m3_amoled') === 'true' && dark;
-  const containers = store.get('m3_containers') !== 'false';
   const monochrome = isMonochrome();
   const R = roles(currentSeed, dark, amoled, monochrome);
   // A <style> block, not inline: an inline style cannot be overridden from CSS
@@ -291,12 +287,10 @@ function applyTheme(skipUI){
   $('theme-vars').textContent = css;
   document.documentElement.setAttribute('data-mode', dark ? 'dark' : 'light');
   document.documentElement.setAttribute('data-amoled', amoled ? 'true' : 'false');
-  document.documentElement.setAttribute('data-containers', containers ? 'true' : 'false');
+  document.documentElement.setAttribute('data-containers', 'true');
   document.documentElement.setAttribute('data-monochrome', monochrome ? 'true' : 'false');
   const noAnim = isAnimationsDisabled();
   document.documentElement.setAttribute('data-animations', noAnim ? 'false' : 'true');
-  const capsule = isNavCapsule();
-  document.documentElement.setAttribute('data-nav-capsule', capsule ? 'true' : 'false');
   const meta = document.querySelector('meta[name="theme-color"]');
   if(meta) meta.setAttribute('content', R.background);
   if(!skipUI) drawThemeUI();
@@ -323,7 +317,6 @@ function drawThemeUI(){
   $('amoled-toggle').checked = store.get('m3_amoled') === 'true';
   $('amoled-toggle').disabled = !dark;
   if($('monochrome-toggle')) $('monochrome-toggle').checked = mono;
-  if($('containers-toggle')) $('containers-toggle').checked = store.get('m3_containers') !== 'false';
   syncPicker(true);
 }
 /* fromSeed=false when the seed came off the wheel: the reverse conversion rounds and jitters the thumb */
@@ -411,17 +404,9 @@ function toggleAmoled(on){
   store.set('m3_amoled', on ? 'true' : 'false');
   applyTheme();
 }
-function toggleContainers(on){
-  store.set('m3_containers', on ? 'true' : 'false');
-  applyTheme();
-}
 function toggleAnimations(disabled){
   store.set('m3_no_animations', disabled ? 'true' : 'false');
   store.set('m3_animations', disabled ? 'false' : 'true');
-  applyTheme();
-}
-function toggleNavCapsule(on){
-  store.set('m3_nav_capsule', on ? 'true' : 'false');
   applyTheme();
 }
 function onHexInput(val){
@@ -441,7 +426,7 @@ function onHexInput(val){
   syncPicker(true);
 }
 function resetTheme(){
-  ['m3_seed', 'm3_mode', 'm3_amoled', 'm3_containers', 'm3_monochrome', 'm3_last_color_seed', 'm3_no_animations', 'm3_animations', 'm3_nav_capsule'].forEach(k => store.del(k));
+  ['m3_seed', 'm3_mode', 'm3_amoled', 'm3_monochrome', 'm3_last_color_seed', 'm3_no_animations', 'm3_animations'].forEach(k => store.del(k));
   currentMode = 'auto';
   currentSeed = systemSeed();
   applyTheme();

@@ -298,8 +298,6 @@ truthy(/\.sheet-title\s*\{[^}]*font-weight:\s*var\(--w-regular\)/s.test(styleBlo
   'sheet-title uses regular weight conforming to M3 guidelines');
 const settingsJs = fs.readFileSync(path.join(REPO, 'webroot', 'js', 'settings.js'), 'utf8');
 truthy(settingsJs.includes('animations-toggle'), 'settings.js contains animations-toggle');
-truthy(settingsJs.includes('capsule-toggle-settings'), 'settings.js contains capsule-toggle-settings');
-truthy(/html\[data-nav-capsule="true"\]\s+\.nav-bar/.test(styleBlock), 'CSS contains rules for html[data-nav-capsule="true"] .nav-bar');
 
 // ── list deduplicator ────────────────────────────────────────────────────────
 sect('list deduplicator');

@@ -1,5 +1,5 @@
 /* nfqws2 WebUI - settings, home Wi-Fi, backup */
-// Template switch element ids: id="sw-net-strat" id="sw-vpn-pause" id="capsule-toggle-settings" id="animations-toggle"
+// Template switch element ids: id="sw-net-strat" id="sw-vpn-pause" id="animations-toggle"
 
 function settingsRow(o){
   if(o.sw){
@@ -42,7 +42,6 @@ function renderSettings(force){
     ]],
     ['Оформление', [
       {icon: 'palette', title: 'Тема оформления', on: 'openMonetModal()'},
-      {icon: 'tune', title: 'Капсула навигации', sw: true, checked: isNavCapsule(), id: 'capsule-toggle-settings', on: 'toggleNavCapsule(this.checked)'},
       {icon: 'motion', title: 'Отключение анимаций', sw: true, checked: isAnimationsDisabled(), id: 'animations-toggle', on: 'toggleAnimations(this.checked)'},
       {icon: 'apps', title: 'Ярлык на рабочий стол', on: 'addDesktopShortcut()'},
       {icon: 'translate', title: 'Язык', value: LANG === 'en' ? 'English' : 'Русский', on: 'pickLanguage(this)', menu: true, long: 'lang'}
@@ -55,7 +54,6 @@ function renderSettings(force){
   if(!force && body && $('sw-net-strat') && $('sw-vpn-pause')){
     const ns = $('sw-net-strat'); if(ns) ns.checked = (S.net_strategy == 1);
     const vp = $('sw-vpn-pause'); if(vp) vp.checked = (S.vpn_pause == 1);
-    const cs = $('capsule-toggle-settings'); if(cs) cs.checked = isNavCapsule();
     const as = $('animations-toggle'); if(as) as.checked = isAnimationsDisabled();
     return;
   }
@@ -227,7 +225,7 @@ async function setHomeWifi(on){
 }
 
 /* Backup */
-const UI_KEYS = ['m3_seed', 'm3_mode', 'm3_amoled', 'm3_containers', 'm3_monochrome', 'm3_nav_capsule', 'm3_no_animations', 'm3_animations', 'nfq_lang', 'nfq_dev'];
+const UI_KEYS = ['m3_seed', 'm3_mode', 'm3_amoled', 'm3_monochrome', 'm3_no_animations', 'm3_animations', 'nfq_lang', 'nfq_dev'];
 async function createBackup(){
   const targetDir = await promptSaveDir('Сохранить копию');
   if(!targetDir) return;

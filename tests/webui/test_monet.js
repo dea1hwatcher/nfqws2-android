@@ -48,7 +48,6 @@ const dom = {
   docEl: { attrs: {}, setAttribute(k, v) { this.attrs[k] = v; }, getPropertyValue() { return ''; } },
   amoledToggle: { checked: false, disabled: false },
   monochromeToggle: { checked: false, disabled: false },
-  containersToggle: { checked: true, disabled: false },
   animationsToggle: { checked: false, disabled: false },
   storage: {},
   shMockOutput: '',
@@ -83,7 +82,6 @@ const sandbox = {
     if (id === 'theme-vars') return dom.themeVars;
     if (id === 'amoled-toggle') return dom.amoledToggle;
     if (id === 'monochrome-toggle') return dom.monochromeToggle;
-    if (id === 'containers-toggle') return dom.containersToggle;
     if (id === 'animations-toggle' || id === 'settings-anim-toggle') return dom.animationsToggle;
     const mockEl = {
       checked: false, style: {}, setAttribute: () => {}, value: '',
@@ -252,13 +250,8 @@ sect('android monet detection');
   truthy(dom.themeVars.textContent.includes('--md-sys-color-primary:'), 'theme-vars receives primary color role');
   truthy(dom.themeVars.textContent.includes('--md-sys-color-surface-container-low:'), 'theme-vars receives surfaceContainerLow role');
 
-  // Test container toggle
-  eq('true', dom.docEl.attrs['data-containers'], 'containers are enabled by default');
-  sandbox.toggleContainers(false);
-  eq('false', dom.docEl.attrs['data-containers'], 'toggleContainers(false) sets data-containers="false"');
-  eq('false', dom.storage['m3_containers'], 'toggleContainers(false) stores setting');
-  sandbox.toggleContainers(true);
-  eq('true', dom.docEl.attrs['data-containers'], 'toggleContainers(true) sets data-containers="true"');
+  // Containers are permanently enabled
+  eq('true', dom.docEl.attrs['data-containers'], 'containers are permanently enabled');
 
   // ── 5. Monochrome theme toggle and preset ─────────────────────────────────
   sect('monochrome theme toggle & preset');
@@ -309,24 +302,7 @@ sect('android monet detection');
   eq('false', dom.storage['m3_no_animations'], 'toggleAnimations(false) stores m3_no_animations="false"');
   truthy(!sandbox.isAnimationsDisabled(), 'isAnimationsDisabled() is false after re-enabling');
 
-  // ── 7. Navigation capsule toggle ──────────────────────────────────────────
-  sect('navigation capsule toggle');
-  truthy(typeof sandbox.toggleNavCapsule === 'function', 'toggleNavCapsule is defined');
-  truthy(typeof sandbox.isNavCapsule === 'function', 'isNavCapsule is defined');
-  truthy(!sandbox.isNavCapsule(), 'navigation capsule disabled by default');
-  eq('false', dom.docEl.attrs['data-nav-capsule'], 'data-nav-capsule="false" by default');
 
-  // Test toggleNavCapsule(true)
-  sandbox.toggleNavCapsule(true);
-  eq('true', dom.docEl.attrs['data-nav-capsule'], 'toggleNavCapsule(true) sets data-nav-capsule="true"');
-  eq('true', dom.storage['m3_nav_capsule'], 'toggleNavCapsule(true) stores m3_nav_capsule="true"');
-  truthy(sandbox.isNavCapsule(), 'isNavCapsule() is true after enabling');
-
-  // Test toggleNavCapsule(false)
-  sandbox.toggleNavCapsule(false);
-  eq('false', dom.docEl.attrs['data-nav-capsule'], 'toggleNavCapsule(false) sets data-nav-capsule="false"');
-  eq('false', dom.storage['m3_nav_capsule'], 'toggleNavCapsule(false) stores m3_nav_capsule="false"');
-  truthy(!sandbox.isNavCapsule(), 'isNavCapsule() is false after re-disabling');
 
   // Summary
   process.stdout.write('\n----------------------------------------\n');

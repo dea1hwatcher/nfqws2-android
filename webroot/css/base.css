@@ -307,54 +307,6 @@ body.nav-hidden .nav-bar {
 }
 .nav-dest[aria-current="page"] .nav-label { color: var(--md-sys-color-on-surface); font-weight: var(--w-bold); }
 
-/* ── Navigation bar: плавающая капсула (MD3E Expressive) ────────────────── */
-html[data-nav-capsule="true"] {
-  --navbar-height: calc(var(--navbar-pill) + var(--navbar-gap));
-}
-html[data-nav-capsule="true"] .nav-bar {
-  left: 0; right: 0; bottom: calc(var(--bottom-inset) + var(--navbar-gap));
-  margin: 0 auto;
-  width: max-content; max-width: calc(100% - 2 * var(--screen-margin));
-  height: var(--navbar-pill); padding: 4px 6px;
-  border-radius: var(--shape-full);
-  background: var(--md-sys-color-surface-container-high);
-  border: none;
-  box-shadow: 0 3px 8px -1px rgba(0, 0, 0, .16), 0 8px 24px -2px rgba(0, 0, 0, .14);
-}
-html[data-nav-capsule="true"][data-amoled="true"] .nav-bar {
-  background: var(--md-sys-color-surface-container);
-  border: none;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, .6);
-}
-html[data-nav-capsule="true"] body.nav-hidden .nav-bar {
-  transform: translateY(calc(100% + var(--bottom-inset) + var(--navbar-gap) + 12px));
-}
-html[data-nav-capsule="true"] .nav-bar-inner {
-  width: auto; min-width: 0;
-  gap: 2px;
-  align-items: center;
-}
-html[data-nav-capsule="true"] .nav-dest {
-  flex: 0 1 72px; width: 72px; min-width: 0;
-  height: 100%;
-  justify-content: center; gap: 2px;
-  padding: 2px 0;
-  border-radius: var(--shape-full);
-}
-html[data-nav-capsule="true"] .nav-ind {
-  width: 56px; height: 32px;
-}
-html[data-nav-capsule="true"] .nav-label {
-  font-size: var(--ts-label-small); line-height: var(--lh-label-small);
-  letter-spacing: .1px;
-}
-html[data-nav-capsule="true"] .nav-dest:active .nav-ind {
-  transform: scale(0.92);
-}
-html[data-nav-capsule="true"] .nav-dest[aria-current="page"]:active .nav-ind {
-  transform: scale(0.95);
-}
-
 /* Content and pages */
 .content {
   position: relative;
