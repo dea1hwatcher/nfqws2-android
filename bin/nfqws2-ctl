@@ -2301,6 +2301,8 @@ BENCH_WORKERS=""
 BENCH_STATS=""
 BENCH_ROUND=""
 BENCH_TOTAL=0
+BENCH_VERIFIED=""
+BENCH_VERIFY_MAX=3
 BENCH_PARALLEL_TRIED=0
 
 bench_slot_q() { printf '%s' "$((NFQUEUE_NUM + 1 + $1))"; }
@@ -2351,10 +2353,13 @@ bench_ports_free() { # <lo> <hi> -> 0, если в диапазоне нет н�
 }
 
 bench_port_base() { # <слотов> -> первый порт диапазона слотов
-  local need=$(( $1 * BENCH_PORT_WIDTH )) lo hi cand r
+  local need=$(( $1 * BENCH_PORT_WIDTH )) rng lo hi cand r
   r="${PROC_SYS_ROOT:-/proc/sys}/net/ipv4/ip_local_port_range"
-  lo=""; hi=""
-  [ -r "$r" ] && read -r lo hi < "$r" 2>/dev/null
+  # Не builtin read: /proc/sys отдаёт содержимое одним чтением, а mksh (Android's
+  # /system/bin/sh) читает посимвольно — вторая порция с того же дескриптора уже
+  # EOF, и диапазон схлопнулся бы в «3». sysctl_apply обходит то же через tr.
+  rng=$(awk 'NR == 1 { print $1 " " $2; exit }' "$r" 2>/dev/null)
+  lo="${rng% *}"; hi="${rng#* }"
   case "$lo" in ''|*[!0-9]*) lo=32768 ;; esac
   case "$hi" in ''|*[!0-9]*) hi=60999 ;; esac
   for cand in $((hi + 1)) $((lo - need)); do
@@ -2660,14 +2665,18 @@ bench_aggregate() { # <res> <idx> <стратегия> — печатает BENC
 }
 
 # Последняя строка на idx побеждает: перепроверка победителя заменяет его
-# параллельный результат, а не добавляется к нему.
+# параллельный результат, а не добавляется к нему. Когда BENCH_VERIFIED задан,
+# выбор делается только среди перепроверенных: сравнение цифры заезда с
+# одиночной цифрой систематически нечестно к первой.
 bench_best_line() { # -> idx<TAB>имя<TAB>ok<TAB>всего<TAB>среднее<TAB>yt<TAB>dc
   if [ ! -s "$BENCH_STATS" ]; then
     printf '%s\t%s\t0\t0\t0\t%s\t%s\n' - - - -
     return 0
   fi
-  awk -F'\t' '
-    { i = $1
+  awk -F'\t' -v only="$BENCH_VERIFIED" '
+    BEGIN { if (only != "") { m = split(only, keep, " "); for (j = 1; j <= m; j++) want[keep[j]] = 1 } }
+    { if (only != "" && !($1 in want)) next
+      i = $1
       if (!(i in seen)) { seen[i] = 1; order[++n] = i }
       name[i] = $2; ok[i] = $3 + 0; tot[i] = $4 + 0; avg[i] = $5 + 0
       yt[i] = $7 + 0; yta[i] = $9 + 0; dc[i] = $8 + 0; dca[i] = $10 + 0 }
@@ -2691,6 +2700,31 @@ bench_best_read() { # заполняет b_idx b_name b_ok b_total b_avg b_yt b_
   IFS="$(printf '\t')" read -r b_idx b_name b_ok b_total b_avg b_yt b_dc <<EOF
 $(bench_best_line)
 EOF
+}
+
+# Лидеры заезда: только те, у кого хоть что-то открылось, по ok, при равенстве —
+# по времени. Именно они и перепроверяются поодиночке.
+bench_top_indices() { # <сколько> -> idx через пробел
+  local k="${1:-3}"
+  [ -s "$BENCH_STATS" ] || return 0
+  awk -F'\t' -v k="$k" '
+    { i = $1
+      if (!(i in seen)) { seen[i] = 1; order[++n] = i }
+      ok[i] = $3 + 0; avg[i] = $5 + 0 }
+    END {
+      for (t = 1; t <= k; t++) {
+        bi = ""; bo = 0; ba = 0
+        for (j = 1; j <= n; j++) {
+          i = order[j]
+          if ((i in taken) || ok[i] <= 0) continue
+          if (bi == "" || ok[i] > bo || (ok[i] == bo && avg[i] < ba)) { bi = i; bo = ok[i]; ba = avg[i] }
+        }
+        if (bi == "") break
+        taken[bi] = 1
+        printf "%s ", bi
+      }
+      printf "\n"
+    }' "$BENCH_STATS"
 }
 
 bench_measure_serial() { # <idx> <стратегия> <хосты> <домен> <вид> <curl> <res> — через перезапуск службы
@@ -2903,17 +2937,26 @@ cmd_bench_strategies() {
 
   local b_idx b_name b_ok b_total b_avg b_yt b_dc
   bench_best_read
-  # Победитель параллельного заезда перепроверяется в одиночку, через службу:
-  # четыре экземпляра делят CPU, и цифры заезда могли быть не про стратегию.
+  # Цифры заезда сравнимы только между собой: в раунде несколько экземпляров
+  # делят CPU, а ограничитель пакетов на соединение к пробе не применяется — на
+  # телефоне стратегия с 3/3 в заезде показала 2/3 в одиночку. Поэтому лидеры
+  # перепроверяются по одному через службу, а итог выбирается по перепроверенным
+  # цифрам, а не по смешанным.
   if [ "$nslots" -gt 0 ] && [ "$b_idx" != "-" ]; then
-    printf 'BENCH_VERIFY\t%s\t%s\n' "$b_idx" "$b_name"
-    local vres="$STATE_DIR/bench_res.verify.$$.tmp"
-    if bench_measure_serial "$b_idx" "$b_name" "$bench_hosts_file" "$target_domain" "$kind" "$bin" "$vres"; then
-      bench_aggregate "$vres" "$b_idx" "$b_name"
-    else
-      bench_failed "$b_idx" "$b_name" failed_start
-    fi
-    rm -f "$vres"
+    local vi vname vres
+    BENCH_VERIFIED=""
+    for vi in $(bench_top_indices "$BENCH_VERIFY_MAX"); do
+      vname=$(awk -F'\t' -v i="$vi" '$1 == i { print $2; exit }' "$BENCH_STATS")
+      printf 'BENCH_VERIFY\t%s\t%s\n' "$vi" "$vname"
+      vres="$STATE_DIR/bench_res.verify.$$.tmp"
+      if bench_measure_serial "$vi" "$vname" "$bench_hosts_file" "$target_domain" "$kind" "$bin" "$vres"; then
+        bench_aggregate "$vres" "$vi" "$vname"
+      else
+        bench_failed "$vi" "$vname" failed_start
+      fi
+      rm -f "$vres"
+      BENCH_VERIFIED="$BENCH_VERIFIED $vi"
+    done
   fi
   bench_best_read
 

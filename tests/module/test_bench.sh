@@ -141,9 +141,13 @@ assert_eq "2" "$(bench_slot_count 400000)" "400 MB free: two slots after the 256
 assert_eq "4" "$(bench_slot_count 4000000)" "plenty of memory is capped at four"
 
 mkdir -p "$MOCK_DIR/sys/net/ipv4" "$MOCK_DIR/net"
-printf '32768 60999\n' > "$MOCK_DIR/sys/net/ipv4/ip_local_port_range"
+# таб, как в настоящем /proc/sys, а не пробел
+printf '32768\t60999\n' > "$MOCK_DIR/sys/net/ipv4/ip_local_port_range"
 PROC_SYS_ROOT="$MOCK_DIR/sys"; PROC_NET_ROOT="$MOCK_DIR/net"
 assert_eq "61000" "$(bench_port_base 2)" "the range starts above the kernel's ephemeral ports"
+printf '37000\t50000\n' > "$MOCK_DIR/sys/net/ipv4/ip_local_port_range"
+assert_eq "50001" "$(bench_port_base 4)" "a narrow Android range yields a base just above it"
+printf '32768\t60999\n' > "$MOCK_DIR/sys/net/ipv4/ip_local_port_range"
 
 # a socket inside the candidate range: 61000 = 0xEE48. The port field is hex and
 # busybox awk has no strtonum, so this is also a test of the conversion itself.
@@ -195,6 +199,25 @@ NFQWS_EXTRA_ARGS="$MODE_ALL"
 B=2'
 assert_eq "$expected_one" "$(cat "$SANDBOX/one.out")" "a single-line value is replaced in place"
 
+# ── как выбираются перепроверяемые ────────────────────────────────────────────
+section "bench: leaders to re-verify and the final choice among them"
+
+BENCH_STATS="$SANDBOX/stats.unit.tmp"
+printf '5\tr1\t3\t3\t1200\t-\t0\t0\t99999\t99999\n6\tr2\t3\t3\t1300\t-\t0\t0\t99999\t99999\n7\tr3\t3\t3\t1400\t-\t0\t0\t99999\t99999\n8\tr4\t3\t3\t1500\t-\t0\t0\t99999\t99999\n9\tzero\t0\t3\t0\ttimeout\t0\t0\t99999\t99999\n' > "$BENCH_STATS"
+assert_eq "5 6 7 " "$(bench_top_indices 3)" "three leaders, fastest first, nothing that opened zero sites"
+
+# the case the phone showed: a parallel round reported 3/3, the solo re-run
+# reported 2/3, and a fourth strategy that was never re-measured still looked
+# fastest — the recommendation must not fall to it. The leaders were chosen
+# before the re-runs, so they are named here as they were then.
+printf '5\tr1\t2\t3\t1390\treset\t0\t0\t99999\t99999\n6\tr2\t3\t3\t1900\t-\t0\t0\t99999\t99999\n7\tr3\t0\t3\t0\treset\t0\t0\t99999\t99999\n8\tr4\t3\t3\t1000\t-\t0\t0\t99999\t99999\n' > "$BENCH_STATS"
+T="$(printf '\t')"
+BENCH_VERIFIED="5 6 7"
+assert_match "$(bench_best_line)" "^6${T}r2${T}3${T}3${T}1900" "with the re-verified set the crown stays inside it"
+BENCH_VERIFIED=""
+assert_match "$(bench_best_line)" "^8${T}r4${T}3${T}3${T}1000" "unrestricted, the never re-measured round number wins — which is the bias"
+BENCH_STATS=""
+
 # ── parallel run ──────────────────────────────────────────────────────────────
 section "bench: parallel slots on their own queues"
 
@@ -215,6 +238,7 @@ assert_contains "$ctl_out" "BENCH_START	3" "all three strategies are announced"
 assert_contains "$ctl_out" "BENCH_RES	0	default	0	2	0	refused	0	0" "a strategy that passes nothing is screened out on two probes"
 assert_contains "$ctl_out" "BENCH_RES	1	alt	6	6" "the strategy whose probes reached its own queue scores all six"
 assert_contains "$ctl_out" "BENCH_VERIFY	1	alt" "the winner is re-measured alone"
+assert_eq "1" "$(printf '%s\n' "$ctl_out" | grep -c '^BENCH_VERIFY')" "only the strategy that opened something is re-measured, not every leader slot"
 assert_contains "$ctl_out" "BENCH_BEST	alt	6	6" "and stays the winner after verification"
 assert_match "$ctl_out" "BENCH_BEST	alt	6	6	[0-9]+	alt	-" "YouTube best is the winner; Discord best stays empty with no Discord success"
 assert_not_contains "$ctl_out" "exp	0	0	0	failed_start" "the strategy with a multi-line mode value is measured, not dropped"
