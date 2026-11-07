@@ -812,7 +812,7 @@ function navigate(page, slide){
   pageScroll[currentPage] = scrollPos();
   if(mode === 'forward') delete pageScroll[page];
   currentPage = page;
-  if(!PAGE_META[page].child){ lastTop = page; backOverride = null; }
+  if(!PAGE_META[page].child) lastTop = page;
   renderNavBar(page);
   renderAppBar(page, mode !== 'slide');
   showPage(page, mode, slide);
@@ -827,14 +827,7 @@ function navigate(page, slide){
   });
   scheduleSync();
 }
-let backOverride = null;
-function openFrom(page){
-  backOverride = {page, to: currentPage};
-  navigate(page);
-}
 function goBack(){
-  const o = backOverride;
-  if(o && o.page === currentPage){ backOverride = null; return navigate(o.to); }
   navigate(PAGE_META[currentPage].parent || lastTop);
 }
 

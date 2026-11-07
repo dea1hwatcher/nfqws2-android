@@ -329,7 +329,8 @@ for (const file of fs.readdirSync(jsDir)) {
     try { key = vm.runInNewContext("'" + m[1] + "'"); } catch (e) { continue; }
     if (!/[А-Яа-яЁё]/.test(key)) continue;   // not a UI string
     if (/^\s*\+|\+\s*$/.test(key)) continue; // string concatenation artefact
-    if (key.includes('+ ') || key.includes("')")) continue;
+    const tail = src.slice(m.index + m[0].length, m.index + m[0].length + 10).trimStart();
+    if (tail.startsWith('+') || key.includes("')")) continue;
     if (!i18nKeys.has(key)) missingKeys.push(file + ': ' + key.replace(/\n/g, '\\n'));
   }
 }

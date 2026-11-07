@@ -441,7 +441,7 @@ smartkill() {
   while :; do
     sleep 3
     conf_refresh
-    is_running && smart_active || break
+    if ! is_running || ! smart_active; then break; fi
     read -r up _ < /proc/uptime; up=${up%.*}
     # фоновое обучение: раз в SMART_LEARN_EVERY секунд для сети подключения
     [ "$learn_at" = 0 ] && learn_at=$((up + 60))

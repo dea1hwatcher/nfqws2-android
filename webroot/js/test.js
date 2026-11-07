@@ -191,10 +191,6 @@ function testInit(){
   refreshNetInfo();
 }
 
-function updateTestDesc(){
-  // Descriptions removed in favor of clean MD3 layout
-}
-
 function selectTestTab(tab){
   currentTestTab = tab;
   const tabItem = TEST_TABS.find(x => x[0] === tab) || TEST_TABS[0];

@@ -236,7 +236,6 @@ cmd_status() {
 # found by hand once — fool=ts (a masking *name*, not a function), fake without
 # a blob, a step from a file that is not loaded through --lua-init, strategy
 # numbers without an orchestrator.
-lint_report() { printf '%s\t%s\t%s\n' "$1" "$2" "$3"; }
 
 # Prints findings as <severity>\t<where>\t<message>; returns the error count.
 lint_config() { # <conffile>
