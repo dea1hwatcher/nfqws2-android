@@ -2288,7 +2288,7 @@ merge_user_keys() { # <generated config> <settings source config>  -> stdout
       hdr = 0
       for (k in keep) {
         if (!(k in done)) {
-          if (!hdr) { print ""; print "# ---- Настройки Android"; hdr = 1 }
+          if (!hdr) { print ""; hdr = 1 }
           print keep[k]
         }
       }
