@@ -211,7 +211,12 @@ function openMenu(anchor, items, opts){
   }
   const back = document.createElement('div');
   back.className = 'menu-back';
-  back.addEventListener('click', e => { e.preventDefault(); close(); });
+  let backHeld = false;
+  const dropBack = () => { backHeld = false; back.remove(); };
+  back.addEventListener('pointerdown', () => { backHeld = true; close(); });
+  ['pointerup', 'pointercancel'].forEach(ev => back.addEventListener(ev, () => { if(backHeld) setTimeout(dropBack, 0); }));
+  back.addEventListener('click', e => { e.preventDefault(); close(); dropBack(); });
+  back.addEventListener('wheel', () => { close(); dropBack(); }, {passive: true});
   $('layer').append(back, menu);
   const r = anchor.getBoundingClientRect(), mw = menu.offsetWidth, mh = menu.offsetHeight;
   let top = r.bottom + 4;
@@ -247,6 +252,7 @@ function openMenu(anchor, items, opts){
     if(scrim) scrim.classList.remove('show');
     removeEventListener('keydown', onKey, true);
     back.style.pointerEvents = 'none';
+    if(!backHeld) back.remove(); else setTimeout(dropBack, 700);
     menu.classList.remove('open');
     menu.classList.add('closing');
     setTimeout(() => {
@@ -1100,6 +1106,7 @@ function uiLayers(){
   let n = pageDepth(currentPage) + (PAGE_META[currentPage].child ? (lastTop !== 'control' ? 1 : 0) : (currentPage !== 'control' ? 1 : 0));
   if(openSheetId) n++;
   if(editorCtx) n++;
+  if(editorCtx && $('editor-search-bar') && !$('editor-search-bar').hidden) n++;
   if($('dialog-wrap').classList.contains('open')) n++;
   if(openMenuEntry) n++;
   return n;

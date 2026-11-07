@@ -335,6 +335,7 @@ function openEditorSearch(){
     inp.select();
   }
   onEditorSearchInput();
+  if(typeof scheduleSync === 'function') scheduleSync();
 }
 
 function closeEditorSearch(){
@@ -348,6 +349,7 @@ function closeEditorSearch(){
   highlightEditor();
   const ta = $('panel-editor-text');
   if(ta && ta.focus) ta.focus({ preventScroll: true });
+  if(typeof scheduleSync === 'function') scheduleSync();
 }
 
 function dedupEditorList(){
