@@ -556,6 +556,28 @@ firewall_stop >/dev/null 2>&1
 mv "$SANDBOX/iptables-restore.off" "$MOCKBIN/iptables-restore"
 mv "$SANDBOX/ip6tables-restore.off" "$MOCKBIN/ip6tables-restore"
 
+section "stopping the service clears what a killed bench left behind"
+
+conf_reset
+load_conf >/dev/null 2>&1
+ipt_reset
+iptables -w -t mangle -N nfqws_bench_out >/dev/null 2>&1
+iptables -w -t mangle -N nfqws_bench_in >/dev/null 2>&1
+iptables -w -t mangle -I POSTROUTING 1 -j nfqws_bench_out >/dev/null 2>&1
+iptables -w -t mangle -I PREROUTING 1 -j nfqws_bench_in >/dev/null 2>&1
+sh "$MODDIR/bin/nfqws2" --daemon --pidfile="$STATE_DIR/bench_slot.0.pid" >/dev/null 2>&1
+slotpid=$(cat "$STATE_DIR/bench_slot.0.pid" 2>/dev/null)
+assert_match "$slotpid" '^[0-9]+$' "a slot instance is left running"
+kill -0 "$slotpid" 2>/dev/null
+assert_rc 0 "$?" "and its process lives before the stop"
+svc stop
+assert_not_contains "$(ipt_rules POSTROUTING)" "nfqws_bench_out" "stop takes the bench jump out of POSTROUTING"
+assert_not_contains "$(ipt_rules PREROUTING)" "nfqws_bench_in" "and the incoming one out of PREROUTING"
+assert_eq "" "$(iptables -w -t mangle -S nfqws_bench_out 2>/dev/null)" "the bench chain itself is deleted"
+assert_no_file "$STATE_DIR/bench_slot.0.pid" "the slot pidfile is gone"
+kill -0 "$slotpid" 2>/dev/null
+assert_rc 1 "$?" "and the slot daemon is stopped rather than orphaned on the queue"
+
 section "VPN pause: active interface suspends the bypass"
 NFQWS_SYSNET="$SANDBOX/sysnet"; export NFQWS_SYSNET
 mkdir -p "$NFQWS_SYSNET"

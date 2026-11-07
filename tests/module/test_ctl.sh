@@ -454,6 +454,26 @@ ctl doctor
 assert_contains "$ctl_out" "активен VPN" "doctor reports VPN pause when HOME_PAUSED_FILE contains @vpn"
 rm -f "$HOME_PAUSED_FILE"
 
+section "doctor: a killed bench does not hide its leftovers"
+
+ctl doctor
+assert_contains "$ctl_out" "$(printf 'ok\tbench\t')" "nothing left behind, nothing alarming"
+
+iptables -w -t mangle -N nfqws_bench_out >/dev/null 2>&1
+iptables -w -t mangle -I POSTROUTING 1 -j nfqws_bench_out >/dev/null 2>&1
+ctl doctor
+assert_contains "$ctl_out" "$(printf 'warn\tbench\t')" "a bench chain in front of the service rules is a warning"
+assert_not_contains "$ctl_out" "$(printf 'ok\tbench\t')" "and is never reported as clean"
+rm -f "$MOCK_IPT_STORE/iptables/mangle/nfqws_bench_out"
+
+printf '999999\n' > "$STATE_DIR/bench_slot.0.pid"
+ctl doctor
+assert_contains "$ctl_out" "$(printf 'warn\tbench\t')" "a slot pidfile nobody owns warns too"
+echo $$ > "$STATE_DIR/probe.pid"
+ctl doctor
+assert_contains "$ctl_out" "$(printf 'info\tbench\t')" "while a bench runs, its chains and slots are expected"
+rm -f "$STATE_DIR/probe.pid" "$STATE_DIR/bench_slot.0.pid"
+
 section "doctor without kernel features"
 
 MOCK_IPT_FEATURES="multiport NFQUEUE"

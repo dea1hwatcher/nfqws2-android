@@ -329,6 +329,9 @@ stop() {
     smartkill_chain del
   fi
   firewall_stop
+  # параллельный подбор ставит свои цепи перед нашими; прерванный SIGKILL он
+  # убрать не успевает, а «остановлено» должно означать чистый iptables
+  if bench_leftovers; then bench_purge; fi
   # kernel settings we tuned for the bypass go back to what they were
   sysctl_restore
   if [ -f "$PIDFILE" ]; then

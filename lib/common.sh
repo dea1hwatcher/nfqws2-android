@@ -1780,6 +1780,79 @@ firewall_ok() {
   [ "$IPV6_ENABLED" = "0" ] || _firewall_family_ok ip6tables
 }
 
+# ── параллельный подбор стратегий: имена и уборка ─────────────────────────────
+# Подбор (bin/nfqws2-ctl) поднимает приватные экземпляры на своих очередях и
+# ставит свои цепи перед цепями службы. Уборка живёт здесь, а не в ctl: после
+# SIGKILL trap подбора не отрабатывает, а остановка службы обязана вернуть
+# чистое состояние, и повторять имена цепей и файлов слотов в двух местах
+# нельзя.
+BENCH_CHAIN_OUT="nfqws_bench_out"
+BENCH_CHAIN_IN="nfqws_bench_in"
+BENCH_SLOTS_MAX=4
+
+bench_slot_stop() { # <i> — экземпляр и его файлы; правила снимает раунд
+  local i="$1" pid w=0
+  # отдельной строкой: в `local i="$1" pidf="…$i…"` шел разворачивает $i до
+  # присваивания, и путь уходил бы к слоту вызывающего, а не к аргументу
+  local pidf="$STATE_DIR/bench_slot.$i.pid"
+  if [ -f "$pidf" ]; then
+    pid=$(cat "$pidf" 2>/dev/null)
+    case "$pid" in
+      ''|0|*[!0-9]*) ;;
+      *)
+        # PID мог достаться чужому процессу — убиваем только свой
+        if kill -0 "$pid" 2>/dev/null && pid_is_ours "$pid"; then
+          kill -TERM "$pid" 2>/dev/null
+          while [ "$w" -lt 10 ]; do
+            kill -0 "$pid" 2>/dev/null || break
+            sleep 0.2 2>/dev/null || sleep 1
+            w=$((w + 1))
+          done
+          kill -0 "$pid" 2>/dev/null && kill -KILL "$pid" 2>/dev/null
+        fi ;;
+    esac
+    rm -f "$pidf"
+  fi
+  rm -f "$STATE_DIR/bench_slot.$i.conf" "$STATE_DIR/bench_slot.$i.conf.raw" \
+        "$STATE_DIR/bench_slot.$i.log" "$STATE_DIR/bench_slot.$i.orchestra.json"
+  return 0
+}
+
+bench_chains_down() {
+  local C
+  for C in iptables ip6tables; do
+    [ "$C" = "ip6tables" ] && ! command -v ip6tables >/dev/null 2>&1 && continue
+    while $C -w -t mangle -D POSTROUTING -j $BENCH_CHAIN_OUT 2>/dev/null; do :; done
+    while $C -w -t mangle -D PREROUTING -j $BENCH_CHAIN_IN 2>/dev/null; do :; done
+    $C -w -t mangle -F $BENCH_CHAIN_OUT 2>/dev/null
+    $C -w -t mangle -F $BENCH_CHAIN_IN 2>/dev/null
+    $C -w -t mangle -X $BENCH_CHAIN_OUT 2>/dev/null
+    $C -w -t mangle -X $BENCH_CHAIN_IN 2>/dev/null
+  done
+  return 0
+}
+
+bench_purge() { # всё, что мог оставить подбор: экземпляры слотов и их цепи
+  local i=0
+  while [ "$i" -lt "$BENCH_SLOTS_MAX" ]; do
+    bench_slot_stop "$i"
+    i=$((i + 1))
+  done
+  bench_chains_down
+}
+
+# 0, если после подбора осталось хоть что-то: цепь в mangle или pidfile слота.
+bench_leftovers() {
+  local i=0
+  iptables -w -t mangle -S "$BENCH_CHAIN_OUT" >/dev/null 2>&1 && return 0
+  iptables -w -t mangle -S "$BENCH_CHAIN_IN" >/dev/null 2>&1 && return 0
+  while [ "$i" -lt "$BENCH_SLOTS_MAX" ]; do
+    [ -f "$STATE_DIR/bench_slot.$i.pid" ] && return 0
+    i=$((i + 1))
+  done
+  return 1
+}
+
 # Some ROMs freeze the app cgroup the root process started in; move it to the
 # root cgroup (v2), which is not frozen. Best-effort.
 # -w first: dash reports a redirect open() error before 2>/dev/null applies.

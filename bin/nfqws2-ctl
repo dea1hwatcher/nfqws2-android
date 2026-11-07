@@ -445,6 +445,21 @@ cmd_doctor() {
   else
     row ok lists "$(M 'списки без замечаний' 'lists have no findings')"
   fi
+
+  # прерванный SIGKILL подбор не успевает убрать за собой: его цепи стоят перед
+  # правилами службы, а экземпляры держат очереди и память
+  if bench_leftovers; then
+    local bpid=""
+    [ -f "$STATE_DIR/probe.pid" ] && bpid=$(cat "$STATE_DIR/probe.pid" 2>/dev/null)
+    case "$bpid" in ''|*[!0-9]*) bpid="" ;; esac
+    if [ -n "$bpid" ] && kill -0 "$bpid" 2>/dev/null; then
+      row info bench "$(M 'подбор стратегий идёт сейчас' 'strategy bench is running now')"
+    else
+      row warn bench "$(M 'подбор оставил свои цепи или экземпляры — остановка службы их снимет' 'the bench left its chains or instances behind — stopping the service removes them')"
+    fi
+  else
+    row ok bench "$(M 'хвостов подбора нет' 'no bench leftovers')"
+  fi
   row ok auto_ports "$(M "активные порты: TCP: ${TCP_PORTS:-80,443} | UDP: ${UDP_PORTS:-443}" "active ports: TCP: ${TCP_PORTS:-80,443} | UDP: ${UDP_PORTS:-443}")"
   if [ "$NAT_FIX" = "1" ]; then
     local nat_hits
@@ -2291,10 +2306,7 @@ cmd_smart_bench() {
 # соединение (PKT_LIMIT_*) к пробе не применяется. Победитель перепроверяется
 # через службу, где он есть: параллельный заезд — отсев, а не приговор.
 
-BENCH_CHAIN_OUT="nfqws_bench_out"
-BENCH_CHAIN_IN="nfqws_bench_in"
 BENCH_PORT_WIDTH=256   # TIME_WAIT держит порт около минуты, а слот за раунд открывает десятки соединений
-BENCH_SLOTS_MAX=4
 BENCH_PORT_BASE=0
 BENCH_ACTIVE=""
 BENCH_WORKERS=""
@@ -2417,20 +2429,6 @@ bench_chains_up() {
   return 0
 }
 
-bench_chains_down() {
-  local C
-  for C in iptables ip6tables; do
-    [ "$C" = "ip6tables" ] && ! command -v ip6tables >/dev/null 2>&1 && continue
-    while $C -w -t mangle -D POSTROUTING -j $BENCH_CHAIN_OUT 2>/dev/null; do :; done
-    while $C -w -t mangle -D PREROUTING -j $BENCH_CHAIN_IN 2>/dev/null; do :; done
-    $C -w -t mangle -F $BENCH_CHAIN_OUT 2>/dev/null
-    $C -w -t mangle -F $BENCH_CHAIN_IN 2>/dev/null
-    $C -w -t mangle -X $BENCH_CHAIN_OUT 2>/dev/null
-    $C -w -t mangle -X $BENCH_CHAIN_IN 2>/dev/null
-  done
-  return 0
-}
-
 bench_slot_rules() { # <i> — правила слота, только после того как экземпляр поднят
   local i="$1" q lo hi C
   q=$(bench_slot_q "$i"); lo=$(bench_slot_lo "$i"); hi=$((lo + BENCH_PORT_WIDTH - 1))
@@ -2486,34 +2484,6 @@ bench_slot_bound() { # <i>
   [ -r "$f" ] || return 0
   q=$(bench_slot_q "$1")
   awk -v q="$q" '$1 == q { found = 1 } END { exit !found }' "$f" 2>/dev/null
-}
-
-bench_slot_stop() { # <i> — экземпляр и его файлы; правила снимает раунд
-  local i="$1" pid w=0
-  # отдельной строкой: в `local i="$1" pidf="…$i…"` шел разворачивает $i до
-  # присваивания, и путь уходил бы к слоту вызывающего, а не к аргументу
-  local pidf="$STATE_DIR/bench_slot.$i.pid"
-  if [ -f "$pidf" ]; then
-    pid=$(cat "$pidf" 2>/dev/null)
-    case "$pid" in
-      ''|0|*[!0-9]*) ;;
-      *)
-        # PID мог достаться чужому процессу — убиваем только свой
-        if kill -0 "$pid" 2>/dev/null && pid_is_ours "$pid"; then
-          kill -TERM "$pid" 2>/dev/null
-          while [ "$w" -lt 10 ]; do
-            kill -0 "$pid" 2>/dev/null || break
-            sleep 0.2 2>/dev/null || sleep 1
-            w=$((w + 1))
-          done
-          kill -0 "$pid" 2>/dev/null && kill -KILL "$pid" 2>/dev/null
-        fi ;;
-    esac
-    rm -f "$pidf"
-  fi
-  rm -f "$STATE_DIR/bench_slot.$i.conf" "$STATE_DIR/bench_slot.$i.conf.raw" \
-        "$STATE_DIR/bench_slot.$i.log" "$STATE_DIR/bench_slot.$i.orchestra.json"
-  return 0
 }
 
 # Подменить режим на $MODE_ALL целиком. sed здесь не годится: у многострочного
@@ -2574,15 +2544,6 @@ bench_slot_start() { # <i> <стратегия>
     w=$((w + 1))
   done
   return 1
-}
-
-bench_slots_purge() { # хвосты прерванного подбора: экземпляры и цепи прошлых запусков
-  local i=0
-  while [ "$i" -lt "$BENCH_SLOTS_MAX" ]; do
-    bench_slot_stop "$i"
-    i=$((i + 1))
-  done
-  bench_chains_down
 }
 
 bench_screen() { # <вид> <curl> <res> <метка> -> 0, если стратегия прошла отсев
@@ -2769,6 +2730,46 @@ bench_slot_probe() { # <порты> <idx> <res> <хосты> <домен> <ви�
   bench_hosts_probe "$kind" "$bin" "$hosts" "$res"
 }
 
+# Служба переприменяет свои правила при смене сети, дома и по watchdog, и её
+# jump в этом случае встаёт перед нашим: пробы раунда уходят в живую очередь, а
+# не в слот. Достаточно проверить POSTROUTING — firewall_start ставит оба
+# перехода одной операцией, так что сдвиг одного означает сдвиг второго.
+bench_jump_first() { # <cmd> -> 0, если наш переход раньше перехода службы
+  local C="$1" out n_bench n_post
+  out=$($C -w -t mangle -S POSTROUTING 2>/dev/null)
+  # паттерн без lead-пробела внутри «-j»: настоящий iptables печатает
+  # "-A POSTROUTING -j nfqws_bench_out", а тестовая запись хранит правило без
+  # префикса — находить надо обе формы
+  n_bench=$(printf '%s\n' "$out" | grep -n -- "-j $BENCH_CHAIN_OUT" | head -1 | cut -d: -f1)
+  n_post=$(printf '%s\n' "$out" | grep -n -- "-j $IPT_GROUP_POST" | head -1 | cut -d: -f1)
+  [ -n "$n_bench" ] || return 1
+  [ -z "$n_post" ] && return 0
+  [ "$n_bench" -lt "$n_post" ]
+}
+
+bench_jumps_in_order() {
+  local C
+  for C in iptables ip6tables; do
+    [ "$C" = "ip6tables" ] && [ "$IPV6_ENABLED" = "0" ] && continue
+    bench_jump_first "$C" || return 1
+  done
+  return 0
+}
+
+bench_round_contaminated() { # раунд не удался дважды: цифры не годятся, слоты долой
+  local i idx st res
+  while IFS="$(printf '\t')" read -r i idx st res; do
+    [ -z "$res" ] && continue
+    case " $BENCH_ACTIVE " in *" $i "*) ;; *) continue ;; esac
+    rm -f "$res"
+    bench_failed "$idx" "$st" contaminated
+  done < "$BENCH_ROUND"
+  for i in $BENCH_ACTIVE; do
+    bench_slot_stop "$i"
+  done
+  BENCH_ACTIVE=""
+}
+
 bench_round_run() { # <хосты> <домен> <вид> <curl> — пробы слотов раунда и разбор
   local hosts="$1" target="$2" kind="$3" bin="$4" C i idx st res lo hi
   for C in iptables ip6tables; do
@@ -2783,6 +2784,10 @@ bench_round_run() { # <хосты> <домен> <вид> <curl> — пробы �
     BENCH_WORKERS="$BENCH_WORKERS $!"
   done < "$BENCH_ROUND"
   wait
+  if ! bench_jumps_in_order; then
+    # ничего не агрегируем: эти пробы могла мерить живая служба
+    return 1
+  fi
   while IFS="$(printf '\t')" read -r i idx st res; do
     [ -z "$res" ] && continue
     case " $BENCH_ACTIVE " in *" $i "*) ;; *) continue ;; esac
@@ -2795,6 +2800,23 @@ bench_round_run() { # <хосты> <домен> <вид> <curl> — пробы �
     rm -f "$res"
     bench_slot_stop "$i"
   done < "$BENCH_ROUND"
+}
+
+bench_round_finish() { # <хосты> <домен> <вид> <curl> — раунд с одной пересъёмкой
+  local hosts="$1" target="$2" kind="$3" bin="$4"
+  if bench_round_run "$hosts" "$target" "$kind" "$bin"; then
+    return 0
+  fi
+  # переходы съехали посреди раунда: переставляем (bench_round_run сам это
+  # делает в начале) и меряем заново; второй срыв означает чистый замер сейчас
+  # невозможен, и раунд не получает права на рекомендацию
+  printf 'BENCH_WARN\tround_rerecorded\n'
+  if bench_round_run "$hosts" "$target" "$kind" "$bin"; then
+    return 0
+  fi
+  printf 'BENCH_WARN\tround_contaminated\n'
+  bench_round_contaminated
+  return 0
 }
 
 bench_parallel_run() { # <слотов> <список стратегий> <хосты> <домен> <вид> <curl>
@@ -2815,11 +2837,11 @@ bench_parallel_run() { # <слотов> <список стратегий> <хо�
     fi
     i=$((i + 1))
     if [ "$i" -ge "$nslots" ]; then
-      bench_round_run "$hosts" "$target" "$kind" "$bin"
+      bench_round_finish "$hosts" "$target" "$kind" "$bin"
       i=0
     fi
   done < "$list"
-  [ "$i" -gt 0 ] && bench_round_run "$hosts" "$target" "$kind" "$bin"
+  [ "$i" -gt 0 ] && bench_round_finish "$hosts" "$target" "$kind" "$bin"
   bench_chains_down
   return 0
 }
@@ -2855,12 +2877,7 @@ cmd_bench_strategies() {
           "$STATE_DIR/bench_res."*".$$.tmp" "$STATE_DIR/bench_screen."*".$$.tmp"* "$STATE_DIR/strat_bench.$$.tmp" \
           "$BENCH_STATS" "$BENCH_ROUND" "$strat_list" "$strat_list.raw"
     if [ "$BENCH_PARALLEL_TRIED" = "1" ]; then
-      bench_chains_down
-      local ci=0
-      while [ "$ci" -lt "$BENCH_SLOTS_MAX" ]; do
-        bench_slot_stop "$ci"
-        ci=$((ci + 1))
-      done
+      bench_purge
     fi
     cleanup_probe_app_rule
     if [ -f "$STATE_DIR/bench_orig.$$.conf" ]; then
@@ -2914,7 +2931,7 @@ cmd_bench_strategies() {
 
   if [ "$nslots" -gt 0 ]; then
     BENCH_PARALLEL_TRIED=1
-    bench_slots_purge
+    bench_purge
     printf 'BENCH_MODE\tparallel\t%s\n' "$nslots"
     bench_parallel_run "$nslots" "$strat_list" "$bench_hosts_file" "$target_domain" "$kind" "$bin" || nslots=0
   fi

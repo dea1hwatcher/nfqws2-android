@@ -126,7 +126,7 @@ bench_reset_logs() { : > "$MOCK_DIR/curl.calls"; : > "$MOCK_DIR/nfqws2.calls"; }
 # ── slot arithmetic ───────────────────────────────────────────────────────────
 section "bench: slots and port range"
 
-awk '/^BENCH_CHAIN_OUT=/{f=1} /^cmd_bench_strategies\(\)/{f=0} f' \
+awk '/^BENCH_PORT_WIDTH=/{f=1} /^cmd_bench_strategies\(\)/{f=0} f' \
   "$MODDIR/bin/nfqws2-ctl" > "$SANDBOX/bench_helpers.sh"
 . "$SANDBOX/bench_helpers.sh"
 
@@ -358,5 +358,48 @@ BENCH_SLOTS=2
 bench_parallel_possible curl "$MOCKBIN/curl" >/dev/null 2>&1
 assert_rc 1 "$?" "and the parallel path is refused for it"
 assert_eq "" "$(find "$MOCK_IPT_STORE" -name 'nfqws_bench_*' -print 2>/dev/null)" "no bench chains were created"
+
+# ── съехавший переход ─────────────────────────────────────────────────────────
+section "bench: a round whose jump was displaced is re-recorded, not trusted"
+
+# Служба переприменяет правила посреди раунда (смена сети, watchdog) — её jump
+# встаёт перед нашим, и пробы меряют живую службу, а не стратегию слота.
+# Разбор ведётся в самом ctl (probe_attempt живёт там), поэтому гоняем настоящий
+# подбор, но с одной стратегией и одной хост-строкой.
+for f in alt exp; do rm -f "$MODDIR/strategies/$f.conf"; done
+printf 'x.com\n' > "$LISTS_DIR/probe_bench.list"
+cat > "$MOCKBIN/curl" <<'X'
+#!/bin/sh
+case "$*" in *--version*|*--help*) exit 0 ;; esac
+if [ "${MOCK_SLIP:-}" = "once" ]; then
+  n=$(cat "$MOCK_DIR/slip.n" 2>/dev/null || echo 0)
+  if [ "$n" = 0 ]; then printf '1\n' > "$MOCK_DIR/slip.n"; iptables -w -t mangle -I POSTROUTING 1 -j nfqws_post; fi
+elif [ "${MOCK_SLIP:-}" = "always" ]; then
+  iptables -w -t mangle -I POSTROUTING 1 -j nfqws_post
+fi
+exit 0
+X
+chmod 0755 "$MOCKBIN/curl"
+BENCH_SLOTS=2
+export BENCH_SLOTS
+
+rm -f "$MOCK_DIR/slip.n"
+MOCK_SLIP=once
+export MOCK_SLIP
+ctl bench-strategies
+assert_contains "$ctl_out" "BENCH_WARN	round_rerecorded" "a displaced jump voids the round instead of scoring it"
+assert_not_contains "$ctl_out" "BENCH_WARN	round_contaminated" "and the re-recorded round is trusted"
+assert_contains "$ctl_out" "BENCH_RES	0	default	3	3" "the strategy still gets a real result"
+
+MOCK_SLIP=always
+rm -f "$MOCK_DIR/slip.n"
+ctl bench-strategies
+assert_contains "$ctl_out" "BENCH_WARN	round_contaminated" "a second displacement reports the round as unusable"
+assert_contains "$ctl_out" "BENCH_RES	0	default	0	0	0	contaminated	0	0" "and its numbers are not used for a recommendation"
+assert_contains "$ctl_out" "BENCH_BEST	-	0	0	0	-	-" "nothing is recommended from contaminated rounds"
+
+unset MOCK_SLIP MOCK_BENCH_GOOD_Q BENCH_SLOTS
+ctl stop >/dev/null 2>&1
+assert_eq "" "$(find "$MOCK_IPT_STORE" -name 'nfqws_bench_*' -print 2>/dev/null)" "stop leaves no bench chains behind"
 
 harness_finish
