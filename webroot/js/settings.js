@@ -337,6 +337,7 @@ async function toggleVpnPause(checked){
 /* Strategy Testing (Benchmark) */
 let benchRunning = false;
 let benchCancelled = false;
+let benchSlotsLabel = '';
 let benchResults = {};
 let benchTotalStrats = 0;
 let benchBestStrat = null;
@@ -521,6 +522,7 @@ async function runBench(){
 
   benchRunning = true;
   benchCancelled = false;
+  benchSlotsLabel = '';
   resetBenchResults();
 
   updateBenchButtons(true);
@@ -528,7 +530,11 @@ async function runBench(){
   const onLine = l => {
     if(benchCancelled) return;
     const p = l.split('\t');
-    if(p[0] === 'BENCH_START') {
+    if(p[0] === 'BENCH_MODE') {
+      // подбор сам сообщает, сколько стратегий он меряет сразу: цифра в бейдже
+      // иначе выглядит как зависшая строка
+      benchSlotsLabel = (p[1] === 'parallel' && (+p[2] || 0) > 1) ? ' · ' + t('Параллельно: {0}', +p[2]) : '';
+    } else if(p[0] === 'BENCH_START') {
       benchTotalStrats = +p[1] || 0;
       const badge = $('bench-badge');
       if(badge){
@@ -542,7 +548,7 @@ async function runBench(){
       if(badge){
         badge.hidden = false;
         badge.className = 'pill tonal';
-        badge.textContent = t('Тест {0}/{1}: {2}', +idx + 1, total, typeof strategyName === 'function' ? strategyName(strat) : strat);
+        badge.textContent = t('Тест {0}/{1}: {2}', +idx + 1, total, typeof strategyName === 'function' ? strategyName(strat) : strat) + benchSlotsLabel;
       }
       const existing = $('benchrow' + idx);
       const rowHtml = renderBenchRow(idx, strat, null, null, null, null, true);
@@ -574,7 +580,7 @@ async function runBench(){
   };
 
   try {
-    await ctlx(['bench-strategies'], 300000, onLine);
+    await ctlx(['bench-strategies'], 600000, onLine);
   } finally {
     benchRunning = false;
     if(benchCancelled){

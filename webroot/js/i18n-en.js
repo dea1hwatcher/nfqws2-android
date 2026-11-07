@@ -475,6 +475,7 @@ EN = {
   "Discord: «{0}» активна": "Discord: “{0}” active",
   "Проверка 0/{0}": "Checking 0/{0}",
   "Тест {0}/{1}: {2}": "Test {0}/{1}: {2}",
+  "Параллельно: {0}": "Parallel: {0}",
   "Завершено ({0} стратегий)": "Completed ({0} strategies)",
   "Полный автоподбор по всем стратегиям": "Full auto-selection across all strategies",
   "Автоподбор стратегий": "Strategy auto-selection",
