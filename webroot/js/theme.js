@@ -58,13 +58,19 @@ function labToRgb(lab){
 }
 const inGamut = rgb => rgb[0] >= -.2 && rgb[0] <= 255.2 && rgb[1] >= -.2 && rgb[1] <= 255.2 && rgb[2] >= -.2 && rgb[2] <= 255.2;
 
-/* Chroma scale is reduced by bisection until the color fits sRGB */
-const CHROMA = {primary: 1, secondary: .34, tertiary: .55, neutral: .05, neutralVariant: .12, error: .9};
+/* ColorSpec2025: Chroma ratios aligned with Material Design 3 Expressive spec
+   and yellow/amber hue roll-off to prevent clipping / olive distortion at tone >= 85 */
+const CHROMA = {primary: 1, secondary: .45, tertiary: .65, neutral: .05, neutralVariant: .14, error: .85};
 const TERTIARY_HUE = Math.PI / 3;
 function tone(lab, t, palette, hueShift){
   const seedC = Math.hypot(lab[1], lab[2]);
-  const chroma = seedC < .4 ? 0 : seedC * CHROMA[palette];
+  let chroma = seedC < .4 ? 0 : seedC * CHROMA[palette];
   const hue = Math.atan2(lab[2], lab[1]) + (hueShift || 0);
+  const deg = ((hue * 180 / Math.PI) % 360 + 360) % 360;
+  if(t >= 85 && deg >= 70 && deg <= 130){
+    const roll = Math.pow(Math.max(0, (100 - t) / 15), 0.85);
+    chroma *= (0.25 + 0.75 * roll);
+  }
   const at = s => labToRgb([t, Math.cos(hue) * chroma * s, Math.sin(hue) * chroma * s]);
   if(inGamut(at(1))) return rgbToHex.apply(null, at(1));
   let lo = 0, hi = 1;
@@ -138,9 +144,9 @@ function roles(seedHex, dark, amoled, monochrome){
       R.surfaceDim = amoled ? '#000000' : '#131313'; R.surfaceBright = '#383838';
       R.surfaceContainerLowest = amoled ? '#000000' : '#0e0e0e';
       R.surfaceContainerLow = amoled ? '#141414' : '#1a1a1a';
-      R.surfaceContainer = amoled ? '#1c1c1c' : '#202020';
-      R.surfaceContainerHigh = amoled ? '#262626' : '#282828';
-      R.surfaceContainerHighest = amoled ? '#303030' : '#333333';
+      R.surfaceContainer = amoled ? '#1c1c1c' : '#222222';
+      R.surfaceContainerHigh = amoled ? '#262626' : '#2a2a2a';
+      R.surfaceContainerHighest = amoled ? '#303030' : '#353535';
       R.outline = '#8e8e8e'; R.outlineVariant = '#444444';
       R.inverseSurface = '#e2e2e2'; R.inverseOnSurface = '#1b1b1b';
       R.inversePrimary = '#000000';
@@ -160,9 +166,9 @@ function roles(seedHex, dark, amoled, monochrome){
       R.surfaceContainerLowest = amoled ? '#000000' : p(4, 'neutral');
       /* AMOLED containers stay slightly tinted so cards read on black */
       R.surfaceContainerLow = amoled ? p(11, 'neutralVariant') : p(10, 'neutral');
-      R.surfaceContainer = amoled ? p(14, 'neutralVariant') : p(12, 'neutral');
-      R.surfaceContainerHigh = amoled ? p(18, 'neutralVariant') : p(17, 'neutral');
-      R.surfaceContainerHighest = amoled ? p(23, 'neutralVariant') : p(22, 'neutral');
+      R.surfaceContainer = amoled ? p(15, 'neutralVariant') : p(14, 'neutral');
+      R.surfaceContainerHigh = amoled ? p(20, 'neutralVariant') : p(19, 'neutral');
+      R.surfaceContainerHighest = amoled ? p(26, 'neutralVariant') : p(24, 'neutral');
       R.outline = p(60, 'neutralVariant'); R.outlineVariant = p(30, 'neutralVariant');
       R.inverseSurface = p(90, 'neutral'); R.inverseOnSurface = p(20, 'neutral');
       R.inversePrimary = p(40);
@@ -221,7 +227,9 @@ function roles(seedHex, dark, amoled, monochrome){
     R.tertiaryFixed = '#e2e2e2'; R.tertiaryFixedDim = '#c6c6c6';
     R.tertiaryFixedVariant = '#444444'; R.onTertiaryFixed = '#181818';
     R.onTertiaryFixedVariant = '#444444';
-    R.surfaceTint = dark ? '#ffffff' : '#000000'; R.shadow = '#000000';
+    R.errorFixed = '#e2e2e2'; R.errorFixedDim = '#c6c6c6';
+    R.onErrorFixed = '#181818'; R.onErrorFixedVariant = '#444444';
+    R.surfaceTint = dark ? '#ffffff' : '#000000'; R.shadow = '#000000'; R.scrim = '#000000';
   } else {
     R.primaryFixed = p(90); R.primaryFixedDim = p(80); R.primaryFixedVariant = p(30);
     R.onPrimaryFixed = p(10); R.onPrimaryFixedVariant = p(30);
@@ -230,7 +238,9 @@ function roles(seedHex, dark, amoled, monochrome){
     R.tertiaryFixed = p(90, 'tertiary', TERTIARY_HUE); R.tertiaryFixedDim = p(80, 'tertiary', TERTIARY_HUE);
     R.tertiaryFixedVariant = p(30, 'tertiary', TERTIARY_HUE); R.onTertiaryFixed = p(10, 'tertiary', TERTIARY_HUE);
     R.onTertiaryFixedVariant = p(30, 'tertiary', TERTIARY_HUE);
-    R.surfaceTint = R.primary; R.shadow = '#000000';
+    R.errorFixed = e(90); R.errorFixedDim = e(80);
+    R.onErrorFixed = e(10); R.onErrorFixedVariant = e(30);
+    R.surfaceTint = dark ? p(80) : p(40); R.shadow = '#000000'; R.scrim = '#000000';
   }
   return R;
 }
@@ -255,7 +265,7 @@ const ROLE_VAR = {
   outline: '--md-sys-color-outline', outlineVariant: '--md-sys-color-outline-variant',
   inverseSurface: '--md-sys-color-inverse-surface', inverseOnSurface: '--md-sys-color-inverse-on-surface',
   inversePrimary: '--md-sys-color-inverse-primary',
-  surfaceTint: '--md-sys-color-surface-tint', shadow: '--md-sys-color-shadow',
+  surfaceTint: '--md-sys-color-surface-tint', shadow: '--md-sys-color-shadow', scrim: '--md-sys-color-scrim',
   primaryFixed: '--md-sys-color-primary-fixed', primaryFixedDim: '--md-sys-color-primary-fixed-dim',
   primaryFixedVariant: '--md-sys-color-primary-fixed-variant', onPrimaryFixed: '--md-sys-color-on-primary-fixed',
   onPrimaryFixedVariant: '--md-sys-color-on-primary-fixed-variant',
@@ -264,7 +274,9 @@ const ROLE_VAR = {
   onSecondaryFixedVariant: '--md-sys-color-on-secondary-fixed-variant',
   tertiaryFixed: '--md-sys-color-tertiary-fixed', tertiaryFixedDim: '--md-sys-color-tertiary-fixed-dim',
   tertiaryFixedVariant: '--md-sys-color-tertiary-fixed-variant', onTertiaryFixed: '--md-sys-color-on-tertiary-fixed',
-  onTertiaryFixedVariant: '--md-sys-color-on-tertiary-fixed-variant'
+  onTertiaryFixedVariant: '--md-sys-color-on-tertiary-fixed-variant',
+  errorFixed: '--md-sys-color-error-fixed', errorFixedDim: '--md-sys-color-error-fixed-dim',
+  onErrorFixed: '--md-sys-color-on-error-fixed', onErrorFixedVariant: '--md-sys-color-on-error-fixed-variant'
 };
 function applyTheme(skipUI){
   const dark = isDark();

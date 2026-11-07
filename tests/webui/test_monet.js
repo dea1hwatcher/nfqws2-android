@@ -182,6 +182,23 @@ eq('#000000', monoAmoledRoles.surface.toLowerCase(), 'monochrome AMOLED surface 
 eq('#000000', monoAmoledRoles.surfaceDim.toLowerCase(), 'monochrome AMOLED surfaceDim is pure black #000000');
 eq('#000000', monoAmoledRoles.surfaceContainerLowest.toLowerCase(), 'monochrome AMOLED surfaceContainerLowest is pure black #000000');
 
+// ColorSpec2025: Container elevation hierarchy & scrim
+eq('#000000', lightRoles.scrim.toLowerCase(), 'ColorSpec2025 scrim is pure black #000000');
+eq('#000000', darkRoles.scrim.toLowerCase(), 'ColorSpec2025 dark scrim is pure black #000000');
+const darkContainerL = sandbox.rgbToLab(sandbox.hexToRgb(darkRoles.surfaceContainer))[0];
+const darkLowL = sandbox.rgbToLab(sandbox.hexToRgb(darkRoles.surfaceContainerLow))[0];
+const darkHighL = sandbox.rgbToLab(sandbox.hexToRgb(darkRoles.surfaceContainerHigh))[0];
+const darkHighestL = sandbox.rgbToLab(sandbox.hexToRgb(darkRoles.surfaceContainerHighest))[0];
+truthy(darkLowL < darkContainerL && darkContainerL < darkHighL && darkHighL < darkHighestL,
+  'ColorSpec2025 dark mode surface container hierarchy is strictly monotonic (Low < Container < High < Highest)');
+
+// ColorSpec2025: Yellow / Amber hue protection at high tones
+const amberRoles = vm.runInContext('roles("#f3c774", false, false)', sandbox);
+truthy(typeof amberRoles.primary === 'string' && /^#[0-9a-fA-F]{6}$/.test(amberRoles.primary),
+  'ColorSpec2025 amber seed produces valid in-gamut primary');
+truthy(typeof amberRoles.surfaceContainerHighest === 'string' && /^#[0-9a-fA-F]{6}$/.test(amberRoles.surfaceContainerHighest),
+  'ColorSpec2025 amber seed produces valid in-gamut high-tone container');
+
 // ── 3. Dynamic Android Monet color detection ────────────────────────────────
 sect('android monet detection');
 
