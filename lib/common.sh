@@ -1099,6 +1099,17 @@ has_ipt_feature() {
   ipt_probe "$@" >/dev/null 2>&1
 }
 
+has_ip() {
+  if [ -n "$MOCK_DIR" ]; then
+    local mb="${MOCKBIN:-${MOCK_DIR%/mock}/bin}"
+    if [ -n "$mb" ] && [ -x "$mb/ip" ]; then
+      return 0
+    fi
+    return 1
+  fi
+  command -v ip >/dev/null 2>&1
+}
+
 _ipt_cap_cache_get() { # <command> <probe key>
   [ -n "$MOCK_IPT_FEATURES" ] && return 1
   local kernel value
@@ -2432,7 +2443,7 @@ vpn_active() {
       return 0
     fi
   done
-  if command -v ip >/dev/null 2>&1; then
+  if has_ip; then
     ip link show 2>/dev/null | grep -Eq ':[[:space:]]*(tun|wg|ppp|ipsec|tap|tailscale)[0-9]*[ :].*<[A-Z0-9_,]*UP' && return 0
   fi
   return 1

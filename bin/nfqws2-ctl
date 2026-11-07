@@ -587,7 +587,7 @@ cmd_doctor() {
     row ok netwatch "$(M 'работает: мгновенная реакция на смену сети' 'running: instant reaction to network changes')"
   elif [ "$WATCHDOG" != "1" ] && [ "$HOME_WIFI" != "1" ] && [ "$NET_STRATEGY" != "1" ] && [ "$VPN_PAUSE" != "1" ]; then
     row info netwatch "$(M 'выключен вместе с контролем работы' 'off together with the watchdog')"
-  elif command -v ip >/dev/null 2>&1; then
+  elif has_ip; then
     row warn netwatch "$(M 'не запущен — правила обновятся только по watchdog (раз в 20 сек)' 'not running — rules are refreshed by the watchdog only (every 20 s)')"
   else
     row info netwatch "$(M 'команда ip недоступна — работает только опрос watchdog' 'ip command unavailable — watchdog polling only')"

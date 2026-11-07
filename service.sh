@@ -538,7 +538,7 @@ conf_refresh() {
 # fallback where ip monitor is unsupported
 ensure_netwatch() {
   watchers_wanted || return 0
-  ensure_helper "$WN_PIDFILE" netwatch command -v ip || return 0
+  ensure_helper "$WN_PIDFILE" netwatch has_ip || return 0
 }
 
 # Network signature: outgoing interface dev and VPN/Wi-Fi flags.
@@ -572,9 +572,9 @@ netwatch_apply() { # <reason for log>
 }
 
 netwatch() {
+  has_ip || return 0
   echo $$ > "$WN_PIDFILE"
   protect_process
-  command -v ip >/dev/null 2>&1 || { rm -f "$WN_PIDFILE"; return 0; }
 
   local wake=0 mon="" reader="" sp="" netsig rq="" base=0 d backoff=2 started up me=$$
   local fifo="$STATE_DIR/netwatch.fifo"
