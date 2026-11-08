@@ -2,17 +2,17 @@
 
 RU
 
-Добавлены стратегии для ТСПУ Турции
-Добавлено англоязычное README
-Исправлена Точка доступа с nfqws2 на Exynos
-Прочие исправления и улучшения
+- Добавлены стратегии для ТСПУ Турции
+- Добавлено README_EN
+- Исправлена Точка доступа с nfqws2 на Exynos
+- Прочие исправления и улучшения
 
 EN
 
-Added strategies for Turkey's DPI
-Added README_EN
-Fixed Access point with nfqws2 on Exynos devices
-Other fixes and enchantments
+- Added strategies for Turkey's DPI
+- Added README_EN
+- Fixed Access point with nfqws2 on Exynos devices
+- Other fixes and enchantments
 
 ### Изменения в v2.1.1:
 
