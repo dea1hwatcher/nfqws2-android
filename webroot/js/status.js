@@ -34,7 +34,7 @@ function startUptTimer(ms){
 let strategies = [{name: 'default', kind: 'builtin', mod: false}], currentStrategy = 'default', pendingStrategy = 'default';
 const STRATEGY_GROUPS = [
   ['base', 'Базовая'], ['alt', 'Flowseal · ALT'], ['fake', 'Flowseal · FAKE TLS AUTO'],
-  ['simple', 'Flowseal · SIMPLE FAKE'], ['authors', 'Авторские'], ['user', 'Пользовательские']
+  ['simple', 'Flowseal · SIMPLE FAKE'], ['turkey', 'Турция'], ['authors', 'Авторские'], ['user', 'Пользовательские']
 ];
 function strategyGroup(s){
   if(s.kind === 'import' || s.kind === 'user') return 'user';
@@ -42,6 +42,7 @@ function strategyGroup(s){
   if(/^alt\d*(_|$)/i.test(s.name)) return 'alt';
   if(/^fake_tls_auto/i.test(s.name)) return 'fake';
   if(/^simple_fake/i.test(s.name)) return 'simple';
+  if(/^tr_/i.test(s.name)) return 'turkey';
   return 'authors';
 }
 const groupTitle = g => t((STRATEGY_GROUPS.find(x => x[0] === g) || ['', ''])[1]);

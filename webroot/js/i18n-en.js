@@ -33,6 +33,7 @@ EN = {
  "Режим разработчика выключен": "Developer options disabled",
  "д": "d",
  "Базовая": "Base",
+ "Турция": "Turkey",
  "Авторские": "Community",
  "Пользовательские": "Custom",
  "По умолчанию": "Default",

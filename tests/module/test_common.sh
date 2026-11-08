@@ -46,6 +46,25 @@ out=$(norm_args '/opt/etc/nfqws2/lua/a.lua /opt/etc/nfqws2/lists/b.list /opt/etc
 assert_eq "$LUA_DIR/a.lua $LISTS_DIR/b.list $CONFDIR/c.conf" "$out" \
   "specific paths win over the generic /opt/etc/nfqws2 rule"
 
+out=$(norm_args '--lua-init=@/opt/zapret2/lua/zapret-lib.lua')
+assert_eq "--lua-init=@$LUA_DIR/zapret-lib.lua" "$out" "modern zapret2 lua path -> \$LUA_DIR"
+
+out=$(norm_args '--blob=x:/opt/zapret2/files/fake/tls.bin')
+assert_eq "--blob=x:$BLOBS_DIR/tls.bin" "$out" "modern zapret2 files/fake path -> \$BLOBS_DIR"
+
+out=$(norm_args '--blob=x:/opt/zapret2/blobs/stun.bin')
+assert_eq "--blob=x:$BLOBS_DIR/stun.bin" "$out" "modern zapret2 blobs path -> \$BLOBS_DIR"
+
+out=$(norm_args '--hostlist=/opt/zapret2/lists/user.list')
+assert_eq "--hostlist=$LISTS_DIR/user.list" "$out" "modern zapret2 lists path -> \$LISTS_DIR"
+
+out=$(norm_args '--debug=@/opt/var/log/zapret2.log')
+assert_eq "--debug=@$LOG_DIR/nfqws2.log" "$out" "modern zapret2 log path -> \$LOG_DIR/nfqws2.log"
+
+out=$(norm_args '/opt/zapret2/lua/a.lua /opt/zapret2/files/fake/b.bin /opt/zapret2/config')
+assert_eq "$LUA_DIR/a.lua $BLOBS_DIR/b.bin $CONFDIR/config" "$out" \
+  "specific paths win over the generic /opt/zapret2 rule"
+
 # ── list_count ────────────────────────────────────────────────────────────────
 section "list_count"
 

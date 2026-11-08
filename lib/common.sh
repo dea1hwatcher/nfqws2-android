@@ -384,13 +384,25 @@ $f:"}"; c="${c%%[!0-9]*}" ;; esac
 # arg "refs": keep $LUA_DIR/... references (for stored config); no arg: expand.
 rewrite_keenetic_paths() {
   if [ "$1" = "refs" ]; then
-    sed -e 's#/opt/etc/nfqws2/lua#$LUA_DIR#g' \
+    sed -e 's#/opt/zapret2/lua#$LUA_DIR#g' \
+        -e 's#/opt/zapret2/files/fake#$BLOBS_DIR#g' \
+        -e 's#/opt/zapret2/blobs#$BLOBS_DIR#g' \
+        -e 's#/opt/zapret2/lists#$LISTS_DIR#g' \
+        -e 's#/opt/zapret2#$CONFDIR#g' \
+        -e 's#/opt/var/log/zapret2.log#$LOG_DIR/nfqws2.log#g' \
+        -e 's#/opt/etc/nfqws2/lua#$LUA_DIR#g' \
         -e 's#/opt/etc/nfqws2/blobs#$BLOBS_DIR#g' \
         -e 's#/opt/etc/nfqws2/lists#$LISTS_DIR#g' \
         -e 's#/opt/etc/nfqws2#$CONFDIR#g' \
         -e 's#/opt/var/log#$LOG_DIR#g'
   else
-    sed -e "s#/opt/etc/nfqws2/lua#$LUA_DIR#g" \
+    sed -e "s#/opt/zapret2/lua#$LUA_DIR#g" \
+        -e "s#/opt/zapret2/files/fake#$BLOBS_DIR#g" \
+        -e "s#/opt/zapret2/blobs#$BLOBS_DIR#g" \
+        -e "s#/opt/zapret2/lists#$LISTS_DIR#g" \
+        -e "s#/opt/zapret2#$CONFDIR#g" \
+        -e "s#/opt/var/log/zapret2.log#$LOG_DIR/nfqws2.log#g" \
+        -e "s#/opt/etc/nfqws2/lua#$LUA_DIR#g" \
         -e "s#/opt/etc/nfqws2/blobs#$BLOBS_DIR#g" \
         -e "s#/opt/etc/nfqws2/lists#$LISTS_DIR#g" \
         -e "s#/opt/etc/nfqws2#$CONFDIR#g" \
@@ -2097,7 +2109,7 @@ setup_cli_symlinks() {
 is_keenetic_config() {
   local f="$1" n
   [ -f "$f" ] || return 1
-  n=$(grep -cE '^[[:space:]]*(NFQWS_BASE_ARGS|NFQWS_ARGS|NFQWS_ARGS_QUIC|NFQWS_ARGS_UDP|NFQWS_EXTRA_ARGS|NFQWS_ARGS_IPSET|ISP_INTERFACE|TCP_PORTS)=' "$f" 2>/dev/null)
+  n=$(grep -cE '^[[:space:]]*(NFQWS_BASE_ARGS|NFQWS_ARGS|NFQWS2_OPT|NFQWS_ARGS_QUIC|NFQWS_ARGS_UDP|NFQWS_EXTRA_ARGS|NFQWS_ARGS_IPSET|ISP_INTERFACE|TCP_PORTS|MODE_FILTER)=' "$f" 2>/dev/null)
   [ "${n:-0}" -ge 2 ]
 }
 
