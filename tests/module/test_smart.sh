@@ -29,7 +29,7 @@ case "$MOCK_WIFI" in '') printf 'Wifi is not connected\n' ;; *) printf 'Wifi is 
 X
 printf '#!/bin/sh\nexit 0\n' > "$MOCKBIN/dumpsys"
 chmod 0755 "$MOCKBIN/ip" "$MOCKBIN/cmd" "$MOCKBIN/dumpsys"
-export MOCK_DEV MOCK_WIFI MOCK_OPERATOR MOCK_OPERATOR_NAME
+export MOCK_DEV MOCK_WIFI MOCK_OPERATOR MOCK_OPERATOR_NAME MOCK_DATA_SUB MOCK_SIM_SLOT
 
 section "the smart strategy is recognised"
 smart_active; assert_rc 0 $? "smart.conf loads the smart orchestrator"
@@ -58,6 +58,9 @@ MOCK_DEV=rmnet_data0 MOCK_OPERATOR=25001 MOCK_OPERATOR_NAME=MTS
 assert_eq "mobile-25001	MTS" "$(smart_net_id)" "mobile data: the operator code and name"
 MOCK_OPERATOR="25002,25099"
 assert_eq "mobile-25002	MTS" "$(smart_net_id)" "the first SIM's operator when there are two"
+MOCK_DATA_SUB=2 MOCK_SIM_SLOT=1 MOCK_OPERATOR_NAME="MTS,Beeline"
+assert_eq "mobile-25099	Beeline" "$(smart_net_id)" "active data SIM slot (SIM 2) is chosen when multi_sim_data_call is set"
+MOCK_DATA_SUB="" MOCK_SIM_SLOT="" MOCK_OPERATOR_NAME=MTS
 MOCK_OPERATOR=""
 assert_eq "mobile	MTS" "$(smart_net_id)" "no operator code — just mobile"
 mkdir -p "$NFQWS_SYSNET/wlan0"; echo up > "$NFQWS_SYSNET/wlan0/operstate"
@@ -67,6 +70,14 @@ assert_contains "$id" "wifi-" "Wi‑Fi: by SSID"
 assert_contains "$id" "	Home" "with the SSID as its label"
 MOCK_WIFI=Office
 [ "$id" != "$(smart_net_id)" ]; assert_rc 0 $? "another SSID is another network"
+rm -rf "$NFQWS_SYSNET/wlan0"
+mkdir -p "$NFQWS_SYSNET/swlan0"; echo up > "$NFQWS_SYSNET/swlan0/operstate"
+MOCK_DEV=swlan0 MOCK_WIFI=SamsungHome
+id=$(smart_net_id)
+assert_contains "$id" "wifi-" "Wi‑Fi (Samsung swlan0): by SSID"
+assert_contains "$id" "	SamsungHome" "with Samsung SSID as its label"
+rm -rf "$NFQWS_SYSNET/swlan0"
+mkdir -p "$NFQWS_SYSNET/wlan0"; echo up > "$NFQWS_SYSNET/wlan0/operstate"
 MOCK_DEV=""
 assert_eq "offline	" "$(smart_net_id)" "no route at all — offline"
 

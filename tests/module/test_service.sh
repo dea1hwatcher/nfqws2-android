@@ -313,6 +313,15 @@ assert_file "$PIDFILE" "boot-completed hook maintains running service"
 svc stop >/dev/null 2>&1
 [ -f "$WD_PIDFILE" ] && kill "$(cat "$WD_PIDFILE" 2>/dev/null)" 2>/dev/null
 
+section "post-fs-data.sh early boot hook"
+
+assert_file "$MODDIR/post-fs-data.sh" "post-fs-data.sh exists in sandbox"
+touch "$STATE_DIR/stale.lock"
+echo "12345" > "$PIDFILE"
+sh "$MODDIR/post-fs-data.sh" >/dev/null 2>&1
+assert_no_file "$STATE_DIR/stale.lock" "post-fs-data cleans stale locks"
+assert_no_file "$PIDFILE" "post-fs-data cleans stale pidfile"
+
 section "protect_process"
 
 protect_process $$

@@ -112,6 +112,7 @@ sandbox_init() {
   cp "$REPO_DIR/lib/common.sh"         "$MODDIR/lib/common.sh"
   cp "$REPO_DIR/service.sh"            "$MODDIR/service.sh"
   cp "$REPO_DIR/boot-completed.sh"     "$MODDIR/boot-completed.sh" 2>/dev/null || true
+  cp "$REPO_DIR/post-fs-data.sh"       "$MODDIR/post-fs-data.sh" 2>/dev/null || true
   cp "$REPO_DIR/module.prop"           "$MODDIR/module.prop"
   cp "$REPO_DIR/defaults/nfqws2.conf"  "$MODDIR/defaults/nfqws2.conf"
   cp "$REPO_DIR/defaults/calls-bypass.conf" "$MODDIR/defaults/calls-bypass.conf" 2>/dev/null || true
@@ -135,7 +136,7 @@ sandbox_init() {
   # MAX_ARG_STRLEN (128KB)
   head -n 50 "$REPO_DIR/lists/ipset.list" > "$MODDIR/lists/ipset.list"
   head -n 50 "$REPO_DIR/defaults/lists/ipset.list" > "$MODDIR/defaults/lists/ipset.list"
-  chmod 0755 "$MODDIR/bin/nfqws2-ctl" "$MODDIR/service.sh" "$MODDIR/boot-completed.sh" "$MODDIR/system/bin/"* 2>/dev/null || true
+  chmod 0755 "$MODDIR/bin/nfqws2-ctl" "$MODDIR/service.sh" "$MODDIR/boot-completed.sh" "$MODDIR/post-fs-data.sh" "$MODDIR/system/bin/"* 2>/dev/null || true
 
   cp "$TESTS_DIR/lib/mock/iptables"    "$MOCKBIN/iptables"
   cp "$TESTS_DIR/lib/mock/iptables"    "$MOCKBIN/ip6tables"
@@ -145,7 +146,7 @@ sandbox_init() {
   cp "$TESTS_DIR/lib/mock/iptables-save" "$MOCKBIN/ip6tables-save"
   cp "$TESTS_DIR/lib/mock/rm"          "$MOCKBIN/rm"
   cp "$TESTS_DIR/lib/mock/curl"        "$MOCKBIN/curl"
-  for n in pm getprop sysctl modprobe settings; do
+  for n in pm getprop sysctl modprobe settings device_config content tc; do
     cp "$TESTS_DIR/lib/mock/android-stub" "$MOCKBIN/$n"
   done
   cp "$TESTS_DIR/lib/mock/nfqws2" "$MODDIR/bin/nfqws2"

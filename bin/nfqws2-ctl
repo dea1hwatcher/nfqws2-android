@@ -524,10 +524,17 @@ cmd_doctor() {
   fi
   if [ "$ENABLE_HOTSPOT" = "1" ]; then
     if command -v settings >/dev/null 2>&1; then
-      local to_val
+      local to_val bpf_val=""
       to_val=$(settings get global tether_offload_disabled 2>/dev/null)
+      if command -v device_config >/dev/null 2>&1; then
+        bpf_val=$(device_config get tethering override_bpf_offload 2>/dev/null)
+      fi
       if [ "$to_val" = "1" ]; then
-        row ok hotspot "$(M 'точка доступа: аппаратный оффлоад отключен' 'hotspot: hardware offload disabled')"
+        if [ "$bpf_val" = "false" ]; then
+          row ok hotspot "$(M 'точка доступа: аппаратный и BPF оффлоад отключены' 'hotspot: hardware & BPF offload disabled')"
+        else
+          row ok hotspot "$(M 'точка доступа: аппаратный оффлоад отключен' 'hotspot: hardware offload disabled')"
+        fi
       else
         row warn hotspot "$(M 'точка доступа: оффлоад включен' 'hotspot: hardware offload enabled')"
       fi
@@ -1058,6 +1065,32 @@ rand_hex() {
   od -An -N2 -tx1 /dev/urandom 2>/dev/null | tr -d ' \n' || echo "$$"
 }
 
+PROBE_PQ_CURVE=""
+PROBE_PQ_CHECKED=0
+detect_pq_curve() {
+  local bin="${1:-curl}"
+  [ "$PROBE_PQ_CHECKED" -eq 1 ] && return 0
+  PROBE_PQ_CHECKED=1
+  [ -n "$PROBE_PQ_CURVE" ] && return 0
+  [ "${PROBE_NO_PQ:-0}" = "1" ] && return 0
+  if [ -f "$STATE_DIR/probe_pq_curve" ]; then
+    PROBE_PQ_CURVE=$(cat "$STATE_DIR/probe_pq_curve" 2>/dev/null)
+    return 0
+  fi
+  [ -n "$MOCKBIN" ] && return 0
+  if "$bin" --help 2>&1 | grep -q -- '--curves'; then
+    local g
+    for g in "X25519Kyber768Draft00:X25519" "X25519MLKEM768:X25519"; do
+      if "$bin" --curves "$g" --version >/dev/null 2>&1; then
+        PROBE_PQ_CURVE="$g"
+        echo "$g" > "$STATE_DIR/probe_pq_curve" 2>/dev/null || true
+        break
+      fi
+    done
+  fi
+  return 0
+}
+
 probe_attempt() { # <вид> <путь к утилите> <host[/путь]> [proto 1=http, 2=tls1.2, 3=tls1.3, 4=quic] -> "ok <мс>" | "fail <причина>" | "skip <причина>"
   local kind="$1" bin="$2" target="$3" proto="${4:-3}" t0 t1 out rc to=""
   target=$(resolve_probe_target "$target")
@@ -1106,14 +1139,19 @@ probe_attempt() { # <вид> <путь к утилите> <host[/путь]> [pro
     3) # TLS 1.3 (порт 443)
       local url="https://${target}"
       if [ "$kind" = "curl" ]; then
+        local pq=""
+        if [ "$PROBE_PQ_CHECKED" -eq 0 ]; then
+          detect_pq_curve "$bin"
+        fi
+        [ -n "$PROBE_PQ_CURVE" ] && pq="--curves $PROBE_PQ_CURVE"
         if [ "$host" = "gateway.discord.gg" ]; then
-          out=$($to "$bin" $lp -s -k --tlsv1.3 \
+          out=$($to "$bin" $lp $pq -s -k --tlsv1.3 \
             -H "Upgrade: websocket" -H "Connection: Upgrade" \
             -H "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==" -H "Sec-WebSocket-Version: 13" \
             -L --max-redirs 5 -m 8 --connect-timeout 5 -o "$tmp_body" -A 'Mozilla/5.0' \
             -b "$jar" -c "$jar" -w "\nREDIRECT_URL:%{redirect_url}\nHTTP_CODE:%{http_code}\n" "https://gateway.discord.gg/?v=10&encoding=json" 2>&1); rc=$?
         else
-          out=$($to "$bin" $lp -s -k --tlsv1.3 -L --max-redirs 5 -m 8 --connect-timeout 5 -o "$tmp_body" -A 'Mozilla/5.0' \
+          out=$($to "$bin" $lp $pq -s -k --tlsv1.3 -L --max-redirs 5 -m 8 --connect-timeout 5 -o "$tmp_body" -A 'Mozilla/5.0' \
             -b "$jar" -c "$jar" -w "\nREDIRECT_URL:%{redirect_url}\nHTTP_CODE:%{http_code}\n" "$url" 2>&1); rc=$?
         fi
       else

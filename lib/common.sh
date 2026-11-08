@@ -79,6 +79,7 @@ SNAPSHOT_DIR="$STATE_DIR/snapshot_working"
 GOOGLEVIDEO_CACHE_FILE="$STATE_DIR/googlevideo_cdn.txt"
 ORCHESTRA_MEMORY_FILE="$STATE_DIR/orchestra_memory.json"
 TG_AFFINITY_FILE="$STATE_DIR/tg_affinity.json"
+TETHER_OFFLOAD_STATE="$STATE_DIR/tether_offload_orig"
 
 
 CNT_OUT_MASK=0x0f000000
@@ -93,7 +94,7 @@ fi
 
 set_defaults() {
   : "${ISP_INTERFACE:=}"
-  : "${IFACE_EXCLUDE:=lo tun+ tap+ wg+ ppp+ ipsec+ ifb+ dummy+}"
+  : "${IFACE_EXCLUDE:=lo tun+ tap+ wg+ awg+ vpn+ warp+ ppp+ ipsec+ tailscale+ ifb+ dummy+}"
   : "${IPV6_ENABLED:=1}"
   : "${TCP_PORTS:=80,443,1984,2053,2083,2087,2096,5222,8443}"
   : "${UDP_PORTS:=443,590:600,1400,3478:3481,5349,19294:19344,49152:65535}"
@@ -1443,6 +1444,9 @@ _fw_iface_rules() {
   # don't requeue packets already processed by nfqws2
   $CMD -w -t mangle -A $IPT_GROUP_POST $OUT -m mark --mark $MARK_PROCESSED -j RETURN
   $CMD -w -t mangle -A $IPT_GROUP_PRE $IN -m mark --mark $MARK_PROCESSED -j RETURN
+  if [ -n "$NFQWS_GID" ] && [ "$NFQWS_GID" != "0" ] && [ "$NFQWS_GID" != "root" ]; then
+    $CMD -w -t mangle -A $IPT_GROUP_POST $OUT -m owner --gid-owner "$NFQWS_GID" -j RETURN 2>/dev/null || true
+  fi
 
   # outgoing (POSTROUTING)
   [ -n "$UP" ] && _fw_add_rule "$CMD" $IPT_GROUP_POST "$OUT" udp dports "$UP" "" "$TARGET_OUT_UDP"
@@ -1727,18 +1731,88 @@ firewall_ip6tables() { [ "$IPV6_ENABLED" = "0" ] && return 0; _firewall_start ip
 firewall_iptables_restore()  { _firewall_start_restore iptables; }
 firewall_ip6tables_restore() { [ "$IPV6_ENABLED" = "0" ] && return 0; _firewall_start_restore ip6tables; }
 
+bpf_offload_detach() {
+  local tc_bin="/system/bin/tc"
+  if [ ! -x "$tc_bin" ]; then
+    if ! command -v tc >/dev/null 2>&1; then
+      return 0
+    fi
+    tc_bin="tc"
+  fi
+  local d out spec
+  for d in $(ls /sys/class/net 2>/dev/null); do
+    out=$("$tc_bin" filter show dev "$d" ingress 2>/dev/null)
+    case "$out" in
+      *schedcls_tether_*)
+        for spec in $(printf '%s\n' "$out" | awk '/schedcls_tether_/ {
+            p=""; r=""
+            for (i=1; i<NF; i++) { if ($i=="protocol") p=$(i+1); if ($i=="pref") r=$(i+1) }
+            if (p!="" && r!="") print p ":" r }' | sort -u); do
+          "$tc_bin" filter del dev "$d" ingress protocol "${spec%%:*}" pref "${spec#*:}" 2>/dev/null || true
+        done
+        ;;
+    esac
+  done
+}
+
 apply_tether_offload() {
   if [ "$ENABLE_HOTSPOT" = "1" ]; then
-    command -v settings >/dev/null 2>&1 || return 0
+    if ! command -v settings >/dev/null 2>&1; then
+      return 0
+    fi
+    if [ ! -f "$TETHER_OFFLOAD_STATE" ]; then
+      {
+        echo "setting=$(settings get global tether_offload_disabled 2>/dev/null)"
+        if command -v device_config >/dev/null 2>&1; then
+          echo "bpf=$(device_config get tethering override_bpf_offload 2>/dev/null)"
+        fi
+      } > "$TETHER_OFFLOAD_STATE" 2>/dev/null || true
+    fi
     settings put global tether_offload_disabled 1 2>/dev/null || true
+    if command -v device_config >/dev/null 2>&1; then
+      device_config put tethering override_bpf_offload false 2>/dev/null || true
+    fi
+    bpf_offload_detach
+    local udev
+    for udev in /sys/class/net/rndis* /sys/class/net/usb* /sys/class/net/ncm*; do
+      if [ -d "$udev" ]; then
+        ip link set dev "${udev##*/}" txqueuelen 1000 2>/dev/null || true
+      fi
+    done
   else
     restore_tether_offload
   fi
 }
 
 restore_tether_offload() {
-  command -v settings >/dev/null 2>&1 || return 0
-  settings put global tether_offload_disabled 0 2>/dev/null || true
+  if [ -f "$TETHER_OFFLOAD_STATE" ]; then
+    local line key val
+    while IFS= read -r line || [ -n "$line" ]; do
+      key="${line%%=*}"
+      val="${line#*=}"
+      case "$key" in
+        setting)
+          case "$val" in
+            ""|null) settings delete global tether_offload_disabled 2>/dev/null || true ;;
+            *)       settings put global tether_offload_disabled "$val" 2>/dev/null || true ;;
+          esac
+          ;;
+        bpf)
+          if command -v device_config >/dev/null 2>&1; then
+            case "$val" in
+              ""|null) device_config delete tethering override_bpf_offload 2>/dev/null || true ;;
+              *)       device_config put tethering override_bpf_offload "$val" 2>/dev/null || true ;;
+            esac
+          fi
+          ;;
+      esac
+    done < "$TETHER_OFFLOAD_STATE"
+    rm -f "$TETHER_OFFLOAD_STATE" 2>/dev/null || true
+  else
+    if command -v settings >/dev/null 2>&1; then
+      settings put global tether_offload_disabled 0 2>/dev/null || true
+    fi
+  fi
 }
 
 # check both rc: firewall_ip6tables returns 0 when IPv6 is off, masking an iptables failure
@@ -2337,7 +2411,7 @@ wifi_is_default() {
     /^ *Active default network:/ { act = $NF; seen = 1 }
     /NetworkAgentInfo/ && match($0, /network\{[0-9]+\}/) {
       id = substr($0, RSTART + 8, RLENGTH - 9)
-      if (!(id in kind)) kind[id] = ($0 ~ /ni\{WIFI/ || $0 ~ /Transports: [A-Z|]*WIFI/ || $0 ~ /InterfaceName: wlan/) ? "wifi" : "other"
+      if (!(id in kind)) kind[id] = ($0 ~ /ni\{WIFI/ || $0 ~ /Transports: [A-Z|]*WIFI/ || $0 ~ /InterfaceName: s?wlan/) ? "wifi" : "other"
     }
     END {
       if (!seen) print "unknown"
@@ -2381,9 +2455,25 @@ wl_probe() {
 
 on_wifi() {
   local d n="${NFQWS_SYSNET:-/sys/class/net}"
-  for d in "$n"/wlan*; do
+  for d in "$n"/wlan* "$n"/swlan*; do
     [ "$(cat "$d/operstate" 2>/dev/null)" = up ] && return 0
   done
+  return 1
+}
+
+active_sim_slot() {
+  local sub slot=""
+  sub=$(settings get global multi_sim_data_call 2>/dev/null)
+  case "$sub" in
+    ''|*[!0-9]*) return 1 ;;
+    *)
+      slot=$(content query --uri content://telephony/siminfo --projection sim_id --where "_id=$sub" 2>/dev/null | sed -n 's/.*sim_id=\([0-9]*\).*/\1/p' | head -n 1)
+      case "$slot" in
+        ''|*[!0-9]*) return 1 ;;
+        *) printf '%s' "$slot"; return 0 ;;
+      esac
+      ;;
+  esac
   return 1
 }
 
@@ -2403,9 +2493,22 @@ smart_net_id() {
     printf 'wifi-%s\t%s' "$(printf '%s' "$ssid" | cksum | cut -d' ' -f1)" "$ssid"
     return 0
   fi
-  case "$dev" in wlan*) printf 'wifi\tWi‑Fi'; return 0 ;; esac
-  op=$(getprop gsm.operator.numeric 2>/dev/null); op=${op%%,*}
-  name=$(getprop gsm.operator.alpha 2>/dev/null); name=${name%%,*}
+  case "$dev" in wlan*|swlan*) printf 'wifi\tWi‑Fi'; return 0 ;; esac
+  op=$(getprop gsm.operator.numeric 2>/dev/null)
+  name=$(getprop gsm.operator.alpha 2>/dev/null)
+  case "$op" in
+    *,*)
+      local slot op_sel name_sel
+      if slot=$(active_sim_slot); then
+        op_sel=$(printf '%s' "$op" | cut -d, -f$((slot + 1)) 2>/dev/null)
+        name_sel=$(printf '%s' "$name" | cut -d, -f$((slot + 1)) 2>/dev/null)
+        [ -n "$op_sel" ] && op="$op_sel"
+        [ -n "$name_sel" ] && name="$name_sel"
+      fi
+      ;;
+  esac
+  op=${op%%,*}
+  name=${name%%,*}
   case "$op" in
     ''|*[!0-9]*) printf 'mobile\t%s' "${name:-mobile}" ;;
     *) printf 'mobile-%s\t%s' "$op" "${name:-$op}" ;;
@@ -2427,11 +2530,11 @@ smart_net_update() {
 }
 
 # ---------------------------------------------------------------- VPN pause
-# Returns 0 if an active VPN interface is up (tun+, wg+, ppp+, tap+, tailscale+)
+# Returns 0 if an active VPN interface is up (tun+, wg+, awg+, vpn+, warp+, ppp+, tap+, tailscale+)
 vpn_active() {
   local dev flags
   local n="${NFQWS_SYSNET:-/sys/class/net}"
-  for dev in "$n"/tun* "$n"/wg* "$n"/ppp* "$n"/ipsec* "$n"/tap* "$n"/tailscale*; do
+  for dev in "$n"/tun* "$n"/wg* "$n"/awg* "$n"/vpn* "$n"/warp* "$n"/ppp* "$n"/ipsec* "$n"/tap* "$n"/tailscale*; do
     [ -d "$dev" ] || continue
     flags=$(cat "$dev/flags" 2>/dev/null)
     if [ -n "$flags" ]; then
@@ -2444,7 +2547,7 @@ vpn_active() {
     fi
   done
   if has_ip; then
-    ip link show 2>/dev/null | grep -Eq ':[[:space:]]*(tun|wg|ppp|ipsec|tap|tailscale)[0-9]*[ :].*<[A-Z0-9_,]*UP' && return 0
+    ip link show 2>/dev/null | grep -Eq ':[[:space:]]*(tun|wg|awg|vpn|warp|ppp|ipsec|tap|tailscale)[0-9]*[ :].*<[A-Z0-9_,]*UP' && return 0
   fi
   return 1
 }
@@ -2456,8 +2559,18 @@ _raw_network_id() {
     printf 'wifi:%s' "$ssid"
     return 0
   fi
-  op=$(getprop gsm.operator.alpha 2>/dev/null | cut -d',' -f1 | tr -d '\r\n')
-  [ -z "$op" ] && op=$(getprop gsm.sim.operator.alpha 2>/dev/null | cut -d',' -f1 | tr -d '\r\n')
+  op=$(getprop gsm.operator.alpha 2>/dev/null | tr -d '\r\n')
+  [ -z "$op" ] && op=$(getprop gsm.sim.operator.alpha 2>/dev/null | tr -d '\r\n')
+  case "$op" in
+    *,*)
+      local slot op_sel
+      if slot=$(active_sim_slot); then
+        op_sel=$(printf '%s' "$op" | cut -d, -f$((slot + 1)) 2>/dev/null)
+        [ -n "$op_sel" ] && op="$op_sel"
+      fi
+      ;;
+  esac
+  op=${op%%,*}
   if [ -n "$op" ]; then
     printf 'cell:%s' "$op"
   else

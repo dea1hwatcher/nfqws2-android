@@ -596,5 +596,40 @@ assert_no_file "$SYSCTL_STATE" "and clears the snapshot"
 
 unset PROC_SYS_ROOT
 
+# ── VPN interface detection ──────────────────────────────────────────────────
+section "vpn_active: supports tun, wg, awg, vpn, warp, tailscale"
+
+NFQWS_SYSNET="$SANDBOX/sysnet_test"
+mkdir -p "$NFQWS_SYSNET"
+
+mkdir -p "$NFQWS_SYSNET/awg0"; printf '0x1091\n' > "$NFQWS_SYSNET/awg0/flags"
+vpn_active; assert_rc 0 $? "AmneziaWG (awg0) detected as active VPN"
+rm -rf "$NFQWS_SYSNET/awg0"
+
+mkdir -p "$NFQWS_SYSNET/warp0"; printf '0x1091\n' > "$NFQWS_SYSNET/warp0/flags"
+vpn_active; assert_rc 0 $? "WARP (warp0) detected as active VPN"
+rm -rf "$NFQWS_SYSNET/warp0"
+
+mkdir -p "$NFQWS_SYSNET/vpn0"; printf '0x1091\n' > "$NFQWS_SYSNET/vpn0/flags"
+vpn_active; assert_rc 0 $? "Generic VPN (vpn0) detected as active VPN"
+rm -rf "$NFQWS_SYSNET/vpn0"
+
+rm -rf "$NFQWS_SYSNET"
+unset NFQWS_SYSNET
+
+# ── Tethering offload & BPF detach ───────────────────────────────────────────
+section "apply_tether_offload & restore_tether_offload"
+
+ENABLE_HOTSPOT=1
+rm -f "$TETHER_OFFLOAD_STATE"
+MOCK_TC_TETHER=1
+apply_tether_offload
+assert_file "$TETHER_OFFLOAD_STATE" "original offload state is recorded"
+assert_contains "$(cat "$TETHER_OFFLOAD_STATE")" "setting=" "setting is preserved"
+
+restore_tether_offload
+assert_no_file "$TETHER_OFFLOAD_STATE" "restore clears recorded offload state"
+MOCK_TC_TETHER=""
+
 harness_finish
 

@@ -54,8 +54,35 @@ case "$NAME" in
       get)
         case "$3" in
           tether_offload_disabled) printf '%s\n' "${MOCK_TETHER_OFFLOAD:-1}" ;;
+          multi_sim_data_call) printf '%s\n' "${MOCK_DATA_SUB:-}" ;;
           *) printf '\n' ;;
         esac ;;
+      *) exit 0 ;;
+    esac
+    exit 0 ;;
+  device_config)
+    case "$1" in
+      get)
+        case "$3" in
+          override_bpf_offload) printf '%s\n' "${MOCK_BPF_OFFLOAD:-false}" ;;
+          *) printf '\n' ;;
+        esac ;;
+      *) exit 0 ;;
+    esac
+    exit 0 ;;
+  content)
+    case "$*" in
+      *telephony/siminfo*)
+        printf 'Row: 0 sim_id=%s\n' "${MOCK_SIM_SLOT:-0}" ;;
+      *) exit 0 ;;
+    esac
+    exit 0 ;;
+  tc)
+    case "$*" in
+      *filter*show*)
+        if [ -n "${MOCK_TC_TETHER:-}" ]; then
+          printf 'filter protocol ip pref 100 schedcls_tether_downstream\n'
+        fi ;;
       *) exit 0 ;;
     esac
     exit 0 ;;

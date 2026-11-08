@@ -45,7 +45,7 @@ fi
 SANDBOX=$(mktemp -d "${NFQWS_TEST_TMP:-/tmp}/nfqws2-pack.XXXXXX") || exit 1
 SANDBOX=$(cd "$SANDBOX" && pwd)
 
-MODULE_FILES="action.sh boot-completed.sh customize.sh service.sh uninstall.sh module.prop icon.png LICENSE README.md changelog.md"
+MODULE_FILES="action.sh boot-completed.sh customize.sh post-fs-data.sh service.sh uninstall.sh module.prop icon.png LICENSE README.md changelog.md"
 MODULE_DIRS="bin $([ -d "$REPO_DIR/binaries" ] && echo binaries) blobs defaults lib lists lua strategies strategy-catalogs system webroot"
 
 # ── builder ───────────────────────────────────────────────────────────────────
@@ -81,7 +81,7 @@ PY
   "$PY" - "$OUT" "$REPO_DIR" <<'PY' > "$SANDBOX/required.txt"
 import os, sys, zipfile
 names = set(zipfile.ZipFile(sys.argv[1]).namelist())
-for n in ('module.prop', 'icon.png', 'customize.sh', 'service.sh', 'action.sh', 'boot-completed.sh', 'uninstall.sh',
+for n in ('module.prop', 'icon.png', 'customize.sh', 'post-fs-data.sh', 'service.sh', 'action.sh', 'boot-completed.sh', 'uninstall.sh',
           'bin/nfqws2-ctl', 'bin/pkglist.jar', 'system/bin/nfqws2-ctl', 'lib/common.sh', 'defaults/nfqws2.conf',
           'webroot/index.html', 'webroot/config.json'):
     print(('OK  ' if n in names else 'MISSING ') + n)
