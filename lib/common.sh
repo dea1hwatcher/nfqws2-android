@@ -80,6 +80,7 @@ GOOGLEVIDEO_CACHE_FILE="$STATE_DIR/googlevideo_cdn.txt"
 ORCHESTRA_MEMORY_FILE="$STATE_DIR/orchestra_memory.json"
 TG_AFFINITY_FILE="$STATE_DIR/tg_affinity.json"
 TETHER_OFFLOAD_STATE="$STATE_DIR/tether_offload_orig"
+FW_RESTORE_DIR="$STATE_DIR/firewall-restore"
 
 
 CNT_OUT_MASK=0x0f000000
@@ -778,6 +779,18 @@ heal_blob() { # <blob_path> -> 0 if healed/exists, 1 if not healable
   return 1
 }
 
+_expand_path_refs() { # <path_string>
+  printf '%s\n' "$1" | sed \
+      -e "s#\\\$LUA_DIR#$LUA_DIR#g" \
+      -e "s#\\\${LUA_DIR}#$LUA_DIR#g" \
+      -e "s#\\\$BLOBS_DIR#$BLOBS_DIR#g" \
+      -e "s#\\\${BLOBS_DIR}#$BLOBS_DIR#g" \
+      -e "s#\\\$CONFDIR#$CONFDIR#g" \
+      -e "s#\\\${CONFDIR}#$CONFDIR#g" \
+      -e "s#\\\$MODDIR#$MODDIR#g" \
+      -e "s#\\\${MODDIR}#$MODDIR#g"
+}
+
 validate_strategy_blob_references() { # <args_or_conffile>
   local content="$1" f p
   if [ -f "$content" ]; then
@@ -795,16 +808,7 @@ validate_strategy_blob_references() { # <args_or_conffile>
       }
     }' | sort -u); do
     case "$p" in META*|TG*) continue ;; esac
-    f="$p"
-    f=$(printf '%s\n' "$f" | sed \
-        -e "s#\\\$LUA_DIR#$LUA_DIR#g" \
-        -e "s#\\\${LUA_DIR}#$LUA_DIR#g" \
-        -e "s#\\\$BLOBS_DIR#$BLOBS_DIR#g" \
-        -e "s#\\\${BLOBS_DIR}#$BLOBS_DIR#g" \
-        -e "s#\\\$CONFDIR#$CONFDIR#g" \
-        -e "s#\\\${CONFDIR}#$CONFDIR#g" \
-        -e "s#\\\$MODDIR#$MODDIR#g" \
-        -e "s#\\\${MODDIR}#$MODDIR#g")
+    f=$(_expand_path_refs "$p")
     case "$f" in
       */nfqws2-debug.log|*/nfqws2.log|*/auto.log) continue ;;
     esac
@@ -832,16 +836,7 @@ generate_strategy_receipt() { # [conffile]
         s = substr(s, RSTART + RLENGTH)
       }
     }' "$conf" 2>/dev/null | sort -u); do
-    f="$p"
-    f=$(printf '%s\n' "$f" | sed \
-        -e "s#\\\$LUA_DIR#$LUA_DIR#g" \
-        -e "s#\\\${LUA_DIR}#$LUA_DIR#g" \
-        -e "s#\\\$BLOBS_DIR#$BLOBS_DIR#g" \
-        -e "s#\\\${BLOBS_DIR}#$BLOBS_DIR#g" \
-        -e "s#\\\$CONFDIR#$CONFDIR#g" \
-        -e "s#\\\${CONFDIR}#$CONFDIR#g" \
-        -e "s#\\\$MODDIR#$MODDIR#g" \
-        -e "s#\\\${MODDIR}#$MODDIR#g")
+    f=$(_expand_path_refs "$p")
     case "$f" in
       */nfqws2-debug.log|*/nfqws2.log|*/auto.log) continue ;;
     esac
@@ -1067,11 +1062,23 @@ _orchestra_rewrite_strategy() { # <host> <idx> <locked|blocked> <value as list>
 orchestra_lock_strategy()  { _orchestra_rewrite_strategy "$1" "$2" locked 0; }
 orchestra_block_strategy() { _orchestra_rewrite_strategy "$1" "$2" blocked 1; }
 
-_orchestra_drop_strategy() { # <host>
-  local host="$1"
+_orchestra_drop_strategy() { # <host> [section]
+  local host="$1" section="${2:-}"
   [ -n "$host" ] || return 1
   orchestra_memory_init
-  grep -v "\"$host\":" "$ORCHESTRA_MEMORY_FILE" > "$ORCHESTRA_MEMORY_FILE.tmp"
+  command -v awk >/dev/null 2>&1 || return 0
+  awk -v h="$host" -v sec="$section" '
+    BEGIN { in_s = 0 }
+    {
+      if (sec != "") {
+        if ($0 ~ ("\"" sec "\":[[:space:]]*\\{")) { in_s = 1; print; next }
+        if (in_s && $0 ~ /^[[:space:]]*\},?/) in_s = 0
+        if (in_s && $0 ~ ("\"" h "\":")) next
+      } else {
+        if ($0 ~ ("\"" h "\":")) next
+      }
+      print
+    }' "$ORCHESTRA_MEMORY_FILE" > "$ORCHESTRA_MEMORY_FILE.tmp"
   if [ -s "$ORCHESTRA_MEMORY_FILE.tmp" ]; then
     mv -f "$ORCHESTRA_MEMORY_FILE.tmp" "$ORCHESTRA_MEMORY_FILE"
   else
@@ -1079,8 +1086,8 @@ _orchestra_drop_strategy() { # <host>
   fi
   return 0
 }
-orchestra_unlock_strategy()  { _orchestra_drop_strategy "$1"; }
-orchestra_unblock_strategy() { _orchestra_drop_strategy "$1"; }
+orchestra_unlock_strategy()  { _orchestra_drop_strategy "$1" locked; }
+orchestra_unblock_strategy() { _orchestra_drop_strategy "$1" blocked; }
 
 orchestra_status() {
   orchestra_memory_init
@@ -1386,6 +1393,8 @@ _fw_batch_cmd() {
 
 _firewall_start_restore() {
   local CMD="$1" rules
+  [ -n "$FW_RESTORE_DIR" ] || FW_RESTORE_DIR="$STATE_DIR/firewall-restore"
+  mkdir -p "$FW_RESTORE_DIR" 2>/dev/null
   rules="${FW_RESTORE_DIR}/${CMD}.input"
 
   command -v "${CMD}-restore" >/dev/null 2>&1 || return 1
@@ -1753,6 +1762,10 @@ bpf_offload_detach() {
   fi
   local d out spec
   for d in $(ls /sys/class/net 2>/dev/null); do
+    case "$d" in
+      rndis*|usb*|ncm*|wlan*|ap*|softap*|eth*|bt-pan*|pan*) ;;
+      *) continue ;;
+    esac
     out=$("$tc_bin" filter show dev "$d" ingress 2>/dev/null)
     case "$out" in
       *schedcls_tether_*)

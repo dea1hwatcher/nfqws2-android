@@ -3738,7 +3738,13 @@ case "$1" in
     fi
     if [ "$chunk_idx" -ge "$total_chunks" ]; then
       ensure_eol "$tmp"
-      mv -f "$tmp" "$f" && chmod 0644 "$f" || { rm -f "$tmp"; echo "Не удалось сохранить ${f##*/}" >&2; exit 1; }
+      if mv -f "$tmp" "$f"; then
+        chmod 0644 "$f" 2>/dev/null || true
+      else
+        rm -f "$tmp" 2>/dev/null
+        echo "Не удалось сохранить ${f##*/}" >&2
+        exit 1
+      fi
       rm -f "$LIST_COUNTS_CACHE" 2>/dev/null
       cmp -s "$f" "$LISTS_PENDING_DIR/${f##*/}" 2>/dev/null && rm -f "$LISTS_PENDING_DIR/${f##*/}"
       if [ "$2" = "apps" ]; then cmd_apply_apps; exit $?; fi
