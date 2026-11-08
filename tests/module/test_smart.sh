@@ -161,6 +161,16 @@ assert_rc 0 "$ctl_rc" "export runs"
 exp_file=$(printf '%s' "$ctl_out" | cut -f2)
 assert_file "$exp_file" "the file is saved"
 assert_eq "" "$(printf '%s' "$ctl_out" | cut -f3)" "with path, no base64 in the output"
+
+ctl smart-export mobile-25001 path "$SANDBOX/nonexistent_dir"
+assert_rc 1 "$ctl_rc" "smart-export fails on nonexistent directory"
+assert_contains "$ctl_out" "Папка не существует или в неё нельзя записать" "smart-export prints error message on nonexistent directory"
+
+mkdir -p "$SANDBOX/custom_smart"
+ctl smart-export mobile-25001 path "$SANDBOX/custom_smart"
+assert_rc 0 "$ctl_rc" "smart-export works with custom valid directory"
+assert_eq "1" "$(ls "$SANDBOX/custom_smart"/nfqws2-smart-*.tsv 2>/dev/null | wc -l | tr -d ' ')" "smart export created in custom directory"
+rm -rf "$SANDBOX/custom_smart"
 printf 'wifi-1\n' > "$SMART_NET_FILE"
 printf '#v4 header\n#m\ttls_16\t101\t7\t1.repeats=2\t500\ntls\tyoutube.com\t2\t2:9.0\t\t\t1\te\ntls_16\tmine.example\t101\t101:3.0\t\t\t1\te\n' > "$SMART_DIR/wifi-1.tsv"
 ctl smart-import-b64 "$(base64 < "$exp_file" | tr -d '\n')"

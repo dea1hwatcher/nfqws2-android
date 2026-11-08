@@ -39,6 +39,13 @@ async function promptSaveDir(titleKey){
     if(chosen === null) return null;
     targetDir = (chosen || targetDir).trim().replace(/\/+$/, '') || '/sdcard/Download';
     if(!targetDir.startsWith('/')) targetDir = '/sdcard/' + targetDir;
+    if(typeof sh === 'function'){
+      const chk = await sh('d=' + q(targetDir) + '; if [ -d "$d" ]; then tf="$d/.nfqws_wtest_$$"; if touch "$tf" 2>/dev/null && rm -f "$tf" 2>/dev/null; then exit 0; fi; fi; exit 1');
+      if(chk && chk.code !== 0){
+        toast(t('Папка не существует или в неё нельзя записать: {0}', targetDir));
+        return null;
+      }
+    }
     if(typeof store !== 'undefined') store.set('nfq_save_dir', targetDir);
   }
   return targetDir;
@@ -111,13 +118,29 @@ async function exportBlobFile(blob, filename, mimeType, localFilePath, targetDir
   } catch(e) {}
   if(localFilePath && typeof window !== 'undefined' && window.ksu){
     try {
+      if(typeof sh === 'function'){
+        const chk = await sh('td=' + q(destFolder) + '; if [ -d "$td" ]; then tf="$td/.nfqws_wtest_$$"; if touch "$tf" 2>/dev/null && rm -f "$tf" 2>/dev/null; then exit 0; fi; fi; exit 1');
+        if(chk && chk.code !== 0){
+          toast(t('Папка не существует или в неё нельзя записать: {0}', destFolder));
+          if(localFilePath && localFilePath !== targetFile){
+            await sh('rm -f ' + q(localFilePath) + ' 2>/dev/null');
+          }
+          return false;
+        }
+      }
       const cmd =
         'f=' + q(localFilePath) + '; tf=' + q(targetFile) + '; td=' + q(destFolder) + '; ' +
-        'mkdir -p "$td" 2>/dev/null; ' +
-        'if [ "$f" != "$tf" ]; then cp -f "$f" "$tf" 2>/dev/null; chmod 666 "$tf" 2>/dev/null; fi; ' +
+        'if [ "$f" != "$tf" ]; then cp -f "$f" "$tf" 2>/dev/null && rm -f "$f" 2>/dev/null; chmod 666 "$tf" 2>/dev/null; fi; ' +
         q(CTL) + ' share-saved "$tf" >/dev/null 2>&1';
-      await sh(cmd);
-    } catch(e) {}
+      const r = await sh(cmd);
+      if(r && r.code !== 0){
+        toast(t('Папка не существует или в неё нельзя записать: {0}', destFolder));
+        return false;
+      }
+    } catch(e) {
+      toast(t('Папка не существует или в неё нельзя записать: {0}', destFolder));
+      return false;
+    }
     toast(t('Архив сохранён: {0}', targetFile));
     return true;
   }

@@ -402,6 +402,16 @@ assert_rc 0 "$ctl_rc" "backup-create works"
 b64_bak="$(printf '%s' "$ctl_out" | cut -f3)"
 assert_match "$ctl_out" "nfqws2-backup-.*\.tar" "backup-create outputs archive name"
 
+ctl backup-create "$(b64 '{"m3_monochrome":"true"}')" "$SANDBOX/nonexistent_dir"
+assert_rc 1 "$ctl_rc" "backup-create fails on nonexistent directory"
+assert_contains "$ctl_out" "Папка не существует или в неё нельзя записать" "backup-create prints error message on nonexistent directory"
+
+mkdir -p "$SANDBOX/custom_backup"
+ctl backup-create "$(b64 '{"m3_monochrome":"true"}')" "$SANDBOX/custom_backup"
+assert_rc 0 "$ctl_rc" "backup-create works with custom valid directory"
+assert_eq "1" "$(ls "$SANDBOX/custom_backup"/nfqws2-backup-*.tar 2>/dev/null | wc -l | tr -d ' ')" "archive created in custom directory"
+rm -rf "$SANDBOX/custom_backup"
+
 ctl backup-list
 assert_rc 0 "$ctl_rc" "backup-list works"
 assert_match "$ctl_out" "nfqws2-backup-.*\.tar" "backup-list lists created archive"
@@ -414,6 +424,16 @@ fi
 
 ctl export-logs
 assert_rc 0 "$ctl_rc" "export-logs works"
+
+ctl export-logs "$SANDBOX/nonexistent_dir"
+assert_rc 1 "$ctl_rc" "export-logs fails on nonexistent directory"
+assert_contains "$ctl_out" "Папка не существует или в неё нельзя записать" "export-logs prints error message on nonexistent directory"
+
+mkdir -p "$SANDBOX/custom_logs"
+ctl export-logs "$SANDBOX/custom_logs"
+assert_rc 0 "$ctl_rc" "export-logs works with custom valid directory"
+assert_eq "1" "$(ls "$SANDBOX/custom_logs"/nfqws2-logs-*.tar 2>/dev/null | wc -l | tr -d ' ')" "log archive created in custom directory"
+rm -rf "$SANDBOX/custom_logs"
 
 # Log exports are regenerable snapshots: the newest 10 are kept, older ones do
 # not pile up. User backups are a different story and are never pruned.

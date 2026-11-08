@@ -231,7 +231,7 @@ async function createBackup(){
   if(!targetDir) return;
   const ui = {};
   UI_KEYS.forEach(k => { const v = store.get(k); if(v != null) ui[k] = v; });
-  const r = await withBusy(['backup-create', b64(JSON.stringify(ui))], 60000);
+  const r = await withBusy(window.ksu ? ['backup-create', b64(JSON.stringify(ui)), targetDir] : ['backup-create', b64(JSON.stringify(ui))], 60000);
   if(r.code){ toast(errText(r, 'Не удалось создать копию')); return; }
   const parts = r.out.trim().split('\n')[0].split('\t');
   const filename = parts[0] || ('nfqws2-backup-' + Date.now() + '.tar');

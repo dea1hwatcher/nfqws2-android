@@ -60,7 +60,7 @@ async function loadLog(){
 async function exportLogs(){
   const targetDir = await promptSaveDir('Экспорт журналов');
   if(!targetDir) return;
-  const r = await withBusy(['export-logs'], 30000);
+  const r = await withBusy(window.ksu ? ['export-logs', targetDir] : ['export-logs'], 30000);
   if(r.code){ toast(errText(r, 'Не удалось экспортировать журналы')); return; }
   const parts = r.out.trim().split('\n')[0].split('\t');
   const filename = parts[0] || ('nfqws2-logs-' + Date.now() + '.tar');

@@ -769,8 +769,39 @@ cmd_log_summary() {
   fi
 }
 
-cmd_export_logs() {
-  local tmp="$STATE_DIR/export_logs.$$" name="nfqws2-logs-$(date '+%Y%m%d-%H%M%S').tar"
+BACKUP_DIR="${NFQWS_BACKUP_DIR:-/sdcard/Download}"
+tar_cmd() {
+  if command -v tar >/dev/null 2>&1; then tar "$@"; else busybox tar "$@"; fi
+}
+validate_target_dir() { # <dir>
+  local d="$1"
+  case "$d" in
+    /) ;;
+    *) while [ "${d%/}" != "$d" ] && [ -n "${d%/}" ]; do d="${d%/}"; done ;;
+  esac
+  if [ -z "$d" ] || [ ! -d "$d" ]; then
+    if [ -n "$1" ]; then
+      echo "$(M "Папка не существует или в неё нельзя записать: $1" "Folder does not exist or cannot be written to: $1")" >&2
+    else
+      echo "$(M 'Папка не существует или в неё нельзя записать' 'Folder does not exist or cannot be written to')" >&2
+    fi
+    return 1
+  fi
+  local tf
+  tf="$d/.nfqws_wtest_$$"
+  if ! (touch "$tf" 2>/dev/null && rm -f "$tf" 2>/dev/null); then
+    echo "$(M "Папка не существует или в неё нельзя записать: $d" "Folder does not exist or cannot be written to: $d")" >&2
+    return 1
+  fi
+  return 0
+}
+
+cmd_export_logs() { # [target_dir]
+  local dest_dir="${1:-$BACKUP_DIR}"
+  validate_target_dir "$dest_dir" || return 1
+
+  local tmp="$STATE_DIR/export_logs.$$"
+  local name="nfqws2-logs-$(date '+%Y%m%d-%H%M%S').tar"
   rm -rf "$tmp"; mkdir -p "$tmp" 2>/dev/null || return 1
   cp -f "$LOG_DIR"/* "$tmp"/ 2>/dev/null
   cp -f "$ARGS_FILE" "$tmp/last.args" 2>/dev/null
@@ -787,22 +818,20 @@ cmd_export_logs() {
     echo "== ip route"; ip route 2>&1; ip -6 route 2>&1 | head -n 20
   } > "$tmp/counters.txt" 2>&1
 
-  mkdir -p "$BACKUP_DIR" 2>/dev/null
-  local out_file="$BACKUP_DIR/$name"
+  local out_file="$dest_dir/$name"
   if (cd "$tmp" && tar_cmd -cf "$out_file" .) 2>/dev/null; then
     printf '%s\t%s\t' "$name" "$out_file"
     b64e < "$out_file" | tr -d '\r\n'
     printf '\n'
     # log exports are regenerable snapshots: keep the newest 10. Backups are the
     # user's own copies and are never deleted here
-    ls -1t "$BACKUP_DIR"/nfqws2-logs-*.tar 2>/dev/null | tail -n +11 | while IFS= read -r old; do rm -f "$old"; done
+    ls -1t "$dest_dir"/nfqws2-logs-*.tar 2>/dev/null | tail -n +11 | while IFS= read -r old; do rm -f "$old"; done
+    rm -rf "$tmp"
   else
-    local d="$BACKUP_DIR/nfqws2-logs"
-    mkdir -p "$d" 2>/dev/null
-    cp -f "$tmp"/* "$d"/ 2>/dev/null
-    echo "Логи сохранены в $d"
+    rm -rf "$tmp" "$out_file"
+    echo "$(M 'Не удалось создать архив логов' 'Failed to create log archive')" >&2
+    return 1
   fi
-  rm -rf "$tmp"
 }
 
 # A JSON array that actually carries applications. An empty "[]" from a failed
@@ -907,15 +936,24 @@ cmd_list_apps() {
 # Архив в Download: конфиг, пользовательские списки (сервисные приходят с
 # релизом и в копию не входят), apps.list, домашние сети, правки стратегий,
 # импорты, активная стратегия и настройки WebUI (ui.json, их передаёт WebUI).
-BACKUP_DIR="${NFQWS_BACKUP_DIR:-/sdcard/Download}"
 BACKUP_LISTS="user exclude ipset ipset_exclude auto probe_hosts probe_ru tcp16 probe_dns probe_tg probe_bench"
-tar_cmd() {
-  if command -v tar >/dev/null 2>&1; then tar "$@"; else busybox tar "$@"; fi
-}
-cmd_backup_create() { # [ui.json в base64]
-  local tmp="$STATE_DIR/backup.$$" name f
-  name="nfqws2-backup-$(date '+%Y%m%d-%H%M%S').tar"
-  mkdir -p "$BACKUP_DIR" 2>/dev/null || { echo "Нет доступа к $BACKUP_DIR" >&2; return 1; }
+cmd_backup_create() { # [ui.json в base64] [target_dir]
+  local ui_data="" dest_dir=""
+  if [ -n "${1:-}" ]; then
+    case "$1" in
+      /*) dest_dir="$1" ;;
+      *) ui_data="$1" ;;
+    esac
+  fi
+  if [ -n "${2:-}" ]; then
+    dest_dir="$2"
+  fi
+  dest_dir="${dest_dir:-$BACKUP_DIR}"
+  validate_target_dir "$dest_dir" || return 1
+
+  local tmp="$STATE_DIR/backup.$$"
+  local name="nfqws2-backup-$(date '+%Y%m%d-%H%M%S').tar"
+  local f
   rm -rf "$tmp"; mkdir -p "$tmp/lists" "$tmp/strategies" "$tmp/imports" || return 1
   printf 'nfqws2-backup 1\n%s\n' "$(sed -n 's/^version=//p' "$MODDIR/module.prop" | head -n1)" > "$tmp/BACKUP"
   cp -f "$CONFFILE" "$tmp/nfqws2.conf" 2>/dev/null
@@ -925,19 +963,21 @@ cmd_backup_create() { # [ui.json в base64]
   cp -f "$ACTIVE_FILE" "$tmp/" 2>/dev/null
   cp -f "$USER_STRATEGIES_DIR"/*.conf "$tmp/strategies/" 2>/dev/null
   cp -f "$IMPORTS_DIR"/*.conf "$tmp/imports/" 2>/dev/null
-  [ -n "$1" ] && b64d "$1" > "$tmp/ui.json"
-  if ! (cd "$tmp" && tar_cmd -cf "$BACKUP_DIR/$name" .) 2>/dev/null; then
-    rm -rf "$tmp" "$BACKUP_DIR/$name"
-    echo "Не удалось создать архив" >&2
+  [ -n "$ui_data" ] && b64d "$ui_data" > "$tmp/ui.json"
+  if ! (cd "$tmp" && tar_cmd -cf "$dest_dir/$name" .) 2>/dev/null; then
+    rm -rf "$tmp" "$dest_dir/$name"
+    echo "$(M 'Не удалось создать архив' 'Failed to create archive')" >&2
     return 1
   fi
   rm -rf "$tmp"
-  printf '%s\t%s\t' "$name" "$BACKUP_DIR/$name"
-  b64e < "$BACKUP_DIR/$name" | tr -d '\r\n'
+  printf '%s\t%s\t' "$name" "$dest_dir/$name"
+  b64e < "$dest_dir/$name" | tr -d '\r\n'
   printf '\n'
 }
-cmd_backup_list() {
-  ls -1t "$BACKUP_DIR"/nfqws2-backup-*.tar 2>/dev/null | while IFS= read -r f; do
+cmd_backup_list() { # [target_dir]
+  local dir="${1:-$BACKUP_DIR}"
+  [ -d "$dir" ] || return 0
+  ls -1t "$dir"/nfqws2-backup-*.tar 2>/dev/null | while IFS= read -r f; do
     printf '%s\t%s\n' "${f##*/}" "$(wc -c < "$f" 2>/dev/null | tr -d ' ')"
   done
 }
@@ -2020,14 +2060,22 @@ cmd_smart_sites() {
       }' | sort -t "$(printf '\t')" -k1,1nr | head -n 300 | cut -f2- | awk 'BEGIN { printf "[" } { printf "%s%s", (NR > 1 ? "," : ""), $0 } END { print "]" }'
 }
 # Поделиться обучением: файл выученного в сети -> «имя<TAB>путь<TAB>[base64]»
-cmd_smart_export() { # <сеть> [path]
-  local f="$SMART_DIR/$1.tsv" name out
+cmd_smart_export() { # <сеть> [path|target_dir] [target_dir]
+  local f="$SMART_DIR/$1.tsv"
+  local name out dest_dir="$BACKUP_DIR" only_path=0
   smart_valid_net "$1" && [ -f "$f" ] || { echo "$(M 'В этой сети ещё ничего не выучено' 'Nothing learned on this network yet')" >&2; return 1; }
-  mkdir -p "$BACKUP_DIR" 2>/dev/null || { echo "Нет доступа к $BACKUP_DIR" >&2; return 1; }
-  name="nfqws2-smart-$1-$(date '+%Y%m%d-%H%M%S').tsv"; out="$BACKUP_DIR/$name"
+  if [ "${2:-}" = "path" ]; then
+    only_path=1
+    [ -n "${3:-}" ] && dest_dir="$3"
+  elif [ -n "${2:-}" ]; then
+    dest_dir="$2"
+  fi
+  validate_target_dir "$dest_dir" || return 1
+  name="nfqws2-smart-$1-$(date '+%Y%m%d-%H%M%S').tsv"
+  out="$dest_dir/$name"
   cp -f "$f" "$out" || return 1
   printf '%s\t%s\t' "$name" "$out"
-  [ "$2" = path ] || b64e < "$out" | tr -d '\n'
+  [ "$only_path" = 1 ] || b64e < "$out" | tr -d '\n'
   echo
 }
 # Чужое обучение — в текущую сеть: сайты, которых здесь ещё нет, с их
@@ -3832,13 +3880,13 @@ case "$1" in
       *) echo "list|auto|all" >&2; exit 1 ;; esac ;;
   list-apps) cmd_list_apps "$2" ;;
   get-logs) cmd_get_logs "$2" "$3" "$4" ;;
-  export-logs) cmd_export_logs ;;
+  export-logs) cmd_export_logs "$2" ;;
   wifi-ssid) current_ssid || exit 1 ;;
   current-network) current_network_title 2>/dev/null || echo "unknown" ;;
   list-net-strategies) list_net_strategies ;;
   clear-net-strategies) clear_net_strategies; echo OK ;;
-  backup-create) cmd_backup_create "$2" ;;
-  backup-list) cmd_backup_list ;;
+  backup-create) cmd_backup_create "$2" "$3" ;;
+  backup-list) cmd_backup_list "$2" ;;
   backup-restore) cmd_backup_restore "$2" ;;
   backup-restore-b64) cmd_backup_restore_b64 "$2" ;;
   net-info) cmd_net_info ;;
@@ -3867,7 +3915,7 @@ EOF
   smart-status) cmd_smart_status "$2" ;;
   smart-reset) cmd_smart_reset "${2:-all}" ;;
   smart-sites) cmd_smart_sites "$2" "$3" ;;
-  smart-export) cmd_smart_export "$2" "$3" ;;
+  smart-export) cmd_smart_export "$2" "$3" "$4" ;;
   smart-import-b64) cmd_smart_import_b64 "$2" ;;
   smart-learn-once) cmd_smart_learn_once ;;
   smart-bench) cmd_smart_bench "$2" "$3" ;;

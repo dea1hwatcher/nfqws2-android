@@ -257,11 +257,13 @@ async function smartExport(){
   if(!SMS) await smartLoad();
   const v = smartView || (SMS && SMS.view);
   if(!v){ toast(t('В этой сети ещё ничего не выучено')); return; }
-  const r = await withBusy(window.ksu ? ['smart-export', v, 'path'] : ['smart-export', v]);
+  const targetDir = await promptSaveDir('Экспорт обучения');
+  if(!targetDir) return;
+  const r = await withBusy(window.ksu ? ['smart-export', v, 'path', targetDir] : ['smart-export', v]);
   const out = (r.out || '').trim();
   if(r.code || !out){ toast(errText(r, 'Не удалось сохранить')); return; }
   const p = out.split('\n')[0].split('\t');
-  await exportBlobFile(p[2] ? b64toBlob(p[2], 'text/tab-separated-values') : null, p[0], 'text/tab-separated-values', p[1]);
+  await exportBlobFile(p[2] ? b64toBlob(p[2], 'text/tab-separated-values') : null, p[0], 'text/tab-separated-values', p[1], targetDir);
 }
 
 async function smartImport(files){

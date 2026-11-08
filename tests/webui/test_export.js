@@ -183,7 +183,8 @@ eq(sampleStr.length, blob.size, 'Blob size matches original byte length');
     exec: (cmd, arg2, arg3) => {
       sharedIntents.push(cmd);
       const cbId = typeof arg3 === 'string' ? arg3 : (typeof arg2 === 'string' ? arg2 : null);
-      if (cbId && sandbox[cbId]) sandbox[cbId](0, '', '');
+      const fn = cbId && (sandbox[cbId] || sandbox.window[cbId]);
+      if (fn) fn(0, '', '');
     }
   };
   await sandbox.exportBlobFile(blob, 'backup.tar', 'application/x-tar', '/sdcard/Download/backup.tar');
@@ -192,6 +193,19 @@ eq(sampleStr.length, blob.size, 'Blob size matches original byte length');
   const sendCmd = sharedIntents.find(cmd => cmd.includes('backup.tar'));
   truthy(sendCmd, 'exportBlobFile hands the saved copy to share in ksu environment');
   truthy(sendCmd && (sendCmd.includes('share-saved') || sendCmd.includes('android.intent.action.SEND')), 'share mechanism is invoked');
+
+  // Test failure on invalid directory in ksu environment
+  let lastToast = '';
+  sandbox.toast = msg => { lastToast = msg; };
+  const origSh = sandbox.sh;
+  sandbox.sh = async cmd => {
+    if (cmd && cmd.includes('wtest')) return { code: 1, out: 'permission denied' };
+    return { code: 0, out: '' };
+  };
+  const exportRes = await sandbox.exportBlobFile(blob, 'backup.tar', 'application/x-tar', '/sdcard/Download/backup.tar', '/invalid_dir');
+  eq(false, exportRes, 'exportBlobFile returns false when destination directory is invalid');
+  truthy(lastToast.includes('Папка не существует или в неё нельзя записать') || lastToast.includes('Folder does not exist'), 'toasts error on invalid directory');
+  sandbox.sh = origSh;
 
 
   // ── markup invariants ───────────────────────────────────────────────────────
@@ -224,6 +238,7 @@ eq(sampleStr.length, blob.size, 'Blob size matches original byte length');
   eq('Pick a .tar archive via the file manager or from the list below. Current settings, lists and strategies will be replaced.',
     EN['Выберите архив .tar через проводник или сохранённую копию из списка ниже. Текущие настройки, списки и стратегии будут заменены.'],
     'Backup sheet description translation');
+  truthy(Boolean(EN['Папка не существует или в неё нельзя записать: {0}']), 'Папка не существует или в неё нельзя записать: {0} translation');
 
   // ── summary ─────────────────────────────────────────────────────────────────
   process.stdout.write('\n----------------------------------------\n');
