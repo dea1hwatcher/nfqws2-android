@@ -46,7 +46,7 @@ section "line endings"
 # The check covers every shipped text file, not just the scripts: an editor on
 # Windows will happily save index.html or a config as CRLF too, and the repo
 # pins LF.
-TEXT_FILES="$SCRIPTS module.prop LICENSE README.md webroot/index.html webroot/config.json"
+TEXT_FILES="$SCRIPTS module.prop LICENSE README.md README_EN.md webroot/index.html webroot/config.json"
 TEXT_FILES="$TEXT_FILES $(cd "$REPO_DIR" && ls lists/*.list defaults/lists/*.list defaults/*.conf \
                                             strategies/*.conf lua/*.lua strategy-catalogs/*.list 2>/dev/null)"
 

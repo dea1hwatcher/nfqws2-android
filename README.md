@@ -1,5 +1,7 @@
 # nfqws2-android
 
+[English](README_EN.md) | [Русский](README.md)
+
 <img align='right' src='icon.png' width='220px' alt="nfqws2-android Icon">
 
 Полнофункциональный порт **nfqws2** ([zapret2](https://github.com/bol-van/zapret) от bol-van) с поддержкой синтаксиса стратегий Keenetic для Android.
