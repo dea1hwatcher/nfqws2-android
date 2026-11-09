@@ -1009,7 +1009,10 @@ resolve_googlevideo_cdn() { # [force]
       rr*---sn-*) domain="${cluster}.googlevideo.com" ;;
       rr*) domain="${cluster}.googlevideo.com" ;;
       sn-*) domain="rr1---${cluster}.googlevideo.com" ;;
-      *) domain="rr1---sn-${cluster}.googlevideo.com" ;;
+      *)
+        cluster=$(printf '%s' "$cluster" | tr 'uzpkfa50vqlgb61wrmhc72xsnid83ytoje94-' '0123456789abcdefghijklmnopqrstuvwxyz-')
+        domain="rr1---sn-${cluster}.googlevideo.com"
+        ;;
     esac
   fi
 

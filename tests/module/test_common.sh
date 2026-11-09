@@ -490,6 +490,20 @@ res3=$(resolve_googlevideo_cdn force)
 assert_eq "rr3---sn-from-list.googlevideo.com" "$res3" "falls back to googlevideo.list"
 rm -f "$LISTS_DIR/googlevideo.list" "$GOOGLEVIDEO_CACHE_FILE"
 
+# 4. Test Google mapping cipher decoding (muc12s10 -> h0jelne7)
+rm -f "$GOOGLEVIDEO_CACHE_FILE"
+cat > "$MOCKBIN/curl" << 'EOF'
+#!/bin/sh
+echo "127.0.0.1 => muc12s10"
+EOF
+chmod +x "$MOCKBIN/curl"
+probe_tool() { printf '%s\n' "curl curl"; }
+res4=$(resolve_googlevideo_cdn force)
+assert_eq "rr1---sn-h0jelne7.googlevideo.com" "$res4" "decodes Google report_mapping cluster cipher"
+unset -f probe_tool 2>/dev/null
+rm -f "$GOOGLEVIDEO_CACHE_FILE"
+cp "$TESTS_DIR/lib/mock/curl" "$MOCKBIN/curl"
+
 section "batch generation does not mutate installed chains"
 iptables -w -t mangle -N nfqws_batch
 iptables -w -t mangle -A nfqws_batch -j RETURN

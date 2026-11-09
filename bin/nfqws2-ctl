@@ -1405,7 +1405,14 @@ cmd_probe_all_inner() {
       elif [ "$st2" = "ok" ] && [ "$st3" = "ok" ]; then
         printf 'TLS_DIFF\t%s\t%s\tboth_ok\tОба протокола (TLS 1.2 и 1.3) доступны\n' "$i" "$h"
       elif [ "$st2" != "ok" ] && [ "$st3" != "ok" ]; then
-        printf 'TLS_DIFF\t%s\t%s\tboth_blocked\tОба протокола (TLS 1.2 и 1.3) заблокированы\n' "$i" "$h"
+        local upper_h r_upper
+        upper_h=$(printf '%s' "$h" | tr 'a-z' 'A-Z')
+        r_upper=$(probe_attempt "$kind" "$bin" "$upper_h" 3)
+        if [ "${r_upper%% *}" = "ok" ]; then
+          printf 'TLS_DIFF\t%s\t%s\tsni_case_bypass\tТСПУ фильтрует строковый SNI (открывается в верхнем регистре)\n' "$i" "$h"
+        else
+          printf 'TLS_DIFF\t%s\t%s\tboth_blocked\tОба протокола (TLS 1.2 и 1.3) заблокированы\n' "$i" "$h"
+        fi
       fi
 
       # QUIC авто-диагностика

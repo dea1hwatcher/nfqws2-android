@@ -770,10 +770,12 @@ function renderQuicIndicator(){
   });
 
   let tlsDiffSummary = '';
+  let isCaseBypass = false;
   tlsKeys.forEach(k => {
     const v = tlsDiffResult[k].verdict;
-    if(v === 'tls13_blocked' || v === 'tls12_blocked' || v === 'both_blocked'){
+    if(v === 'tls13_blocked' || v === 'tls12_blocked' || v === 'both_blocked' || v === 'sni_case_bypass'){
       tlsDiffSummary = t(tlsDiffResult[k].desc);
+      if(v === 'sni_case_bypass') isCaseBypass = true;
     }
   });
 
@@ -799,7 +801,7 @@ function renderQuicIndicator(){
   }
 
   if(tlsDiffSummary){
-    html += '<div class="helper err" style="margin-top:8px;">' + icon('warn', 's16') + ' ' + esc(tlsDiffSummary) + '</div>';
+    html += '<div class="helper ' + (isCaseBypass ? 'info' : 'err') + '" style="margin-top:8px;">' + icon(isCaseBypass ? 'info' : 'warn', 's16') + ' ' + esc(tlsDiffSummary) + '</div>';
   }
 
   if(discoveredGoogleVideoCdn){
