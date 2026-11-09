@@ -1913,6 +1913,7 @@ cmd_domain_check() {
     printf 'LIST\t%s\t%s\t%s\n' "${f##*/}" "$role" "$entry"
   done
   rm -f "$cand"
+  trap - EXIT INT TERM
 
   tool=$(probe_tool); kind="${tool%% *}"; bin="${tool#* }"
   # IP — как его видит система (резолвер Android, с DNS модуля, если он включён)
@@ -1935,6 +1936,7 @@ cmd_domain_check() {
   # WebSocket Discord — не запрос-ответ, повторять нечего
   [ "$kind" = curl ] && [ "$d" != "gateway.discord.gg" ] && printf 'K\t%s\n' "$(probe_keepalive "$bin" "$d")"
   cleanup_probe_app_rule
+  trap - EXIT INT TERM
   echo done
 }
 
@@ -1960,7 +1962,9 @@ cmd_page_hosts() { # <url_or_domain> — извлечение внешних р�
   fi
 
   if [ ! -s "$tmp_html" ]; then
+    rm -f "$tmp_html" "$tmp_cands"
     cleanup_probe_app_rule
+    trap - EXIT INT TERM
     printf 'PAGE_HOSTS_DONE\t0\t0\n'
     return 0
   fi
@@ -2010,6 +2014,7 @@ cmd_page_hosts() { # <url_or_domain> — извлечение внешних р�
 
   rm -f "$tmp_cands"
   cleanup_probe_app_rule
+  trap - EXIT INT TERM
   printf 'PAGE_HOSTS_DONE\t%s\t%s\n' "$total_cands" "$blocked_cands"
 }
 
@@ -3310,6 +3315,7 @@ cmd_probe_dpi() {
 
   rm -f "$STATE_DIR/probe.pid"
   cleanup_probe_app_rule
+  trap - EXIT INT TERM
   echo done
 }
 
@@ -3951,12 +3957,11 @@ case "$1" in
       fi
       added_list="${added_list:+$added_list, }$d"
     done
+    if [ -z "$added_list" ]; then
+      echo "Некорректный домен" >&2; exit 1
+    fi
     reload_after_change
-    if [ -n "$added_list" ]; then
-      echo "Добавлено: $added_list"
-    else
-      echo "Добавлено: $1"
-    fi ;;
+    echo "Добавлено: $added_list" ;;
   clear-auto)
     : > "$LISTS_DIR/auto.list" || { echo "Не удалось очистить auto.list" >&2; exit 1; }
     reload_after_change; echo OK ;;

@@ -200,6 +200,10 @@ assert_eq "2" "$(list_count "$CONFDIR/lists/user.list")" "an existing domain is 
 ctl add-domain "not a domain"
 assert_rc 1 "$ctl_rc" "add-domain rejects garbage"
 
+ctl add-domain "!!!" "???"
+assert_rc 1 "$ctl_rc" "add-domain rejects multiple invalid domains"
+assert_eq "2" "$(list_count "$CONFDIR/lists/user.list")" "user.list remains untouched after invalid domains"
+
 ctl clear-auto
 assert_rc 0 "$ctl_rc" "clear-auto works"
 assert_eq "0" "$(list_count "$CONFDIR/lists/auto.list")" "auto.list is emptied"
