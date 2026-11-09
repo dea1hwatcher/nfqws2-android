@@ -123,6 +123,7 @@ set_defaults() {
   # watchdog alive through watchers_wanted() even when WATCHDOG=0
   : "${WL_PAUSE:=0}"
   : "${SMART_LEARN:=1}"
+  : "${CPU_AFFINITY:=1}"
 }
 
 log_msg() {
@@ -1984,6 +1985,39 @@ protect_process() {   # $1 - PID; default: current process
   if command -v renice >/dev/null 2>&1; then
     renice -n -20 -p "$p" >/dev/null 2>&1 || renice -20 "$p" >/dev/null 2>&1 || true
   fi
+  if [ "${CPU_AFFINITY:-1}" != "0" ]; then
+    apply_cpu_affinity "$p"
+  fi
+  return 0
+}
+
+# Bind process to energy-efficient LITTLE CPU cores to avoid waking power-hungry
+# performance/prime cores on background packet processing. Best-effort.
+apply_cpu_affinity() { # $1 - PID
+  local p="${1:-$$}"
+  [ -z "$p" ] && return 0
+  [ -d "/proc/$p" ] || return 0
+  command -v taskset >/dev/null 2>&1 || return 0
+
+  local online="" max_core=0
+  if [ -r /sys/devices/system/cpu/online ]; then
+    online=$(cat /sys/devices/system/cpu/online 2>/dev/null)
+  fi
+
+  case "$online" in
+    *-*) max_core="${online##*-}" ;;
+    *)   max_core=0 ;;
+  esac
+
+  if [ "$max_core" -ge 3 ] 2>/dev/null; then
+    if ! taskset -p -c 0-3 "$p" >/dev/null 2>&1; then
+      taskset -p 0f "$p" >/dev/null 2>&1 || true
+    fi
+  elif [ "$max_core" -ge 1 ] 2>/dev/null; then
+    if ! taskset -p -c 0-1 "$p" >/dev/null 2>&1; then
+      taskset -p 03 "$p" >/dev/null 2>&1 || true
+    fi
+  fi
   return 0
 }
 
@@ -2371,7 +2405,7 @@ render_strategy() {
 
 # Module settings (same across strategies) are carried over whole from the live
 # config on strategy change/reset. NFQWS_EXTRA_ARGS only for standard $MODE_* refs.
-USER_KEYS="META_QUIC_REJECT CALLS_BYPASS TCP_MSS_CLAMP IPV6_ENABLED TCP_PORTS UDP_PORTS NFQUEUE_NUM PKT_LIMIT_OUT PKT_LIMIT_IN BLOCK_QUIC NAT_FIX APP_MODE AUTOSTART WATCHDOG NFQWS_USER LOG_LEVEL LOG_MAX_KB WAKELOCK HOME_WIFI ENABLE_HOTSPOT NET_STRATEGY VPN_PAUSE AUTO_PORTS WL_PAUSE SMART_LEARN NFQWS_EXTRA_ARGS"
+USER_KEYS="META_QUIC_REJECT CALLS_BYPASS TCP_MSS_CLAMP IPV6_ENABLED TCP_PORTS UDP_PORTS NFQUEUE_NUM PKT_LIMIT_OUT PKT_LIMIT_IN BLOCK_QUIC NAT_FIX APP_MODE AUTOSTART WATCHDOG NFQWS_USER LOG_LEVEL LOG_MAX_KB WAKELOCK HOME_WIFI ENABLE_HOTSPOT NET_STRATEGY VPN_PAUSE AUTO_PORTS WL_PAUSE SMART_LEARN CPU_AFFINITY NFQWS_EXTRA_ARGS"
 merge_user_keys() { # <generated config> <settings source config>  -> stdout
   awk -v keys=" $USER_KEYS " -v src="$2" '
     function quotes(str,   t) { t = str; return gsub(/"/, "", t) }

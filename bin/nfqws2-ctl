@@ -3979,7 +3979,7 @@ case "$1" in
 
   set)
     case "$2" in
-      BLOCK_QUIC|AUTOSTART|WATCHDOG|IPV6_ENABLED|NAT_FIX|LOG_LEVEL|WAKELOCK|HOME_WIFI|ENABLE_HOTSPOT|NET_STRATEGY|VPN_PAUSE|META_QUIC_REJECT|CALLS_BYPASS|TCP_MSS_CLAMP|WL_PAUSE|SMART_LEARN) case "$3" in 0|1) ;; *) echo "Допустимо 0 или 1" >&2; exit 1 ;; esac ;;
+      BLOCK_QUIC|AUTOSTART|WATCHDOG|IPV6_ENABLED|NAT_FIX|LOG_LEVEL|WAKELOCK|HOME_WIFI|ENABLE_HOTSPOT|NET_STRATEGY|VPN_PAUSE|META_QUIC_REJECT|CALLS_BYPASS|TCP_MSS_CLAMP|WL_PAUSE|SMART_LEARN|CPU_AFFINITY) case "$3" in 0|1) ;; *) echo "Допустимо 0 или 1" >&2; exit 1 ;; esac ;;
       PKT_LIMIT_OUT|PKT_LIMIT_IN) case "$3" in [1-9]|1[0-5]) ;; *) echo "Допустимо 1..15" >&2; exit 1 ;; esac ;;
       APP_MODE) case "$3" in off|include|exclude) ;; *) echo "off|include|exclude" >&2; exit 1 ;; esac ;;
       *) echo "Параметр $2 нельзя менять этой командой" >&2; exit 1 ;;
@@ -4003,6 +4003,12 @@ case "$1" in
         load_conf >/dev/null 2>&1
         if is_running; then
           if [ "$3" = "1" ]; then acquire_wakelock; else release_wakelock; fi
+        fi ;;
+      CPU_AFFINITY)
+        load_conf >/dev/null 2>&1
+        if is_running; then
+          local p; p=$(cat "$PIDFILE" 2>/dev/null)
+          if [ -n "$p" ]; then apply_cpu_affinity "$p"; fi
         fi ;;
       AUTOSTART) ;;
       *) need_restart_note ;;
