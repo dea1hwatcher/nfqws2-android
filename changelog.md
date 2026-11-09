@@ -2,13 +2,13 @@
 
 RU
 
-Добавлена стратегия из nzapret
-Фиксы движка zapret2
+- Добавлена стратегия из nzapret
+- Фиксы движка zapret2
 
 EN
 
-Added nzapret strategy
-zapret2 engine fixes
+- Added nzapret strategy
+- zapret2 engine fixes
 
 ### Изменения в v2.2.0:
 
