@@ -129,6 +129,7 @@ html[data-mode="dark"] { --tk-keyword: #569cd6; --tk-string: #ce9178; --tk-strin
 html.scroll-locked, html.scroll-locked body { overflow: hidden; }
 .sheet, .sheet-scroll, .fs-body, .code-edit > textarea, .log-view, .menu { overscroll-behavior: contain; }
 .scrim, .dialog-scrim, .menu-back { touch-action: none; }
+.scrim, .dialog-wrap .dialog-scrim, .dialog-scrim { background: rgba(0, 0, 0, .45) !important; }
 
 /* Theme sheet */
 .theme-sheet { gap: 14px; }

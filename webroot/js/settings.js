@@ -688,7 +688,10 @@ async function openWhatsNew(auto){
     if(lines.length && lines.every(l => /^[-*] /.test(l))){
       return '<ul>' + lines.map(l => '<li>' + mdInline(l.replace(/^[-*] /, '')) + '</li>').join('') + '</ul>';
     }
-    return '<p>' + mdInline(b.trim()) + '</p>';
+    return '<p>' + lines.map(l => {
+      if(/^[-*] /.test(l)) return '• ' + mdInline(l.replace(/^[-*] /, ''));
+      return mdInline(l);
+    }).join('<br>') + '</p>';
   }).join('');
   $('whatsnew-title').textContent = t('Что нового в {0}', (S.version || '').replace(/-.*$/, ''));
   setHTML('whatsnew-body', html, false);

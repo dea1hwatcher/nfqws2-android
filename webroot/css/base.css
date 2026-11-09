@@ -76,7 +76,7 @@
 
   /* Color roles: light (Purple fallback) */
   /* fixed roles are scheme-independent */
-  --md-sys-color-scrim: rgba(0, 0, 0, .32);
+  --md-sys-color-scrim: rgba(0, 0, 0, .45);
   /* Do not add color roles here: roles() in JS is the single source. Scrim is the exception */
 }
 
@@ -726,6 +726,7 @@ html[data-containers="true"] .list > .list-item:active {
 .dialog-wrap.open { display: flex; }
 .dialog-wrap .dialog-scrim { position: absolute; inset: 0; background: var(--md-sys-color-scrim);
   animation: fadeIn var(--dur-short) var(--standard); }
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
 .dialog {
   position: relative; width: 100%; max-width: 380px;
   background: var(--md-sys-color-surface-container-high); color: var(--md-sys-color-on-surface);
