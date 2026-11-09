@@ -322,8 +322,15 @@ function drawThemeUI(){
 /* fromSeed=false when the seed came off the wheel: the reverse conversion rounds and jitters the thumb */
 function syncPicker(fromSeed){
   const hsl = hexToHsl(currentSeed);
-  if(fromSeed){ wheelH = hsl[0]; wheelS = hsl[1]; $('cd-lum').value = Math.round(Math.min(85, Math.max(20, hsl[2] * 100))); }
-  const L = +$('cd-lum').value;
+  if(fromSeed){
+    wheelH = hsl[0];
+    wheelS = hsl[1];
+    const lumVal = Math.round(Math.min(85, Math.max(20, hsl[2] * 100)));
+    if($('cd-lum')) $('cd-lum').value = lumVal;
+    if($('cd-lum-num')) $('cd-lum-num').value = lumVal;
+  }
+  const L = +($('cd-lum') ? $('cd-lum').value : 60);
+  if($('cd-lum-num') && document.activeElement !== $('cd-lum-num')) $('cd-lum-num').value = L;
   const stops = [];
   for(let h = 0; h <= 360; h += 30) stops.push('hsl(' + h + ' 100% ' + L + '%)');
   $('wheel').style.background = 'radial-gradient(closest-side, hsl(0 0% ' + L + '%), hsl(0 0% ' + L + '% / 0)), conic-gradient(' + stops.join(',') + ')';
@@ -367,7 +374,19 @@ function wheelPick(e){
     wheelApply(true);
   });
 })();
-function onWheelLum(){ wheelApply(false); clearTimeout(onWheelLum.t); onWheelLum.t = setTimeout(() => store.set('m3_seed', currentSeed), 300); }
+function onWheelLum(){
+  if($('cd-lum-num')) $('cd-lum-num').value = $('cd-lum').value;
+  wheelApply(false);
+  clearTimeout(onWheelLum.t);
+  onWheelLum.t = setTimeout(() => store.set('m3_seed', currentSeed), 300);
+}
+function onWheelLumNum(v){
+  const num = Math.min(85, Math.max(20, Math.round(+v || 60)));
+  if($('cd-lum')) $('cd-lum').value = num;
+  wheelApply(false);
+  clearTimeout(onWheelLum.t);
+  onWheelLum.t = setTimeout(() => store.set('m3_seed', currentSeed), 300);
+}
 function setThemeMode(m){
   currentMode = m;
   store.set('m3_mode', m);

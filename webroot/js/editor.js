@@ -229,7 +229,19 @@ function highlightEditor(){
   pre.innerHTML = html;
   pre.scrollTop = ta.scrollTop; pre.scrollLeft = ta.scrollLeft;
 }
-$('panel-editor-text').addEventListener('input', () => { if(!hlFrame) hlFrame = requestAnimationFrame(highlightEditor); });
+function updateEditorDirty(){
+  if(!editorCtx) return;
+  const ta = $('panel-editor-text');
+  const isDirty = !!(editorCtx.original !== null && ta && ta.value !== editorCtx.original);
+  const titleEl = $('panel-title-text');
+  if(titleEl && editorCtx.title){
+    titleEl.textContent = isDirty ? '• ' + editorCtx.title : editorCtx.title;
+  }
+}
+$('panel-editor-text').addEventListener('input', () => {
+  if(!hlFrame) hlFrame = requestAnimationFrame(highlightEditor);
+  updateEditorDirty();
+});
 $('panel-editor-text').addEventListener('scroll', () => {
   const ta = $('panel-editor-text'), pre = $('ce-hl');
   pre.scrollTop = ta.scrollTop; pre.scrollLeft = ta.scrollLeft;
@@ -436,6 +448,7 @@ async function openEditorWith(o){
     highlightEditor();
   }
   o.original = o.dirty ? null : ta.value;
+  updateEditorDirty();
   // Do not focus a large file: the keyboard pulls all text into the input context (TransactionTooLargeException)
   if(ta.value.length < LARGE_FILE) ta.focus({ preventScroll: true });
 }

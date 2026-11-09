@@ -699,6 +699,17 @@ EN = {
   "Идёт ({0})": "Running ({0})",
   "DPI инжектирует пакеты TCP RST и глушит сессии. Рекомендуется отправка фейкового ClientHello или Anti-Throttle (rst_flood).": "DPI injects TCP RST packets and silences the session. Sending a fake ClientHello or using Anti-Throttle (rst_flood) is recommended.",
   "DPI молча отбрасывает пакеты без ответа. Рекомендуется стратегия с повышенным числом повторов (repeats=8) или Anti-Throttle.": "DPI silently drops packets without a reply. A strategy with more repeats (repeats=8) or Anti-Throttle is recommended.",
-  "KernelSU: в списке модулей удерживайте кнопку WebUI на карточке nfqws2 и выберите «Создать ярлык».\nMMRL и KsuWebUI: «Создать ярлык» в меню модуля.\nИконка ярлыка подставится из модуля сама.": "KernelSU: hold the WebUI button on the nfqws2 module card and pick «Create shortcut».\nMMRL and KsuWebUI: «Create shortcut» in the module menu.\nThe shortcut icon is taken from the module automatically."
+  "KernelSU: в списке модулей удерживайте кнопку WebUI на карточке nfqws2 и выберите «Создать ярлык».\nMMRL и KsuWebUI: «Создать ярлык» в меню модуля.\nИконка ярлыка подставится из модуля сама.": "KernelSU: hold the WebUI button on the nfqws2 module card and pick «Create shortcut».\nMMRL and KsuWebUI: «Create shortcut» in the module menu.\nThe shortcut icon is taken from the module automatically.",
+  "Регрессия -{0}": "Regression -{0}",
+  "Ломает ранее работавшие сайты": "Breaks previously working sites",
+  "ломает {0}": "breaks {0}",
+  "Регрессия": "Regression",
+  "Ресурсы страницы": "Page resources",
+  "Ресурсы страницы ({0})": "Page resources ({0})",
+  "Поиск внешних ресурсов…": "Scanning external resources…",
+  "Внешние ресурсы не найдены или страница недоступна": "No external resources found or page is unreachable",
+  "Блок": "Blocked",
+  "Добавить выбранные в user.list": "Add selected to user.list",
+  "Добавлено в user.list ({0})": "Added to user.list ({0})"
 };
 

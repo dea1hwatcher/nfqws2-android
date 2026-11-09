@@ -2737,3 +2737,24 @@ function tls_reconstruct(tdis)
 
 	return tls
 end
+
+-- STUN Protocol (RFC 5389): detect STUN Binding Request to protect WebRTC / VoIP NAT hole punching
+function is_stun_binding_request(data)
+	if not data or #data < 20 then return false end
+	if string.sub(data, 5, 8) ~= "\x21\x12\xA4\x42" then return false end
+	local b1 = string.byte(data, 1)
+	local b2 = string.byte(data, 2)
+	-- MSB 2 bits must be zero
+	if bitand(b1, 0xC0) ~= 0 then return false end
+	-- Message class: request only (bit 4 of byte 2, bit 0 of byte 1 must be 0)
+	if bitand(b1, 0x01) ~= 0 or bitand(b2, 0x10) ~= 0 then return false end
+	local msg_len = string.byte(data, 3) * 256 + string.byte(data, 4)
+	if #data ~= msg_len + 20 then return false end
+	return true
+end
+
+-- TCP Fast Open (TFO): detect SYN packet carrying application payload
+function is_tcp_fast_open(dis)
+	if not dis or not dis.tcp or not dis.payload then return false end
+	return bitand(dis.tcp.th_flags, TH_SYN) ~= 0 and #dis.payload > 0
+end

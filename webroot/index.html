@@ -425,6 +425,7 @@
         <button class="btn state" id="dc-go" type="submit"><span data-t>Проверить</span></button>
       </form>
       <div id="dc-res" class="stack"></div>
+      <div id="dc-hosts-box" class="stack" hidden></div>
     </div>
 
     <div class="empty" id="test-empty">
@@ -658,7 +659,10 @@
     </div>
     <div class="picker-side">
       <div class="cd-row">
-        <label for="cd-lum" data-t>Яркость</label>
+        <div class="cd-label-row">
+          <label for="cd-lum" data-t>Яркость</label>
+          <input type="number" class="slider-num" id="cd-lum-num" min="20" max="85" step="1" value="60" aria-label="Яркость" data-ta="aria-label" oninput="onWheelLumNum(this.value)">
+        </div>
         <input type="range" class="slider" id="cd-lum" min="20" max="85" step="1" value="60" oninput="onWheelLum()">
       </div>
       <div class="hex-group">

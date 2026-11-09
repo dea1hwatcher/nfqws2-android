@@ -879,12 +879,17 @@ const DC_ROLE = {
   ipset: 'IP-список обхода', 'ipset-exclude': 'IP-исключения', idle: 'не подключён к текущей стратегии'
 };
 let dcRunning = false;
+let dcPageHosts = [];
+let dcPageHostsRunning = false;
 async function runDomainCheck(){
   const q = $('dc-q').value.trim();
   if(!q || dcRunning) return;
   dcRunning = true;
   $('dc-go').disabled = true;
   $('dc-q').blur();
+  dcPageHosts = [];
+  dcPageHostsRunning = false;
+  if($('dc-hosts-box')){ $('dc-hosts-box').hidden = true; $('dc-hosts-box').innerHTML = ''; }
   const st = {mode: '', lists: [], ip: '', tries: [], keep: ''};
   const paint = done => setHTML('dc-res', dcRender(q, st, done), false);
   paint(false);
@@ -942,8 +947,9 @@ function dcRender(q, st, done){
       acts.push('<button class="btn tonal with-icon state" onclick="dcAddUser(' + jsArg(q) + ')">' + icon('add', 's18') + '<span>' + esc(t('Добавить в user.list')) + '</span></button>');
     if(st.lists.length)
       acts.push('<button class="btn text state" aria-haspopup="menu" onclick="dcPickList(this)">' + esc(t('Открыть список')) + '</button>');
+    acts.push('<button class="btn text with-icon state" onclick="dcDiscoverPageHosts(' + jsArg(q) + ')">' + icon('globe', 's18') + '<span>' + esc(t('Ресурсы страницы')) + '</span></button>');
     dcLast = st;
-    if(acts.length) out.push('<div class="row">' + acts.join('') + '</div>');
+    if(acts.length) out.push('<div class="row" style="flex-wrap:wrap; gap:8px;">' + acts.join('') + '</div>');
   }
   return out.join('');
 }
@@ -961,6 +967,97 @@ async function dcAddUser(q){
   // ответ ctl — по-русски («Добавлено: x»); в интерфейсе — своя строка
   toast(t('Добавлено: {0}', (r.out || '').trim().split(': ').pop() || q));
   runDomainCheck();
+}
+
+async function dcDiscoverPageHosts(domain){
+  if(!domain || dcPageHostsRunning) return;
+  dcPageHostsRunning = true;
+  dcPageHosts = [];
+  const el = $('dc-hosts-box');
+  if(!el) return;
+  el.hidden = false;
+  el.innerHTML = '<div class="list-item"><span class="spinner"></span>' +
+    '<span class="li-text"><span class="li-primary">' + esc(t('Поиск внешних ресурсов…')) + '</span>' +
+    '<span class="li-secondary">' + esc(domain) + '</span></span></div>';
+
+  const onLine = l => {
+    const p = l.split('\t');
+    if(p[0] === 'PAGE_HOST'){
+      const host = p[1], st = p[2], ms = p[3];
+      dcPageHosts.push({ host, st, ms, checked: (st === 'blocked') });
+      renderPageHostsList(domain, false);
+    } else if(p[0] === 'PAGE_HOSTS_DONE'){
+      renderPageHostsList(domain, true);
+    }
+  };
+
+  try {
+    await ctlx(['page-hosts', domain], 60000, onLine);
+  } finally {
+    dcPageHostsRunning = false;
+    renderPageHostsList(domain, true);
+  }
+}
+
+function renderPageHostsList(domain, done){
+  const el = $('dc-hosts-box');
+  if(!el) return;
+  if(!dcPageHosts.length && done){
+    el.innerHTML = '<div class="list-item"><span class="li-text"><span class="li-secondary">' +
+      esc(t('Внешние ресурсы не найдены или страница недоступна')) + '</span></span></div>';
+    return;
+  }
+
+  let html = '<div class="subhead-row" style="margin-top:16px;">' +
+    '<span class="subhead plain">' + esc(t('Ресурсы страницы ({0})', dcPageHosts.length)) + '</span>' +
+    (done ? '' : '<span class="spinner" style="width:14px;height:14px;"></span>') +
+  '</div>';
+
+  html += '<div class="list">';
+  dcPageHosts.forEach((it, idx) => {
+    const isBlocked = it.st === 'blocked';
+    const stBadge = isBlocked
+      ? '<span class="pill bad" style="padding:1px 6px; font-size:11px;">' + esc(t('Блок')) + '</span>'
+      : '<span class="pill ok" style="padding:1px 6px; font-size:11px;">OK · ' + esc(it.ms) + ' ' + esc(t('мс')) + '</span>';
+
+    html += '<label class="list-item two-line" style="cursor:pointer;">' +
+      '<input type="checkbox" class="cb" id="ph-cb-' + idx + '" ' + (it.checked ? 'checked' : '') +
+        ' onchange="dcPageHosts[' + idx + '].checked = this.checked; updateAddHostsBtn()">' +
+      '<span class="li-text" style="margin-left:8px;">' +
+        '<span class="li-primary truncate">' + esc(it.host) + '</span>' +
+        '<span class="li-secondary">' + stBadge + '</span>' +
+      '</span>' +
+    '</label>';
+  });
+  html += '</div>';
+
+  if(done && dcPageHosts.length){
+    html += '<div class="row" style="margin-top:8px; gap:8px;">' +
+      '<button class="btn tonal with-icon state" id="dc-add-hosts-btn" onclick="dcAddSelectedHosts()">' +
+        icon('add', 's18') +
+        '<span>' + esc(t('Добавить выбранные в user.list')) + '</span>' +
+      '</button>' +
+    '</div>';
+  }
+
+  el.innerHTML = html;
+}
+
+function updateAddHostsBtn(){
+  const btn = $('dc-add-hosts-btn');
+  if(!btn) return;
+  const any = dcPageHosts.some(it => it.checked);
+  btn.disabled = !any;
+}
+
+async function dcAddSelectedHosts(){
+  const selected = dcPageHosts.filter(it => it.checked).map(it => it.host);
+  if(!selected.length) return;
+  const r = await withBusy(['add-domain', ...selected]);
+  if(r.code){ toast(errText(r, 'Не удалось добавить')); return; }
+  toast(t('Добавлено в user.list ({0})', selected.length));
+  dcPageHosts.forEach(it => { if(selected.includes(it.host)) it.checked = false; });
+  renderPageHostsList($('dc-q') ? $('dc-q').value.trim() : '', true);
 }
 /* Открыть список, где нашёлся домен, сразу с поиском этой записи. Списков
    несколько — выбор из меню. Ждём именно тот редактор, который открыли: если

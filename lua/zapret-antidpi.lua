@@ -298,6 +298,9 @@ function synack(ctx, desync)
 		if bitand(desync.dis.tcp.th_flags, TH_SYN + TH_ACK)==TH_SYN then
 			local dis = deepcopy(desync.dis)
 			dis.tcp.th_flags = bitor(dis.tcp.th_flags, TH_ACK)
+			if is_tcp_fast_open(dis) then
+				dis.payload = ""
+			end
 			DLOG("synack: sending")
 			rawsend_dissect_ipfrag(dis, desync_opts(desync))
 		else
@@ -448,6 +451,10 @@ function fake(ctx, desync)
 	direction_cutoff_opposite(ctx, desync)
 	-- by default process only outgoing known payloads. works only for tcp and udp
 	if (desync.dis.tcp or desync.dis.udp) and direction_check(desync) and payload_check(desync) then
+		if desync.dis.udp and desync.arg.stun_exempt and desync.dis.payload and is_stun_binding_request(desync.dis.payload) then
+			DLOG("fake: STUN Binding Request exempted from desync")
+			return
+		end
 		if replay_first(desync) then
 			if not desync.arg.blob then
 				error("fake: 'blob' arg required")

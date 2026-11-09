@@ -360,7 +360,7 @@ function updateBenchButtonsStopping(){
   el.innerHTML = '<span class="spinner"></span><span>' + esc(t('Остановка…')) + '</span>';
 }
 
-function renderBenchRow(idx, name, ok, total, avg_ms, top_fail, isRunning, yt_ok, dc_ok){
+function renderBenchRow(idx, name, ok, total, avg_ms, top_fail, isRunning, yt_ok, dc_ok, broken){
   const stratTitle = typeof strategyName === 'function' ? strategyName(name) : name;
   if(isRunning){
     return '<div class="list-item two-line" id="benchrow' + idx + '">' +
@@ -387,6 +387,9 @@ function renderBenchRow(idx, name, ok, total, avg_ms, top_fail, isRunning, yt_ok
       const failReason = t(reasonsDict[top_fail] || top_fail);
       sub += ` · ${failReason}`;
     }
+    if(broken && broken > 0){
+      sub += ' · ' + t('ломает {0}', broken);
+    }
   }
 
   let svcBadges = '';
@@ -399,12 +402,16 @@ function renderBenchRow(idx, name, ok, total, avg_ms, top_fail, isRunning, yt_ok
       : '<span class="pill tonal" style="padding:1px 6px; font-size:11px;">DC ✗</span>';
     svcBadges = ' <span style="display:inline-flex; gap:4px; margin-left:6px; vertical-align:middle;">' + ytPill + dcPill + '</span>';
   }
+  let regrBadge = '';
+  if(broken && broken > 0){
+    regrBadge = ' <span class="pill bad" style="padding:1px 6px; font-size:11px;" title="' + esc(t('Ломает ранее работавшие сайты')) + '">' + esc(t('Регрессия -{0}', broken)) + '</span>';
+  }
 
   const pct = total > 0 ? Math.round((ok / total) * 100) + '%' : '0%';
   return '<div class="list-item two-line" id="benchrow' + idx + '">' +
     '<span class="status ' + stClass + '">' + icon(icName, 's16') + '</span>' +
     '<span class="li-text">' +
-      '<span class="li-primary truncate">' + esc(stratTitle) + ' <span class="muted li-mono">(' + esc(name) + ')</span>' + svcBadges + '</span>' +
+      '<span class="li-primary truncate">' + esc(stratTitle) + ' <span class="muted li-mono">(' + esc(name) + ')</span>' + svcBadges + regrBadge + '</span>' +
       '<span class="li-secondary">' + esc(sub) + '</span>' +
     '</span>' +
     '<span class="li-trail ' + (isAllOk || isPartOk ? 'li-value' : 't-label-medium bad') + '">' + esc(pct) + '</span>' +
@@ -475,11 +482,11 @@ function sortBenchList(){
   const listEl = $('bench-list');
   if(!listEl) return;
   const sorted = Object.values(benchResults).sort((a, b) => {
-    const sA = wilsonScore(a.ok, a.total);
-    const sB = wilsonScore(b.ok, b.total);
+    const sA = wilsonScore(Math.max(0, a.ok - (a.broken || 0) * 3), a.total);
+    const sB = wilsonScore(Math.max(0, b.ok - (b.broken || 0) * 3), b.total);
     return (sB - sA) || (b.ok - a.ok) || (a.avg_ms - b.avg_ms);
   });
-  listEl.innerHTML = sorted.map(it => renderBenchRow(it.idx, it.name, it.ok, it.total, it.avg_ms, it.top_fail, false, it.yt_ok, it.dc_ok)).join('');
+  listEl.innerHTML = sorted.map(it => renderBenchRow(it.idx, it.name, it.ok, it.total, it.avg_ms, it.top_fail, false, it.yt_ok, it.dc_ok, it.broken)).join('');
 }
 
 function resetBenchResults(){
@@ -556,11 +563,21 @@ async function runBench(){
       const idx = p[1], strat = p[2], ok = +p[3] || 0, total = +p[4] || 0, avg_ms = +p[5] || 0, top_fail = p[6] || '-';
       const yt_ok = p[7] !== undefined ? +p[7] : undefined;
       const dc_ok = p[8] !== undefined ? +p[8] : undefined;
-      benchResults[strat] = { idx, name: strat, ok, total, avg_ms, top_fail, yt_ok, dc_ok };
+      const broken = benchResults[strat] ? (benchResults[strat].broken || 0) : 0;
+      benchResults[strat] = { idx, name: strat, ok, total, avg_ms, top_fail, yt_ok, dc_ok, broken };
       const existing = $('benchrow' + idx);
-      const rowHtml = renderBenchRow(idx, strat, ok, total, avg_ms, top_fail, false, yt_ok, dc_ok);
+      const rowHtml = renderBenchRow(idx, strat, ok, total, avg_ms, top_fail, false, yt_ok, dc_ok, broken);
       if(existing) existing.outerHTML = rowHtml;
       else if($('bench-list')) $('bench-list').insertAdjacentHTML('beforeend', rowHtml);
+    } else if(p[0] === 'BENCH_REGRESSION') {
+      const idx = p[1], strat = p[2], broken = +p[3] || 0;
+      if(!benchResults[strat]) benchResults[strat] = { idx, name: strat, ok: 0, total: 0, avg_ms: 0, top_fail: '-' };
+      benchResults[strat].broken = broken;
+      const existing = $('benchrow' + idx);
+      if(existing){
+        const it = benchResults[strat];
+        existing.outerHTML = renderBenchRow(it.idx, it.name, it.ok, it.total, it.avg_ms, it.top_fail, false, it.yt_ok, it.dc_ok, broken);
+      }
     } else if(p[0] === 'BENCH_BEST') {
       const strat = p[1], ok = +p[2] || 0, total = +p[3] || 0, avg_ms = +p[4] || 0;
       const best_yt = p[5] && p[5] !== '-' ? p[5] : null;
@@ -629,7 +646,8 @@ function copyBenchReport(){
   for(const it of sorted){
     const title = typeof strategyName === 'function' ? strategyName(it.name) : it.name;
     const reasonsDict = typeof PROBE_REASON !== 'undefined' ? PROBE_REASON : {};
-    rep += `- ${title} (${it.name}): ${it.ok}/${it.total} (${it.avg_ms} мс)` + (it.top_fail && it.top_fail !== '-' ? ` [${t(reasonsDict[it.top_fail] || it.top_fail)}]` : '') + '\n';
+    const brkMsg = it.broken ? ` [${t('Регрессия')} -${it.broken}]` : '';
+    rep += `- ${title} (${it.name}): ${it.ok}/${it.total} (${it.avg_ms} мс)` + (it.top_fail && it.top_fail !== '-' ? ` [${t(reasonsDict[it.top_fail] || it.top_fail)}]` : '') + brkMsg + '\n';
   }
   copyText(rep, t('Отчёт скопирован в буфер обмена'), t('Не удалось скопировать: выделите текст вручную'));
 }

@@ -788,8 +788,30 @@ body.nav-hidden .snackbar { bottom: calc(var(--bottom-inset) + 16px); }
   box-shadow: 0 0 0 6px color-mix(in srgb, var(--md-sys-color-primary) 16%, transparent);
 }
 .cd-row { display: flex; flex-direction: column; gap: 4px; }
-.cd-row > label { font-size: var(--ts-label-medium); line-height: var(--lh-label-medium); font-weight: var(--w-emph);
+.cd-label-row { display: flex; align-items: center; justify-content: space-between; }
+.cd-row label { font-size: var(--ts-label-medium); line-height: var(--lh-label-medium); font-weight: var(--w-emph);
   color: var(--md-sys-color-on-surface-variant); }
+.slider-num {
+  width: 44px;
+  padding: 1px 4px;
+  font-size: var(--ts-label-medium);
+  font-weight: var(--w-emph);
+  text-align: right;
+  border: 1px solid var(--md-sys-color-outline-variant);
+  border-radius: var(--shape-small);
+  background: var(--md-sys-color-surface-container);
+  color: var(--md-sys-color-on-surface);
+  -moz-appearance: textfield;
+}
+.slider-num::-webkit-outer-spin-button,
+.slider-num::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.slider-num:focus {
+  outline: none;
+  border-color: var(--md-sys-color-primary);
+}
 
 /* Empty state */
 .empty { display: flex; flex-direction: column; align-items: center; gap: 12px;

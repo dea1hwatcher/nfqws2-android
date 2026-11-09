@@ -522,6 +522,16 @@ cmd_doctor() {
   else
     row warn conntrack "$(M 'нет nf_conntrack sysctl' 'no nf_conntrack sysctl')"
   fi
+  local priv_dns
+  priv_dns=$(settings get global private_dns_mode 2>/dev/null)
+  case "$priv_dns" in
+    hostname|opportunistic)
+      row info ech "$(M 'Private DNS активен; для отключения ECH в Chrome: chrome://flags/#encrypted-client-hello' 'Private DNS active; to disable ECH in Chrome: chrome://flags/#encrypted-client-hello')"
+      ;;
+    *)
+      row ok ech "$(M 'Private DNS: выкл/стандарт; при блокировках Cloudflare отключите ECH в браузере' 'Private DNS: off/standard; if Cloudflare blocked, disable ECH in browser')"
+      ;;
+  esac
   if [ "$ENABLE_HOTSPOT" = "1" ]; then
     if command -v settings >/dev/null 2>&1; then
       local to_val bpf_val=""
@@ -796,6 +806,18 @@ validate_target_dir() { # <dir>
   return 0
 }
 
+redact_sensitive_file() { # <file> — маскирование секретов и токенов перед экспортом
+  local rf="$1"
+  [ -f "$rf" ] || return 0
+  sed -i \
+    -e 's/secret=[^ :;,"]*/secret=[REDACTED]/g' \
+    -e 's/private_key=[^ :;,"]*/private_key=[REDACTED]/g' \
+    -e 's/preshared_key=[^ :;,"]*/preshared_key=[REDACTED]/g' \
+    -e 's/token=[^ :;,"]*/token=[REDACTED]/g' \
+    -e 's/password=[^ :;,"]*/password=[REDACTED]/g' \
+    "$rf" 2>/dev/null || true
+}
+
 cmd_export_logs() { # [target_dir]
   local dest_dir="${1:-$BACKUP_DIR}"
   validate_target_dir "$dest_dir" || return 1
@@ -817,6 +839,11 @@ cmd_export_logs() { # [target_dir]
     echo "== /proc/net/netfilter/nfnetlink_queue"; cat /proc/net/netfilter/nfnetlink_queue 2>&1
     echo "== ip route"; ip route 2>&1; ip -6 route 2>&1 | head -n 20
   } > "$tmp/counters.txt" 2>&1
+
+  local lf
+  for lf in "$tmp"/*; do
+    [ -f "$lf" ] && redact_sensitive_file "$lf"
+  done
 
   local out_file="$dest_dir/$name"
   if (cd "$tmp" && tar_cmd -cf "$out_file" .) 2>/dev/null; then
@@ -1911,6 +1938,81 @@ cmd_domain_check() {
   echo done
 }
 
+cmd_page_hosts() { # <url_or_domain> — извлечение внешних ресурсов страницы и проверка доступности
+  local raw="$1" d tool kind bin
+  d=$(domain_norm "$raw")
+  d="${d#www.}"
+  case "$d" in ''|*[!a-z0-9.-]*) echo "INVALID" >&2; return 1 ;; esac
+  tool=$(probe_tool); kind="${tool%% *}"; bin="${tool#* }"
+  [ "$kind" = "none" ] && { echo "NO_PROBE_TOOL" >&2; return 1; }
+
+  local tmp_html="$STATE_DIR/page_hosts.$$.html"
+  local tmp_cands="$STATE_DIR/page_hosts.$$.cands"
+  rm -f "$tmp_html" "$tmp_cands"
+
+  setup_probe_app_rule
+  trap 'rm -f "$tmp_html" "$tmp_cands"; cleanup_probe_app_rule' EXIT
+  trap 'trap - EXIT; rm -f "$tmp_html" "$tmp_cands"; cleanup_probe_app_rule; exit 130' INT TERM
+
+  if [ "$kind" = "curl" ]; then
+    "$bin" -s -L -k -m 8 -A "Mozilla/5.0 (Linux; Android 14) Chrome/133.0.0.0" "https://$d/" -o "$tmp_html" 2>/dev/null \
+      || "$bin" -s -L -k -m 8 -A "Mozilla/5.0 (Linux; Android 14) Chrome/133.0.0.0" "http://$d/" -o "$tmp_html" 2>/dev/null
+  fi
+
+  if [ ! -s "$tmp_html" ]; then
+    cleanup_probe_app_rule
+    printf 'PAGE_HOSTS_DONE\t0\t0\n'
+    return 0
+  fi
+
+  awk -v root="$d" '
+    {
+      line = $0
+      while (match(line, /(https?:)?\/\/[a-zA-Z0-9][-a-zA-Z0-9.]*\.[a-zA-Z]{2,}/)) {
+        sub_str = substr(line, RSTART, RLENGTH)
+        sub(/^(https?:)?\/\//, "", sub_str)
+        sub(/\/.*$/, "", sub_str)
+        sub(/:[0-9]+$/, "", sub_str)
+        sub_str = tolower(sub_str)
+        sub(/^www\./, "", sub_str)
+        if (sub_str != "" && sub_str != root && sub_str !~ /^[0-9.]+$/ &&
+            sub_str !~ /(google-analytics|googletagmanager|yandex\.ru|mc\.yandex|facebook\.com\/tr|doubleclick\.net)/) {
+          if (!(sub_str in seen)) {
+            seen[sub_str] = 1
+            order[++n] = sub_str
+            if (n >= 20) break
+          }
+        }
+        line = substr(line, RSTART + RLENGTH)
+      }
+    }
+    END {
+      for (i = 1; i <= n; i++) print order[i]
+    }
+  ' "$tmp_html" > "$tmp_cands"
+
+  rm -f "$tmp_html"
+
+  local total_cands=0 blocked_cands=0 cand r r_st r_ms
+  while IFS= read -r cand; do
+    [ -z "$cand" ] && continue
+    total_cands=$((total_cands + 1))
+    r=$(probe_attempt "$kind" "$bin" "$cand" 3)
+    r_st="${r%% *}"
+    r_ms="${r#* }"
+    if [ "$r_st" = "ok" ]; then
+      printf 'PAGE_HOST\t%s\tok\t%s\n' "$cand" "${r_ms:-0}"
+    else
+      blocked_cands=$((blocked_cands + 1))
+      printf 'PAGE_HOST\t%s\tblocked\t%s\n' "$cand" "${r_ms:-fail}"
+    fi
+  done < "$tmp_cands"
+
+  rm -f "$tmp_cands"
+  cleanup_probe_app_rule
+  printf 'PAGE_HOSTS_DONE\t%s\t%s\n' "$total_cands" "$blocked_cands"
+}
+
 # ---------------------------------------------------------------- умный режим
 # Выученное — в $SMART_DIR/<сеть>.tsv (пишет lua/zapret-smart.lua), подписи
 # сетей — в nets.tsv, имена вариантов — в шапке strategies/smart.conf (#@slot N имя)
@@ -2732,6 +2834,7 @@ bench_aggregate() { # <res> <idx> <стратегия> — печатает BENC
   local res="$1" idx="$2" st="$3" h_val k r_val r_st r_detail
   local ok_cnt=0 total_cnt=0 sum_ms=0 fail_reasons="" is_yt is_dc
   local yt_ok=0 yt_sum=0 dc_ok=0 dc_sum=0
+  local broken_cnt=0 base_f="$STATE_DIR/bench_baseline_res.$$.tmp"
   while IFS="$(printf '\t')" read -r h_val k r_val; do
     [ -z "$r_val" ] && continue
     r_st="${r_val%% *}"; r_detail="${r_val#* }"
@@ -2744,10 +2847,20 @@ bench_aggregate() { # <res> <idx> <стратегия> — печатает BENC
       sum_ms=$((sum_ms + ${r_detail:-0}))
       if [ "$is_yt" -eq 1 ]; then yt_ok=$((yt_ok + 1)); yt_sum=$((yt_sum + ${r_detail:-0})); fi
       if [ "$is_dc" -eq 1 ]; then dc_ok=$((dc_ok + 1)); dc_sum=$((dc_sum + ${r_detail:-0})); fi
+      [ "$idx" = "0" ] && printf '%s\n' "$h_val" >> "$base_f"
     else
       fail_reasons="$fail_reasons $r_detail"
     fi
   done < "$res"
+  if [ "$idx" != "0" ] && [ -s "$base_f" ]; then
+    local bh
+    while IFS= read -r bh; do
+      [ -z "$bh" ] && continue
+      if ! grep -q "^$bh[[:space:]].*[[:space:]]ok" "$res" 2>/dev/null; then
+        broken_cnt=$((broken_cnt + 1))
+      fi
+    done < "$base_f"
+  fi
   local avg_ms=0 yt_avg=99999 dc_avg=99999 top_fail="-"
   [ "$ok_cnt" -gt 0 ] && avg_ms=$((sum_ms / ok_cnt))
   [ "$yt_ok" -gt 0 ] && yt_avg=$((yt_sum / yt_ok))
@@ -2757,8 +2870,9 @@ bench_aggregate() { # <res> <idx> <стратегия> — печатает BENC
     [ -z "$top_fail" ] && top_fail="-"
   fi
   printf 'BENCH_RES\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$idx" "$st" "$ok_cnt" "$total_cnt" "$avg_ms" "$top_fail" "$yt_ok" "$dc_ok"
-  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-    "$idx" "$st" "$ok_cnt" "$total_cnt" "$avg_ms" "$top_fail" "$yt_ok" "$dc_ok" "$yt_avg" "$dc_avg" >> "$BENCH_STATS"
+  [ "$broken_cnt" -gt 0 ] && printf 'BENCH_REGRESSION\t%s\t%s\t%s\n' "$idx" "$st" "$broken_cnt"
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    "$idx" "$st" "$ok_cnt" "$total_cnt" "$avg_ms" "$top_fail" "$yt_ok" "$dc_ok" "$yt_avg" "$dc_avg" "$broken_cnt" >> "$BENCH_STATS"
 }
 
 # Последняя строка на idx побеждает: перепроверка победителя заменяет его
@@ -2776,13 +2890,15 @@ bench_best_line() { # -> idx<TAB>имя<TAB>ok<TAB>всего<TAB>среднее
       i = $1
       if (!(i in seen)) { seen[i] = 1; order[++n] = i }
       name[i] = $2; ok[i] = $3 + 0; tot[i] = $4 + 0; avg[i] = $5 + 0
-      yt[i] = $7 + 0; yta[i] = $9 + 0; dc[i] = $8 + 0; dca[i] = $10 + 0 }
+      yt[i] = $7 + 0; yta[i] = $9 + 0; dc[i] = $8 + 0; dca[i] = $10 + 0
+      brk[i] = $11 + 0 }
     END {
       bo = -1; ba = 0; bt = 0; bi = "-"; bn = "-"; by = ""; bd = ""
       byo = 0; bya = 0; bdo = 0; bda = 0
       for (j = 1; j <= n; j++) {
         i = order[j]
-        if (ok[i] > bo || (ok[i] == bo && bo > 0 && avg[i] < ba)) { bo = ok[i]; bt = tot[i]; ba = avg[i]; bi = i; bn = name[i] }
+        eff_ok = ok[i] - (brk[i] * 3)
+        if (eff_ok > bo || (eff_ok == bo && bo > 0 && avg[i] < ba)) { bo = eff_ok; bt = tot[i]; ba = avg[i]; bi = i; bn = name[i] }
         if (yt[i] > byo || (yt[i] == byo && byo > 0 && yta[i] < bya)) { byo = yt[i]; bya = yta[i]; by = name[i] }
         if (dc[i] > bdo || (dc[i] == bdo && bdo > 0 && dca[i] < bda)) { bdo = dc[i]; bda = dca[i]; bd = name[i] }
       }
@@ -3042,6 +3158,7 @@ cmd_bench_strategies() {
     BENCH_WORKERS=""
     rm -f "$STATE_DIR/probe.pid" "$STATE_DIR/probe_bench_default.$$.list" "$STATE_DIR/probe_bench_custom.$$.list" \
           "$STATE_DIR/bench_res."*".$$.tmp" "$STATE_DIR/bench_screen."*".$$.tmp"* "$STATE_DIR/strat_bench.$$.tmp" \
+          "$STATE_DIR/bench_baseline_res"* \
           "$BENCH_STATS" "$BENCH_ROUND" "$strat_list" "$strat_list.raw"
     if [ "$BENCH_PARALLEL_TRIED" = "1" ]; then
       bench_purge
@@ -3816,16 +3933,30 @@ case "$1" in
     list_line_count "$f" ;;
   list-update) cmd_list_update "$2" ;;
   add-domain)
-    d=$(printf '%s' "$2" | tr 'A-Z' 'a-z' | sed 's#^[a-z]*://##; s#/.*##; s/^www\.//')
-    case "$d" in ''|*[!a-z0-9.-]*) echo "Некорректный домен" >&2; exit 1 ;; esac
+    shift
+    [ $# -eq 0 ] && { echo "Некорректный домен" >&2; exit 1; }
     ul="$LISTS_DIR/user.list"
     # echo >> склеил бы новый домен с последней строкой, если файл не заканчивается переводом:
     # портились обе записи, и проверка дедупликации ниже тоже переставала срабатывать.
     ensure_eol "$ul"
-    if ! grep -qx "$d" "$ul" 2>/dev/null; then
-      printf '%s\n' "$d" >> "$ul" || { echo "Не удалось записать ${ul##*/}" >&2; exit 1; }
-    fi
-    reload_after_change; echo "Добавлено: $d" ;;
+    added_list=""
+    for raw_d; do
+      d=$(printf '%s' "$raw_d" | tr 'A-Z' 'a-z' | sed 's#^[a-z]*://##; s#/.*##; s/^www\.//')
+      case "$d" in ''|*[!a-z0-9.-]*)
+        if [ $# -eq 1 ]; then echo "Некорректный домен" >&2; exit 1; fi
+        continue ;;
+      esac
+      if ! grep -qx "$d" "$ul" 2>/dev/null; then
+        printf '%s\n' "$d" >> "$ul" || { echo "Не удалось записать ${ul##*/}" >&2; exit 1; }
+      fi
+      added_list="${added_list:+$added_list, }$d"
+    done
+    reload_after_change
+    if [ -n "$added_list" ]; then
+      echo "Добавлено: $added_list"
+    else
+      echo "Добавлено: $1"
+    fi ;;
   clear-auto)
     : > "$LISTS_DIR/auto.list" || { echo "Не удалось очистить auto.list" >&2; exit 1; }
     reload_after_change; echo OK ;;
@@ -3896,6 +4027,7 @@ case "$1" in
   lint) cmd_lint "$2" ;;
   lint-lists) cmd_lint_lists ;;
   domain-check) cmd_domain_check "$2" ;;
+  page-hosts) cmd_page_hosts "$2" ;;
   home-pause)
     rm -f "$HOME_OVERRIDE_FILE"
     sh "$SERVICE" home_check >/dev/null 2>&1
@@ -3939,7 +4071,7 @@ EOF
     echo "         list-strategies get-strategy set-strategy strategy-get-b64 strategy-save-b64 strategy-reset" >&2
     echo "         import-add-b64 list-imports get-import-merged-b64 rename-import delete-import" >&2
     echo "         get-list save-list-b64 list-update add-domain clear-auto reset-lists set set-mode list-apps" >&2
-    echo "         get-logs export-logs clear-logs wifi-ssid backup-create backup-list backup-restore backup-restore-b64 probe-dpi probe-cancel net-info bench-strategies check-domain domain-check lint lint-lists" >&2
+    echo "         get-logs export-logs clear-logs wifi-ssid backup-create backup-list backup-restore backup-restore-b64 probe-dpi probe-cancel net-info bench-strategies check-domain domain-check page-hosts lint lint-lists" >&2
     echo "         smart-status smart-sites smart-export smart-import-b64 smart-learn-once smart-bench smart-apply-variant smart-turbo smart-reset" >&2
     echo "         home-pause net-recheck upload share changelog" >&2
     echo "         current-network list-net-strategies clear-net-strategies googlevideo-discovery orchestra-status orchestra-lock orchestra-unlock orchestra-block orchestra-unblock orchestra-clear tg-affinity" >&2
