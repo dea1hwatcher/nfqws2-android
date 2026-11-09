@@ -262,7 +262,7 @@ const ROLE_VAR = {
   outline: '--md-sys-color-outline', outlineVariant: '--md-sys-color-outline-variant',
   inverseSurface: '--md-sys-color-inverse-surface', inverseOnSurface: '--md-sys-color-inverse-on-surface',
   inversePrimary: '--md-sys-color-inverse-primary',
-  surfaceTint: '--md-sys-color-surface-tint', shadow: '--md-sys-color-shadow', scrim: '--md-sys-color-scrim',
+  surfaceTint: '--md-sys-color-surface-tint', shadow: '--md-sys-color-shadow',
   primaryFixed: '--md-sys-color-primary-fixed', primaryFixedDim: '--md-sys-color-primary-fixed-dim',
   primaryFixedVariant: '--md-sys-color-primary-fixed-variant', onPrimaryFixed: '--md-sys-color-on-primary-fixed',
   onPrimaryFixedVariant: '--md-sys-color-on-primary-fixed-variant',

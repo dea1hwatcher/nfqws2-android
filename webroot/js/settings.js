@@ -682,11 +682,16 @@ async function openWhatsNew(auto){
   const r = await ctlx(['changelog']);
   const sec = !r.code && whatsNewSection(r.out || '', S.version);
   if(!sec){ if(!auto) toast(errText(r, 'Список изменений недоступен')); return; }
-  const items = sec.body.split('\n').map(l => l.trim()).filter(l => /^[-*] /.test(l)).map(l => l.slice(2));
+  const blocks = sec.body.trim().split(/\n\s*\n/);
+  const html = blocks.map(b => {
+    const lines = b.split('\n').map(l => l.trim()).filter(Boolean);
+    if(lines.length && lines.every(l => /^[-*] /.test(l))){
+      return '<ul>' + lines.map(l => '<li>' + mdInline(l.replace(/^[-*] /, '')) + '</li>').join('') + '</ul>';
+    }
+    return '<p>' + mdInline(b.trim()) + '</p>';
+  }).join('');
   $('whatsnew-title').textContent = t('Что нового в {0}', (S.version || '').replace(/-.*$/, ''));
-  setHTML('whatsnew-body', items.length
-    ? '<ul>' + items.map(i => '<li>' + mdInline(i) + '</li>').join('') + '</ul>'
-    : '<p>' + mdInline(sec.body.trim()) + '</p>', false);
+  setHTML('whatsnew-body', html, false);
   openSheet('whatsnew-sheet');
 }
 
