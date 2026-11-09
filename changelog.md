@@ -1,3 +1,15 @@
+### Изменения в v2.2.1:
+
+RU
+
+Добавлена стратегия из nzapret
+Фиксы движка zapret2
+
+EN
+
+Added nzapret strategy
+zapret2 engine fixes
+
 ### Изменения в v2.2.0:
 
 RU
