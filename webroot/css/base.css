@@ -131,18 +131,14 @@ html, body {
   height: 100%; overflow: hidden; overscroll-behavior: none;
   transition: background-color var(--dur-medium) var(--standard), color var(--dur-medium) var(--standard);
 }
-/* Прокручивается не документ, а этот слой: корень неподвижен, и WebView нечего
-   растягивать при упоре в край — шапка и капсула навигации лежат вне
-   прокрутки и не сдвигаются. overscroll-behavior: none не пускает упор к корню. */
+/* Scroller layer: root is fixed to keep app bar and nav docked */
 .scroller {
   position: fixed; top: 0; left: 0; right: 0; bottom: -1px;
   overflow-x: hidden; overflow-y: auto; overscroll-behavior: none;
   -webkit-overflow-scrolling: touch;
 }
 .page.stretch { will-change: transform; }
-/* Значок «оттянуть, чтобы обновить» на «Состоянии»: проявляется и
-   поворачивается по мере оттягивания, за порогом — в цвет акцента,
-   после отпускания крутится, пока идёт проверка */
+/* Pull-to-refresh spinner on status screen */
 .ptr {
   position: fixed; left: 50%; top: calc(var(--top-inset) + var(--appbar-height) + 4px); z-index: 24;
   width: 40px; height: 40px; margin-left: -20px; border-radius: 50%;
@@ -156,14 +152,11 @@ html, body {
 .ptr.hide { transition: opacity var(--dur-short) var(--standard), transform var(--dur-short) var(--standard); }
 @keyframes ptr-spin { to { transform: rotate(360deg); } }
 .page.stretch-release { transition: transform var(--dur-medium) var(--emphasized-decelerate); }
-/* Подписи, пункты и пояснения не выделяются долгим нажатием.
-   Выделяется только то, что имеет смысл копировать: поля ввода, журналы, аргументы запуска. */
+/* Disable text selection on UI chrome; allow on inputs, logs, code */
 body { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
 input, textarea, [contenteditable], .log-view, .code-block {
   -webkit-user-select: text; user-select: text; -webkit-touch-callout: default; }
-/* Поля ввода — с непрозрачным фоном (inherit — цвет своей плашки): при
-   протягивании выделения за край поле прокручивается, Android WebView
-   выносит текст в отдельный слой, и слой без фона заливается чёрным */
+/* Inputs use opaque background to prevent Android WebView compositing artifacts */
 input::selection, textarea::selection, .log-view ::selection, .code-block ::selection, .selectable-pre::selection {
   background: color-mix(in srgb, var(--md-sys-color-primary) 32%, transparent);
   color: var(--md-sys-color-on-surface); -webkit-text-fill-color: var(--md-sys-color-on-surface); }
@@ -319,9 +312,9 @@ body.nav-hidden .content { padding-bottom: calc(var(--bottom-inset) + 24px); }
 .page.active, .page.leaving { display: flex; }
 /* The leaving screen stays fixed so both are visible and scrolling does not jump */
 .page.leaving { pointer-events: none; z-index: 1; }
-/* Соседняя вкладка, пока её тянут пальцем: закреплена рядом со своей прокруткой */
+/* Neighboring tab during swipe gesture */
 .page.peek { display: flex; position: fixed; pointer-events: none; z-index: 1; }
-/* Вертикальная прокрутка — браузеру, горизонталь — свайпу между вкладками */
+/* Vertical scroll passes to browser, horizontal gesture to tab pager */
 body:not(.nav-hidden) .content { touch-action: pan-y; }
 body.swiping .state:active { transform: none; }
 body.swiping .state::after { opacity: 0 !important; }
@@ -940,7 +933,7 @@ body.kb-open .snackbar { bottom: 16px; }
 /* M3 search bar */
 .search-bar {
   display: flex; align-items: center; gap: 16px; height: 56px; padding: 0 16px;
-  border-radius: var(--shape-full); overflow: hidden; /* непрозрачный фон поля — в границах плашки */
+  border-radius: var(--shape-full); overflow: hidden; /* keep input background within pill bounds */
   background: var(--md-sys-color-surface-container-high); color: var(--md-sys-color-on-surface-variant);
 }
 .search-bar input {

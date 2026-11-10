@@ -371,8 +371,7 @@ assert_rc 0 "$ctl_rc" "clear-logs works"
 assert_eq "1" "$(grep -c . "$CONFDIR/logs/service.log")" "service.log is truncated"
 assert_contains "$(cat "$CONFDIR/logs/service.log")" "user action: logs cleared" "keeping one line: who cleared it"
 
-# Действия пользователя — в журнал службы: кто остановил, что забыто, что
-# отключено. Чтение (состояние, списки) — нет
+# Log state-modifying actions to service log; read-only operations not logged
 section "user actions are logged"
 : > "$CONFDIR/logs/service.log"
 ctl status >/dev/null; ctl get-list user >/dev/null; ctl smart-status >/dev/null
@@ -892,7 +891,7 @@ ctl clear-net-strategies
 assert_rc 0 "$ctl_rc" "clear-net-strategies succeeds"
 assert_contains "$ctl_out" "OK" "clear-net-strategies reports OK"
 
-# ── проверка одного домена ────────────────────────────────────────────────────
+# ── single domain probe ───────────────────────────────────────────────────────
 section "domain-check"
 
 printf 'youtube.com\n' >> "$LISTS_DIR/user.list"
@@ -926,7 +925,7 @@ printf '#!/bin/sh\necho "$*" >> "$MOCK_DIR/am.log"\ncase "$*" in *start*) ;; esa
 chmod 0755 "$MOCKBIN/am"; : > "$MOCK_DIR/am.log"
 printf '#!/bin/sh\necho "$*" >> "$MOCK_DIR/content.log"\ncase "$*" in *scan_file*) [ -f "$MOCK_DIR/noscan" ] || echo "Result: Bundle[{android.intent.extra.STREAM=content://media/external_primary/file/42}]" ;; esac\n' > "$MOCKBIN/content"
 chmod 0755 "$MOCKBIN/content"; : > "$MOCK_DIR/content.log"
-# su, не умеющий сменить uid (по умолчанию): am — от root, как раньше
+# su unable to switch uid (default): am runs as root fallback
 printf '#!/bin/sh\nexit 1\n' > "$MOCKBIN/su"; chmod 0755 "$MOCKBIN/su"
 EXP_OLD2="${NFQWS_BACKUP_DIR:-}"; export NFQWS_BACKUP_DIR="$SANDBOX/shared"
 ctl share file "$CONFFILE"
@@ -936,8 +935,7 @@ assert_contains "$(cat "$MOCK_DIR/content.log")" "--method scan_file --arg $SAND
 assert_match "$(cat "$MOCK_DIR/am.log")" "SEND --user 0 -d content://media/external_primary/file/42 -t text/plain" "and the link it answers with is shared, as plain text"
 assert_not_contains "$(cat "$MOCK_DIR/am.log")" "file://" "no file:// link: other apps (Telegram, ChatGPT, Quick Share) cannot read it"
 assert_contains "$(cat "$LOG_DIR/service.log")" "поделиться: nfqws2.conf — content://media/external_primary/file/42 (scan, от root)" "which link was shared goes to the log"
-# Право читать ссылку от root Android не выдаёт («the system cannot issue a
-# Uri permission grant») — am запускается от shell (uid 2000)
+# Android rejects root Uri permission grants — am runs as shell (uid 2000)
 printf '#!/bin/sh\n[ "$1" = 2000 ] && [ "$2" = -c ] || exit 1\n[ "$3" = "id -u" ] && { echo 2000; exit 0; }\necho "$3" >> "$MOCK_DIR/su.log"; eval "$3"\n' > "$MOCKBIN/su"
 : > "$MOCK_DIR/am.log"; : > "$MOCK_DIR/su.log"
 ctl share file "$CONFFILE"
@@ -953,7 +951,7 @@ assert_eq "2" "$(grep -c SEND "$MOCK_DIR/am.log")" "twice"
 assert_contains "$(cat "$LOG_DIR/service.log")" "am от shell: java.lang.SecurityException" "and the refusal is logged"
 printf '#!/bin/sh\necho "$*" >> "$MOCK_DIR/am.log"; echo "Starting: Intent"\n' > "$MOCKBIN/am"
 printf '#!/bin/sh\nexit 1\n' > "$MOCKBIN/su"
-# без ответа scan_file и MediaStore — ссылка DocumentsProvider на файл в общей памяти
+# Fallback to DocumentsProvider Uri when scan_file and MediaStore are unavailable
 touch "$MOCK_DIR/noscan"; : > "$MOCK_DIR/am.log"
 mkdir -p "$SANDBOX/sd"
 echo "a	b" > "$SANDBOX/sd/learn.tsv"
@@ -961,7 +959,7 @@ ctl share-saved "$SANDBOX/sd/learn.tsv"
 assert_rc 1 "$ctl_rc" "share-saved takes only files in shared storage"
 ctl share-saved /storage/emulated/0/Download/../../../etc/passwd
 assert_rc 1 "$ctl_rc" "and no path that climbs out of it"
-# запасные пути share_uri: поиск в MediaStore по пути, затем ссылка DocumentsProvider
+# share_uri fallbacks: MediaStore query by path, then DocumentsProvider Uri
 sed -n '/^share_uri() {/,/^}/p' "$MODDIR/bin/nfqws2-ctl" > "$SANDBOX/share_uri.sh"
 printf '#!/bin/sh\ncase "$*" in *query*) echo "Row: 0 _id=7" ;; esac\n' > "$MOCKBIN/content"
 uri=$(sh -c '. "$1"; share_uri /storage/emulated/0/Download/nfqws2/learn-wifi.tsv text/plain' _ "$SANDBOX/share_uri.sh")

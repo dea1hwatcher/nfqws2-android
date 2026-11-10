@@ -1,8 +1,7 @@
--- Запуск tests/lua/test_smart.lua в обычном LuaJIT, без бинарника nfqws2
--- (tests/module/test_smart.sh, когда NFQWS2_TEST_BIN не задан). Здесь — только
--- то, что nfqws2 даёт скриптам сам и что нужно оркестратору: битовые
--- операции, журнал, pid и часы для зерна случайных чисел, сложение по модулю
--- 2^32. Всё остальное — настоящие zapret-lib/auto/smart.lua
+-- Runs tests/lua/test_smart.lua in standalone LuaJIT without the nfqws2 binary
+-- (used by tests/module/test_smart.sh when NFQWS2_TEST_BIN is unset).
+-- Provides runtime stubs normally supplied by the nfqws2 engine: bitwise operations,
+-- logger, pid/clock entropy, modulo 2^32 arithmetic.
 NFQWS2_COMPAT_VER = 6
 local bit = require("bit")
 bitand, bitor, bitxor, bitnot = bit.band, bit.bor, bit.bxor, bit.bnot

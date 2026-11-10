@@ -67,11 +67,11 @@ function renderSettings(force){
 }
 const GITHUB_URL = 'https://github.com/Dea1hwa1cher/nfqws2-android';
 
-/* Долгое нажатие на строки настроек: быстрые действия для тех, кто знает */
+/* Settings row long-press: quick actions */
 const SETTINGS_LONG = {
-  // версия — список изменений (раньше — отдельный пункт «Что нового»)
+  // version — open changelog
   ver: () => openWhatsNew(),
-  // язык — сразу на другой из двух
+  // language — toggle ru/en directly
   lang: () => {
     setLanguage(LANG === 'en' ? 'ru' : 'en');
     toast(t('Язык переключён: {0}', LANG === 'en' ? 'English' : 'Русский'));
@@ -536,8 +536,7 @@ async function runBench(){
     if(benchCancelled) return;
     const p = l.split('\t');
     if(p[0] === 'BENCH_MODE') {
-      // подбор сам сообщает, сколько стратегий он меряет сразу: цифра в бейдже
-      // иначе выглядит как зависшая строка
+      // Bench reports concurrent slot count to display in badge
       benchSlotsLabel = (p[1] === 'parallel' && (+p[2] || 0) > 1) ? ' · ' + t('Параллельно: {0}', +p[2]) : '';
     } else if(p[0] === 'BENCH_START') {
       benchTotalStrats = +p[1] || 0;
@@ -652,10 +651,8 @@ function copyBenchReport(){
   copyText(rep, t('Отчёт скопирован в буфер обмена'), t('Не удалось скопировать: выделите текст вручную'));
 }
 
-/* ══ Что нового ══════════════════════════════════════════════════════════
-   После обновления модуля, при первом открытии WebUI, — лист с изменениями
-   этой версии из changelog.md модуля. Версия, для которой лист уже
-   показывали, хранится в nfq_seen_ver; при первой установке не показываем. */
+/* ══ What's new ══════════════════════════════════════════════════════════
+   Show bottom sheet with changelog for current version on first launch. */
 async function checkWhatsNew(){
   const v = S.version;
   if(!v) return;
@@ -664,8 +661,7 @@ async function checkWhatsNew(){
   store.set('nfq_seen_ver', v);
   if(seen && !openSheetId && !editorCtx) await openWhatsNew(true);
 }
-/* Раздел changelog.md для версии: заголовок «### … vX.Y.Z:» — без суффиксов
-   вроде -ci.abc1234; нет такого — первый раздел. */
+/* Extract section from changelog.md matching version header "### ... vX.Y.Z:" */
 function whatsNewSection(md, version){
   const base = (version || '').replace(/^(v?\d+(?:\.\d+)*).*$/, '$1');
   const parts = md.split(/^### /m).slice(1).map(p => {

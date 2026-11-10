@@ -3,9 +3,8 @@
 -- successfully. This is a transport heuristic, not authenticated application
 -- success. Unsupported versions use the native counters.
 local WAIT_MS, MAX_MS = 5000, 15000
--- Пул QUIC стал общим и переименован (16.09.2026): yt_quic -> quic. Старые
--- имена оставлены намеренно — конфиг и lua едут разными файлами, и в окне
--- обновления живой демон может держать ещё старый ключ.
+-- QUIC pool was unified and renamed (2026-09-16): yt_quic -> quic. Legacy
+-- keys preserved intentionally to prevent stale config race during updates.
 local POOLS = { quic = true, yt_quic = true, gv_quic = true }
 local serial = 0
 

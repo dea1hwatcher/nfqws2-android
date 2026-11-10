@@ -270,7 +270,7 @@ html[data-containers="true"] #pk .list-item.selected + .list-item:not(.selected)
   border-radius: 2px;
 }
 
-/* «Что нового»: список изменений версии */
+/* What's new version changelog */
 .whatsnew { display: flex; flex-direction: column; gap: 12px; }
 .whatsnew ul { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 10px; }
 .whatsnew li, .whatsnew p { margin: 0; font-size: var(--ts-body-medium); line-height: var(--lh-body-medium); color: var(--md-sys-color-on-surface); white-space: pre-line; }

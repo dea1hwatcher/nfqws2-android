@@ -8,18 +8,14 @@ MODDIR="${SELF%/bin}"
 load_conf >/dev/null 2>&1
 SERVICE="$MODDIR/service.sh"
 
-# Каталоги стратегий создаёт lib/common.sh (STRATEGIES_DIR, USER_STRATEGIES_DIR),
-# a состояние — она же через load_conf/sync_lists_and_blobs. Раньше всё это
-# повторялось здесь с теми же путями; оставляем только то, чего в common.sh
-# действительно нет — imports/.
+# Strategy directories created by lib/common.sh (STRATEGIES_DIR, USER_STRATEGIES_DIR),
+# state synced via load_conf/sync_lists_and_blobs. Keep only imports/ here.
 [ -d "$IMPORTS_DIR" ] || mkdir -p "$IMPORTS_DIR" 2>/dev/null
 
-# Данные больше ~100 КБ одной строкой не передать: и команда для sh -c, и
-# аргумент внешнего printf упираются в предел ядра на длину аргумента
-# (E2BIG, «Argument list too long»). Такие данные WebUI сначала кладёт
-# частями командой upload, а вместо них передаёт @up:<метка>.
+# Large payloads (>100 KB) exceed kernel argument length limit (E2BIG).
+# Uploaded in chunks via 'upload' command and referenced via @up:<tag>.
 UPLOAD_DIR="$STATE_DIR/upload"
-upload_file() { # <@up:метка> -> путь файла или код 1
+upload_file() { # <@up:tag> -> file path or exit code 1
   local tk="${1#@up:}"
   case "$1" in @up:*) ;; *) return 1 ;; esac
   case "$tk" in ''|*[!a-z0-9]*) return 1 ;; esac
@@ -60,7 +56,7 @@ list_file() {
   esac
 }
 
-set_conf_param() {   # только однострочные значения
+set_conf_param() {   # single-line values only
   local key="$1" val="$2" tmp="$CONFFILE.tmp.$$"
   awk -v k="$key" -v v="$val" '
     BEGIN { d = 0 }
@@ -71,19 +67,17 @@ set_conf_param() {   # только однострочные значения
   chmod 0644 "$CONFFILE"
 }
 
-# Кавычки, обратный слэш и управляющие символы ломают JSON. Именно [:cntrl:], а не
-# диапазон '\000-\037': tr из toybox (Android) диапазон с восьмеричными кодами не
-# понимает и удаляет его концы и сам «-», а с ним — дефисы в версии и именах.
+# Quotes, backslashes, and control characters break JSON. Use [:cntrl:], not
+# '\000-\037', as toybox tr removes hyphens incorrectly.
 json_str() { printf '%s' "$1" | tr -d '"\\[:cntrl:]'; }
 
 uptime_cs() { awk '{ printf "%d", $1 * 100 }' /proc/uptime 2>/dev/null; }
 
-# Код возврата этой функции — последний в ветках save-conf-b64/set/set-mode, поэтому if, а не &&:
-# иначе сохранение успешного конфига выходило бы с 1, когда служба остановлена, и WebUI считал его ошибкой.
+# Exit code of this function is last in save-conf-b64/set/set-mode branches;
+# use if rather than && so saving config when stopped does not exit with 1.
 need_restart_note() { if is_running; then echo "Изменения применятся после перезапуска службы"; fi; }
 
-# Строка на стратегию: имя <TAB> вид (builtin|user|import) <TAB> 1, если
-# встроенная стратегия отредактирована и отличается от исходника.
+# Format: name <TAB> type (builtin|user|import) <TAB> modified (1 if edited builtin differs from original)
 list_strategies() {
   local f n kind mod
   for f in "$STRATEGIES_DIR"/*.conf "$USER_STRATEGIES_DIR"/*.conf; do
@@ -95,8 +89,7 @@ list_strategies() {
     if [ -f "$STRATEGIES_DIR/$n.conf" ]; then
       kind=builtin
       if [ -f "$USER_STRATEGIES_DIR/$n.conf" ]; then
-        # Правка, совпавшая с исходником, — уже не правка: убираем копию, чтобы
-        # кнопка сброса не появлялась без причины.
+        # Reverted edits matching original: drop user copy so reset button disappears.
         if strategy_modified "$n"; then mod=1; else rm -f "$USER_STRATEGIES_DIR/$n.conf"; fi
       fi
     fi
@@ -109,9 +102,8 @@ list_strategies() {
   done
 }
 
-# Готовый nfqws2.conf для стратегии: её текст плюс настройки пользователя из
-# действующего конфига (USER_KEYS в lib/common.sh).
-build_strategy_conf() { # <имя> <файл-результат>
+# Generate nfqws2.conf for strategy: strategy template + preserved user keys (USER_KEYS in lib/common.sh).
+build_strategy_conf() { # <name> <output_file>
   local raw="$STATE_DIR/strat_raw.$$"
   render_strategy "$1" > "$raw" 2>/dev/null || { rm -f "$raw"; return 1; }
   [ -s "$raw" ] || { rm -f "$raw"; return 1; }
@@ -146,8 +138,7 @@ set_strategy() {
   echo "Применена стратегия: ${name#imp:}"
 }
 
-# 1 — действующий конфиг отличается от того, что дала бы повторная установка
-# текущей стратегии; 0 — совпадает. Кнопка «Сбросить» в WebUI видна только при 1.
+# 1: active config differs from default strategy installation; 0: matches.
 conf_modified() {
   local tmp="$STATE_DIR/conf_cmp.$$" r=1
   if build_strategy_conf "$(get_current_strategy)" "$tmp" && cmp -s "$tmp" "$CONFFILE"; then r=0; fi
@@ -160,9 +151,8 @@ cmd_json_status() {
   if is_running; then
     run=true
     pid=$(cat "$PIDFILE" 2>/dev/null)
-    # Часы с загрузки (/proc/uptime, сотые доли секунды): перевод часов и смена
-    # часового пояса их не трогают. Метки нет (служба запущена прежней
-    # версией) — по date, как раньше
+    # Monotonic boot clock (/proc/uptime): immune to clock steps/timezone changes.
+    # Fallback to date on older service runs.
     st=$(cat "$STATE_DIR/started_cs" 2>/dev/null); cs=$(uptime_cs)
     case "$st$cs" in
       ''|*[!0-9]*) ;;
@@ -180,11 +170,7 @@ cmd_json_status() {
       upms=$(( uptime * 1000 ))
     fi
   fi
-  # Ничего сверх того, что читает WebUI: раньше здесь ещё считались
-  # tls_strategies/udp_strategies — два пайплайна norm_args|tr|grep|sort|sed по
-  # обоим наборам аргументов на КАЖДЫЙ вызов, — плюс всегда пустой preset.
-  # Ни одно из этих полей интерфейс не читал. Если диагностика по стратегиям
-  # понадобится, её стоит отдавать отдельной командой, а не в статусе.
+  # Return only fields read by WebUI; strategy diagnostics handled via separate endpoints.
   local ver cur_strat paused pending f override=""
   ver=$(sed -n '/^version=/{s/^version=//p;q;}' "$MODDIR/module.prop")
   if [ -f "$HOME_PAUSED_FILE" ]; then
@@ -207,7 +193,7 @@ cmd_json_status() {
   cnt_user="$1" cnt_auto="$2" cnt_excl="$3" cnt_ipset="$4" cnt_ipset_excl="$5" cnt_apps="$6" cnt_probe="$7"
   local has_rb
   if [ -f "$SNAPSHOT_DIR/nfqws2.conf" ]; then has_rb=1; else has_rb=0; fi
-  # нечисловое значение обваливает весь JSON и убивает WebUI, поэтому проверяем каждое поле
+# Verify every field is numeric to prevent invalid JSON from breaking WebUI
   for v in appn cnt_user cnt_auto cnt_excl cnt_ipset cnt_ipset_excl cnt_apps cnt_probe uptime upms qdrop \
            PKT_LIMIT_OUT PKT_LIMIT_IN BLOCK_QUIC AUTOSTART WATCHDOG IPV6_ENABLED LOG_LEVEL NFQUEUE_NUM WAKELOCK HOME_WIFI ENABLE_HOTSPOT NET_STRATEGY VPN_PAUSE META_QUIC_REJECT CALLS_BYPASS TCP_MSS_CLAMP WL_PAUSE has_rb; do
     eval "case \"\${$v}\" in ''|*[!0-9]*) $v=0 ;; esac"
@@ -465,8 +451,7 @@ cmd_doctor() {
     row ok lists "$(M 'списки без замечаний' 'lists have no findings')"
   fi
 
-  # прерванный SIGKILL подбор не успевает убрать за собой: его цепи стоят перед
-  # правилами службы, а экземпляры держат очереди и память
+  # Clean up orphaned benchmark chains and processes killed via SIGKILL
   if bench_leftovers; then
     local bpid=""
     [ -f "$STATE_DIR/probe.pid" ] && bpid=$(cat "$STATE_DIR/probe.pid" 2>/dev/null)
@@ -622,9 +607,7 @@ cmd_doctor() {
     else
       row fail queue "$(M "процесс запущен, но НЕ привязан к очереди $NFQUEUE_NUM" "process is running but NOT bound to queue $NFQUEUE_NUM")"
     fi
-    # Сам переход в nfqws_post ещё не значит, что пакеты попадут в очередь: на
-    # ядре без нужного match все правила перехвата могли не встать (так было на
-    # ядрах без xt_multiport). Считаем именно правила, ведущие в очередь.
+    # Count rules routing traffic into NFQUEUE rather than mere jump existence
     local nq
     nq=$(iptables -w -t mangle -S $IPT_GROUP_POST 2>/dev/null | grep -cE -- '-j (NFQUEUE|nfqws_qout)')
     if firewall_ok; then
@@ -662,7 +645,7 @@ cmd_apply_apps() {
   fi
 }
 
-cmd_import_add() { # $1 = имя, $2 = путь к файлу с содержимым
+cmd_import_add() { # $1 = name, $2 = path to content file
   local name="$1" src="$2" safe
   [ -f "$src" ] || { echo "Нет данных для импорта" >&2; return 1; }
   tr -d '\r' < "$src" > "$src.n" && mv -f "$src.n" "$src"
@@ -681,8 +664,7 @@ cmd_import_add() { # $1 = имя, $2 = путь к файлу с содержи�
   [ -n "$safe" ] || safe="import-$(date '+%Y%m%d-%H%M%S' 2>/dev/null)"
   local dst="$IMPORTS_DIR/$safe.conf" n=1
   while [ -f "$dst" ]; do dst="$IMPORTS_DIR/${safe}_$n.conf"; n=$((n + 1)); done
-  # Импорт хранится уже в виде встроенной стратегии (см. normalize_import):
-  # редактор показывает его тем же, а смена стратегии не трогает настройки.
+  # Imported strategy normalized to builtin format (see normalize_import);
   if ! normalize_import "$src" > "$dst" || ! grep -q '^NFQWS_ARGS=' "$dst" || ! validate_conf "$dst" >/dev/null 2>&1; then
     rm -f "$dst"
     echo "Не удалось привести конфиг к виду стратегии" >&2
@@ -690,7 +672,7 @@ cmd_import_add() { # $1 = имя, $2 = путь к файлу с содержи�
   fi
   chmod 0644 "$dst"
   echo "$(basename "$dst" .conf)"
-  # Вторая строка — для WebUI: какие параметры убраны при импорте
+# Second line: removed unsupported parameters during import for WebUI display
   local bad
   bad=$(unsupported_opts "$src" | sed 's/^/--/' | tr '\n' ' ' | sed 's/ $//')
   if [ -n "$bad" ]; then
@@ -699,10 +681,10 @@ cmd_import_add() { # $1 = имя, $2 = путь к файлу с содержи�
   fi
 }
 
-# Строки, которые фильтр «Ошибки» в WebUI считает ошибками
+# Error lines classified by WebUI errors filter
 ERR_RE='ошибк|не удал|не запуст|упал|не активен|отсутству|отклон|error|fail|fatal|denied|refused|cannot|could not|unable'
 
-cmd_get_logs() { # <источник> <строк> [errors]
+cmd_get_logs() { # <source> <lines> [errors]
   local n="${2:-100}" f
   case "$n" in ''|*[!0-9]*) n=100 ;; esac
   [ "$1" = "summary" ] && { cmd_log_summary; return; }
@@ -718,8 +700,7 @@ cmd_get_logs() { # <источник> <строк> [errors]
   fi
 }
 
-# «Краткая статистика»: главное из service.log и auto.log одной таблицей.
-# Строка: вид (ok|warn|fail|info) <TAB> заголовок <TAB> подробность.
+# Summary statistics table: type (ok|warn|fail|info) <TAB> title <TAB> details
 cmd_log_summary() {
   local svc="$SERVICE_LOG" auto="$LOG_DIR/auto.log"
   local L="${NFQWS_LANG:-ru}"
@@ -749,7 +730,7 @@ cmd_log_summary() {
     printf 'info\t%s\t\n' "$(M 'Журнал службы пуст' 'Service log is empty')"
   fi
   if [ -s "$auto" ]; then
-    # Формат nfqws2: [дата : ]хост : profile N (имя) : client … : proto … : событие
+# nfqws2 log format: [date : ]host : profile N (name) : client ... : proto ... : event
     awk -F ' : ' -v L="$L" '
       function T(ru, en) { return L == "en" ? en : ru }
       {
@@ -806,7 +787,7 @@ validate_target_dir() { # <dir>
   return 0
 }
 
-redact_sensitive_file() { # <file> — маскирование секретов и токенов перед экспортом
+redact_sensitive_file() { # <file> — sanitize secrets/tokens before export
   local rf="$1"
   [ -f "$rf" ] || return 0
   sed -i \
@@ -829,8 +810,7 @@ cmd_export_logs() { # [target_dir]
   cp -f "$ARGS_FILE" "$tmp/last.args" 2>/dev/null
   cmd_doctor > "$tmp/doctor.txt" 2>&1
   iptables-save -t mangle 2>/dev/null | grep -i nfqws > "$tmp/iptables-nfqws.txt"
-  # Счётчики пакетов по правилам и состояние очереди: по ним видно, доходит ли
-  # трафик до правил и до nfqws2, даже когда журнал самого nfqws2 молчит.
+  # Rule counters and NFQUEUE state indicate whether traffic reaches nfqws2
   {
     for c in $IPT_GROUP_POST $IPT_GROUP_PRE $IPT_GROUP_QOUT $IPT_GROUP_QIN; do
       echo "== iptables -t mangle -L $c -v -n"; iptables -w -t mangle -L "$c" -v -n -x 2>&1
@@ -877,7 +857,7 @@ cmd_list_apps() {
   # fields, so it must be rebuilt once after an update
   [ "$(cat "$cache.version" 2>/dev/null)" = "2" ] || refresh=1
 
-  # Автоматическая проверка актуальности кэша при установке/удалении приложений
+# Auto-verify package cache validity on app install/uninstall
   if [ "$refresh" = "0" ] && [ -s "$cache" ]; then
     local ref
     for ref in /data/system/packages.list /data/system/packages.xml /data/app /data/system/users/userlist.xml; do
@@ -923,14 +903,13 @@ cmd_list_apps() {
     fi
   fi
 
-  # Если генерация не удалась, но у нас уже есть сохраненный кэш — сохраняем его,
-  # чтобы не сбрасывать пользователю названия и иконки приложений
+  # Preserve existing cache on regeneration failure to retain app names and icons
   if [ -s "$cache" ]; then
     cat "$cache"
     return 0
   fi
 
-  # Резервный вариант через pm (только если кэша вообще не было и app_process недоступен)
+# Fallback via pm if cache missing and app_process unavailable
   local PM=pm
   command -v pm >/dev/null 2>&1 || PM=/system/bin/pm
   if command -v "$PM" >/dev/null 2>&1; then
@@ -959,12 +938,10 @@ cmd_list_apps() {
   fi
 }
 
-# ---------------------------------------------------------------- резервная копия
-# Архив в Download: конфиг, пользовательские списки (сервисные приходят с
-# релизом и в копию не входят), apps.list, домашние сети, правки стратегий,
-# импорты, активная стратегия и настройки WebUI (ui.json, их передаёт WebUI).
+# ---------------------------------------------------------------- backup
+# Download archive: config, user lists, apps.list, home nets, strategy edits, imports, ui.json
 BACKUP_LISTS="user exclude ipset ipset_exclude auto probe_hosts probe_ru tcp16 probe_dns probe_tg probe_bench"
-cmd_backup_create() { # [ui.json в base64] [target_dir]
+cmd_backup_create() { # [ui.json in base64] [target_dir]
   local ui_data="" dest_dir=""
   if [ -n "${1:-}" ]; then
     case "$1" in
@@ -1033,7 +1010,7 @@ _apply_restored_backup() { # <tmp dir>
   if is_running; then sh "$SERVICE" restart >/dev/null 2>&1 || echo "Копия восстановлена, но служба не перезапустилась" >&2; fi
   return 0
 }
-cmd_backup_restore() { # <имя файла в Download>  -> stdout: ui.json в base64 (если был)
+cmd_backup_restore() { # <filename in Download> -> stdout: ui.json in base64 (if present)
   local name="$1" tmp="$STATE_DIR/restore.$$"
   case "$name" in nfqws2-backup-*.tar) ;; *) echo "Некорректное имя архива" >&2; return 1 ;; esac
   case "$name" in */*) echo "Некорректное имя архива" >&2; return 1 ;; esac
@@ -1044,7 +1021,7 @@ cmd_backup_restore() { # <имя файла в Download>  -> stdout: ui.json в 
   fi
   _apply_restored_backup "$tmp"
 }
-cmd_backup_restore_b64() { # <base64 tar data> -> stdout: ui.json в base64 (если был)
+cmd_backup_restore_b64() { # <base64 tar data> -> stdout: ui.json in base64 (if present)
   local tmp="$STATE_DIR/restore.$$"
   [ -n "$1" ] || { echo "Пустые данные архива" >&2; return 1; }
   rm -rf "$tmp"; mkdir -p "$tmp" || return 1
@@ -1054,11 +1031,8 @@ cmd_backup_restore_b64() { # <base64 tar data> -> stdout: ui.json в base64 (е�
   _apply_restored_backup "$tmp"
 }
 
-# ---------------------------------------------------------------- проверка доступности
-# Проверка идёт с устройства, а не из WebView: у WebView соединения живут в
-# общем пуле браузера, и повторная попытка (и «Проверить снова» после смены
-# стратегии) шла по уже открытому соединению — то есть не проверяла ничего.
-# Здесь каждая попытка — новый процесс и новое TLS-соединение.
+# ---------------------------------------------------------------- connectivity check
+# Executed on-device (not in WebView) so each check opens a fresh TLS connection.
 probe_tool() {
   local b
   if command -v curl >/dev/null 2>&1; then echo "curl $(command -v curl)"; return 0; fi
@@ -1071,8 +1045,7 @@ probe_tool() {
 }
 PROBE_APP_RULE=""
 setup_probe_app_rule() {
-  # подбор вызывает её на каждую стратегию: повторная вставка плодила бы
-  # одинаковые правила, а cleanup снимает только одно
+  # Avoid duplicate iptables rule insertion during benchmark rounds
   [ -n "$PROBE_APP_RULE" ] && return 0
   if is_running && [ "$APP_MODE" = "include" ] && iptables -w -t mangle -L $IPT_GROUP_APP -n >/dev/null 2>&1; then
     PROBE_APP_RULE="-m owner --uid-owner 0 -j CONNMARK --set-xmark $MARK_INCLUDE"
@@ -1158,14 +1131,13 @@ detect_pq_curve() {
   return 0
 }
 
-probe_attempt() { # <вид> <путь к утилите> <host[/путь]> [proto 1=http, 2=tls1.2, 3=tls1.3, 4=quic] -> "ok <мс>" | "fail <причина>" | "skip <причина>"
+probe_attempt() { # <kind> <bin_path> <host[/path]> [proto 1=http, 2=tls1.2, 3=tls1.3, 4=quic] -> "ok <ms>" | "fail <reason>" | "skip <reason>"
   local kind="$1" bin="$2" target="$3" proto="${4:-3}" t0 t1 out rc to=""
   target=$(resolve_probe_target "$target")
   local host="${target%%/*}" path="${target#*/}"
   [ "$host" = "$path" ] && path="" || path="/$path"
   command -v timeout >/dev/null 2>&1 && to="timeout 10"
-  # Параллельный подбор держит пробу слота в его диапазоне локальных портов:
-  # только эти порты правило отдаёт в очередь слота, чужой трафик не задевается.
+  # Parallel bench restricts slot probe to dedicated local port range to isolate traffic
   local lp=""
   [ -n "${PROBE_LOCAL_PORT:-}" ] && lp="--local-port $PROBE_LOCAL_PORT"
   [ "${PROBE_FORCE_IPV4:-0}" = "1" ] && lp="$lp -4"
@@ -1177,7 +1149,7 @@ probe_attempt() { # <вид> <путь к утилите> <host[/путь]> [pro
   jar=$(mktemp "$STATE_DIR/probe.ck.XXXXXX" 2>/dev/null || echo "$STATE_DIR/probe.ck.$$.$(rand_hex).tmp")
 
   case "$proto" in
-    1) # Plain HTTP (порт 80)
+    1) # Plain HTTP (port 80)
       local url="http://${host}:80${path:-/}"
       if [ "$kind" = "curl" ]; then
         out=$($to "$bin" $lp -s -L --max-redirs 5 -m 8 --connect-timeout 5 -o "$tmp_body" -A 'Mozilla/5.0' \
@@ -1186,7 +1158,7 @@ probe_attempt() { # <вид> <путь к утилите> <host[/путь]> [pro
         out=$($to "$bin" wget -q -T 6 -O "$tmp_body" -U 'Mozilla/5.0' "$url" 2>&1); rc=$?
       fi
       ;;
-    2) # TLS 1.2 (порт 443)
+    2) # TLS 1.2 (port 443)
       local url="https://${target}"
       if [ "$kind" = "curl" ]; then
         if [ "$host" = "gateway.discord.gg" ]; then
@@ -1203,7 +1175,7 @@ probe_attempt() { # <вид> <путь к утилите> <host[/путь]> [pro
         out=$($to "$bin" wget -q -T 6 -O "$tmp_body" -U 'Mozilla/5.0' --no-check-certificate "$url" 2>&1); rc=$?
       fi
       ;;
-    3) # TLS 1.3 (порт 443)
+    3) # TLS 1.3 (port 443)
       local url="https://${target}"
       if [ "$kind" = "curl" ]; then
         local pq=""
@@ -1310,17 +1282,15 @@ probe_attempt() { # <вид> <путь к утилите> <host[/путь]> [pro
   esac
 }
 
-# Повторный запрос по тому же соединению (curl). ТСПУ замораживает часть
-# соединений после первого обмена: первый запрос отвечает, следующий по этому
-# соединению (так ходят приложения и браузер) висит до тайм-аута.
-probe_keepalive() { # <путь к curl> <host[/путь]>
+# Retry request on same connection: detects mid-stream DPI freeze
+probe_keepalive() { # <curl_path> <host[/path]>
   local bin="$1" url="https://$2" out rc to="" rate="--rate 30/m"
   command -v timeout >/dev/null 2>&1 && to="timeout 25"
   while :; do
-    # пауза 2 с между запросами (--rate): приложение тоже спрашивает не сразу
+# 2s rate limit between requests (--rate)
     out=$($to "$bin" -s -k -o /dev/null -o /dev/null $rate -m 8 --connect-timeout 6 -A 'Mozilla/5.0' \
       -w '%{http_code} %{num_connects}\n' "$url" "$url" 2>/dev/null); rc=$?
-    # старый curl без --rate — без паузы
+# Legacy curl without --rate: execute without delay
     [ "$rc" = 2 ] && [ -n "$rate" ] && { rate=""; continue; }
     break
   done
@@ -1396,7 +1366,7 @@ cmd_probe_all_inner() {
         k=$((k + 1))
       done
 
-      # Дифференциальный отчет TLS 1.2 vs TLS 1.3
+# Differential report TLS 1.2 vs TLS 1.3
       local st2="${r2%% *}" st3="${r3%% *}"
       if [ "$st2" = "ok" ] && [ "$st3" != "ok" ]; then
         printf 'TLS_DIFF\t%s\t%s\ttls13_blocked\tTLS 1.3 заблокирован ТСПУ, TLS 1.2 доступен\n' "$i" "$h"
@@ -1415,7 +1385,7 @@ cmd_probe_all_inner() {
         fi
       fi
 
-      # QUIC авто-диагностика
+# QUIC auto-diagnostics
       local st4="${r4%% *}"
       if { [ "$st2" = "ok" ] || [ "$st3" = "ok" ]; } && [ "$st4" = "fail" ]; then
         printf 'QUIC_STATUS\t%s\t%s\tblocked\tQUIC (HTTP/3) глушится провайдером, HTTPS доступен\n' "$i" "$h"
@@ -1587,7 +1557,7 @@ Yandex|77.88.8.8|https://common.dot.dns.yandex.net/dns-query"
         doh_status="fail"
       fi
     elif [ -z "$doh" ] && [ "$kind" = "curl" ]; then
-      # DoT проверка (TLS порт 853)
+# DoT probe (TLS port 853)
       local dot_out rc_dot
       dot_out=$($to "$bin" -s -k -m 4 --connect-timeout 3 -o /dev/null "https://$ip:853/" 2>&1); rc_dot=$?
       if [ "$rc_dot" = 0 ] || [ "$rc_dot" = 35 ] || [ "$rc_dot" = 52 ] || [ "$rc_dot" = 56 ]; then
@@ -1689,7 +1659,7 @@ DC5|91.108.56.130|443"
   printf 'TG_AFFINITY\t%s\t%s\tprimary_media\t%sms\n' "$best_media_dc" "$best_media_ip" "$min_latency"
 }
 
-kill_descendants() { # <pid> — curl живёт под под-shell пробы, то есть внуком
+kill_descendants() { # <pid> — curl runs under subshell probe process
   local p="$1" stat cpid comm st ppid rest
   for stat in /proc/[0-9]*/stat; do
     [ -r "$stat" ] || continue
@@ -1759,15 +1729,13 @@ cmd_check_domain() {
   fi
 }
 
-# ---------------------------------------------------------------- поделиться файлом
-# Файлом — ссылкой file:// на настоящий путь: root-проводник (MT Manager и
-# др.) откроет его на месте; текстом — содержимое в EXTRA_TEXT, для чатов.
-# Только файлы модуля: конфиг и файлы hosts/стратегий.
+# ---------------------------------------------------------------- share file
+# Shares file via file:// (root file manager) or text content in EXTRA_TEXT
 share_file_ok() {
   case "$1" in
-    */../*) return 1 ;;   # «*» в шаблоне пропускает и «/» с «..»
+    */../*) return 1 ;;   # '*' in pattern matches '/' and '..'
     "$CONFFILE") ;;
-    # файлы стратегий — «Поделиться» из меню стратегии (путь даёт strategy-path)
+# Strategy file share (path resolved via strategy-path)
     "$MODDIR/defaults/nfqws2.conf") ;;
     "$STRATEGIES_DIR"/*.conf) case "${1#"$STRATEGIES_DIR"/}" in */*) return 1 ;; esac ;;
     "$USER_STRATEGIES_DIR"/*.conf) case "${1#"$USER_STRATEGIES_DIR"/}" in */*) return 1 ;; esac ;;
@@ -1776,21 +1744,10 @@ share_file_ok() {
   esac
   [ -f "$1" ]
 }
-# «Поделиться» файлом: ссылкой content://, которую получатель может прочитать.
-# file:// в ACTION_SEND с Android 7 запрещён, а файлы модуля в /data/adb
-# обычным приложениям и вовсе недоступны: Telegram получал только имя (тему
-# письма), ChatGPT и Quick Share — ошибку; работал лишь root-проводник. Поэтому
-# файл сначала копируется в общую память ($BACKUP_DIR/.share), затем
-# MediaStore сканирует его сразу (content call scan_file — ссылка в ответе;
-# широковещательный MEDIA_SCANNER_SCAN_FILE асинхронный и с Android 10 устарел),
-# запасные пути — поиск по пути, вставка, ссылка DocumentsProvider. Ссылка —
-# ещё и в данных intent: am, в отличие от приложения, не переносит
-# EXTRA_STREAM в ClipData, и флаг чтения (0x1) без этого доступа не выдаёт.
-# Тип — настоящий (text/plain для текста: ChatGPT не берёт octet-stream).
-# Какой ссылкой поделились — в журнал службы: на устройстве это не проверить
-# иначе, чем по журналу.
+# Share file via content:// Uri readable by non-root apps.
+# Copies file to $BACKUP_DIR/.share, scans via MediaStore, and grants read intent.
 share_mime() { case "$1" in *.tar) echo application/x-tar ;; *.zip) echo application/zip ;; *.txt|*.log|*.conf|*.tsv|*.list) echo text/plain ;; *) echo application/octet-stream ;; esac; }
-share_uri() { # <путь в /storage/emulated/0> <тип> -> content://… и способ через TAB
+share_uri() { # <path in /storage/emulated/0> <mime> -> content://... and method separated by TAB
   local rf="$1" u rel
   u=$(content call --uri content://media --method scan_file --arg "$rf" 2>/dev/null | grep -o 'content://[^ ,}]*' | head -n 1)
   [ -n "$u" ] && { printf '%s\tscan\n' "$u"; return 0; }
@@ -1807,13 +1764,13 @@ share_uri() { # <путь в /storage/emulated/0> <тип> -> content://… и �
   esac
   printf 'file://%s\tfile\n' "$rf"
 }
-share_stream() { # <файл> <имя>
+share_stream() { # <file> <name>
   local f="$1" rf u how out mime dir
   case "$f" in
     /sdcard/*) rf="/storage/emulated/0/${f#/sdcard/}" ;;
     /storage/emulated/0/*) rf="$f" ;;
     *)
-      # не в общей памяти — копия в $BACKUP_DIR/.share (папка чистится при следующем share)
+# Non-shared storage: copy to $BACKUP_DIR/.share
       dir="$BACKUP_DIR/.share"
       case "$f" in "$dir"/*) ;; *) rm -rf "$dir"; mkdir -p "$dir" 2>/dev/null
         cp -f "$f" "$dir/$2" 2>/dev/null || { echo "Не удалось скопировать файл в $dir" >&2; return 1; }
@@ -1826,12 +1783,7 @@ share_stream() { # <файл> <имя>
   local nm="$2"
   set -- am start -a android.intent.action.SEND --user 0 -d "$u" -t "$mime" --eu android.intent.extra.STREAM "$u" \
     --es android.intent.extra.SUBJECT "$nm" --es android.intent.extra.TITLE "$nm" -f 0x10000001
-  # Право читать ссылку получателю выдаёт тот, кто запускает intent (флаг
-  # 0x1). От root (и system) Android такую выдачу молча отбрасывает
-  # (UriGrantsManager: «For security reasons, the system cannot issue a Uri
-  # permission grant»), а мы запускали am от root — получатель видел ссылку,
-  # но открыть её не мог. Поэтому am — от shell (uid 2000, как adb shell):
-  # ему выдавать можно. su, не умеющий сменить uid, — по-старому, от root
+  # Run am as shell (uid 2000) so Android allows Uri permission grants (0x1)
   local who=root cmd a
   if [ "$(su 2000 -c 'id -u' 2>/dev/null)" = 2000 ]; then
     cmd=""; for a; do cmd="$cmd '$(printf '%s' "$a" | sed "s/'/'\\\\''/g")'"; done
@@ -1841,21 +1793,20 @@ share_stream() { # <файл> <имя>
     out=$("$@" 2>&1)
   fi
   log_msg "поделиться: $nm — $u ($how, от $who)"
-  # отказ в выдаче права виден только в logcat — туда и смотрим
+# Verify Uri permission grant via logcat
   a=$(logcat -d -t 400 2>/dev/null | grep -m 1 -E 'cannot issue a Uri permission|Permission Denial.*(grant|Uri)')
   [ -n "$a" ] && log_msg "поделиться: logcat: ${a#*: }"
   case "$out" in *Error*|*Exception*) log_msg "поделиться: am: $out"; echo "Не удалось открыть «Поделиться»: $out" >&2; return 1 ;; esac
   return 0
 }
-# share-saved <путь>: поделиться файлом, который WebUI уже сохранил в общую
-# память (обучение, резервная копия, журналы) — только оттуда
+# share-saved <path>: share file already in public storage (smart, backup, logs)
 cmd_share_saved() {
   case "$1" in */../*|*/..) echo "Этим файлом делиться нельзя" >&2; return 1 ;; esac
   case "$1" in /sdcard/*|/storage/emulated/0/*) ;; *) echo "Этим файлом делиться нельзя" >&2; return 1 ;; esac
   [ -f "$1" ] || { echo "Нет файла $1" >&2; return 1; }
   share_stream "$1" "${1##*/}" && echo OK
 }
-cmd_share() { # <file|text> <путь>
+cmd_share() { # <file|text> <path>
   share_file_ok "$2" || { echo "Этим файлом делиться нельзя" >&2; return 1; }
   local out
   if [ "$1" = text ]; then
@@ -1872,7 +1823,7 @@ cmd_share() { # <file|text> <путь>
 domain_norm() {
   printf '%s' "$1" | tr 'A-Z' 'a-z' | sed 's#^[a-z]*://##; s#[/?:].*##; s/^\*\.//; s/^\.//; s/\.$//'
 }
-ip_in_ipsets() { # <ip> <файл>... -> файлы, где есть подсеть с этим IP (IPv4)
+ip_in_ipsets() { # <ip> <file>... -> files containing subnet matching IP (IPv4)
   local ip="$1"; shift
   awk -v ip="$ip" '
     function n(a,   p) { split(a, p, "."); return ((p[1] * 256 + p[2]) * 256 + p[3]) * 256 + p[4] }
@@ -1891,7 +1842,7 @@ cmd_domain_check() {
   local d cand f role used args entry tool kind bin ip="" k
   d=$(domain_norm "$1")
   case "$d" in ''|*[!a-z0-9.-]*|*..*) echo "Некорректный домен" >&2; return 1 ;; esac
-  # домен и все родительские: a.b.c -> a.b.c, b.c, c
+# Domain and parent domains: a.b.c -> a.b.c, b.c, c
   cand="$STATE_DIR/domain.cand.$$"; mkdir -p "$STATE_DIR"
   trap 'rm -f "$cand"' EXIT INT TERM
   k="$d"; : > "$cand"
@@ -1902,19 +1853,18 @@ cmd_domain_check() {
   used=$(printf '%s\n' "$args" | tr ' ' '\n' | awk -F= '
     $1 ~ /^--(hostlist|hostlist-exclude|hostlist-auto|ipset|ipset-exclude)$/ { print substr($1, 3), substr($0, length($1) + 2) }')
 
-  # Списки доменов: подключённые к запуску и остальные (idle)
+# Domain lists: attached to engine vs idle
   for f in "$LISTS_DIR"/*.list; do
     [ -f "$f" ] || continue
     case "${f##*/}" in ipset*|probe_*|apps.list|tcp16.list) continue ;; esac
-    # «^домен» (как в списках nfqws-menu) — только сам домен, без поддоменов
+# Exact domain match without subdomains ('^domain')
     entry=$(tr -d '\r' < "$f" | awk -v d="$d" '
       NR == FNR { c[$0] = 1; next }
       /^\^/ { e = substr($0, 2); if (e == d && length(e) > best) { best = length(e); hit = $0 }; next }
       { e = $0; sub(/^[*.]*/, "", e); if ((e in c) && length(e) > best) { best = length(e); hit = e } }
       END { if (hit != "") print hit }' "$cand" - 2>/dev/null)
     [ -n "$entry" ] || continue
-    # exclude.list подключён и пустым профилем исключений (--hostlist) — это
-    # всё равно исключение
+    # exclude.list attached even as empty profile
     role=$(printf '%s\n' "$used" | awk -v f="$f" -v x="$LISTS_DIR/exclude.list" '$2 == f { r = (f == x && $1 == "hostlist") ? "hostlist-exclude" : (r == "hostlist-exclude" ? r : $1) } END {
       if (r == "hostlist") print "host"; else if (r == "hostlist-exclude") print "exclude"; else if (r == "hostlist-auto") print "auto"; else print "idle" }')
     printf 'LIST\t%s\t%s\t%s\n' "${f##*/}" "$role" "$entry"
@@ -1923,7 +1873,7 @@ cmd_domain_check() {
   trap - EXIT INT TERM
 
   tool=$(probe_tool); kind="${tool%% *}"; bin="${tool#* }"
-  # IP — как его видит система (резолвер Android, с DNS модуля, если он включён)
+# System DNS resolution
   ip=$(ping -c 1 -W 2 "$d" 2>/dev/null | sed -n '1s/^PING [^(]*(\([0-9.]*\)).*/\1/p')
   if [ -n "$ip" ]; then
     printf 'IP\t%s\n' "$ip"
@@ -1940,14 +1890,14 @@ cmd_domain_check() {
   trap 'exit 143' INT TERM
   for k in 1 2 3; do ( printf 'R\t%s\t%s\n' "$k" "$(probe_attempt "$kind" "$bin" "$d")" ) & done
   wait
-  # WebSocket Discord — не запрос-ответ, повторять нечего
+# Discord WebSocket is stream-based, skip retry
   [ "$kind" = curl ] && [ "$d" != "gateway.discord.gg" ] && printf 'K\t%s\n' "$(probe_keepalive "$bin" "$d")"
   cleanup_probe_app_rule
   trap - EXIT INT TERM
   echo done
 }
 
-cmd_page_hosts() { # <url_or_domain> — извлечение внешних ресурсов страницы и проверка доступности
+cmd_page_hosts() { # <url_or_domain> — extract external page resources and test reachability
   local raw="$1" d tool kind bin
   d=$(domain_norm "$raw")
   d="${d#www.}"
@@ -2025,31 +1975,28 @@ cmd_page_hosts() { # <url_or_domain> — извлечение внешних р�
   printf 'PAGE_HOSTS_DONE\t%s\t%s\n' "$total_cands" "$blocked_cands"
 }
 
-# ---------------------------------------------------------------- умный режим
-# Выученное — в $SMART_DIR/<сеть>.tsv (пишет lua/zapret-smart.lua), подписи
-# сетей — в nets.tsv, имена вариантов — в шапке strategies/smart.conf (#@slot N имя)
+# ---------------------------------------------------------------- smart mode
+# Learned states: $SMART_DIR/<network>.tsv, signatures: nets.tsv, strategy labels: smart.conf (#@slot N name)
 smart_valid_net() { case "$1" in ''|*[!a-z0-9-]*) return 1 ;; esac; return 0; }
-# Файл сети (формат v4, как v3): slot host cur ok err cool seen flags; ok и err —
-# «вариант:вес» через запятую, вес события со временем убывает; flags «e» —
-# сайт хоть раз открылся. v2 — то же без flags
-cmd_smart_status() { # [сеть — чью статистику показать; без неё — текущей]
+# Network file format (v4): slot host cur ok err cool seen flags; ok/err are variant:weight
+cmd_smart_status() { # [network — whose stats to display; defaults to active network]
   local act=0 net off=0 view
   smart_active && act=1
   net=$(cat "$SMART_NET_FILE" 2>/dev/null)
   [ "$net" = offline ] && off=1
   view="$net"
-  # нет связи — показываем последнюю настоящую сеть: «нет связи» — не профиль
+# Offline: display last active network profile
   local last=""
   [ "$off" = 1 ] && { last=$(cat "$SMART_NET_LAST" 2>/dev/null); view="$last"; }
   smart_valid_net "$1" && view="$1"
-  # paused — служба на паузе (дом, VPN, белые списки): обучение ждёт её
+# Paused service: learning waits
   printf '{"active":%s,"running":%s,"paused":%s,"net":"%s","view":"%s","offline":%s,"learn":%s,' \
     "$act" "$(is_running && echo 1 || echo 0)" "$([ -f "$HOME_PAUSED_FILE" ] && echo 1 || echo 0)" "$(json_str "$net")" "$(json_str "$view")" "$off" "${SMART_LEARN:-1}"
-  # фоновое обучение: сколько сайтов открыто и какой последний
+# Background learning: count of hosts learned and most recent
   printf '"bg":{'
   [ -f "$SMART_LEARN_FILE" ] && awk -F= 'NF >= 2 { k = $1; sub(/^[^=]*=/, ""); gsub(/["\\]/, "", k); gsub(/["\\]/, ""); printf "%s\"%s\":\"%s\"", (n++ ? "," : ""), k, $0 }' "$SMART_LEARN_FILE"
   printf '},"nets":['
-  # сети: подпись, сколько сайтов выучено (есть удачи), удачи и ошибки в сумме
+# Networks: signature, host count, total successes and errors
   local first=1 id label f
   if [ -f "$SMART_DIR/nets.tsv" ]; then
     while IFS='	' read -r id label; do
@@ -2066,11 +2013,10 @@ cmd_smart_status() { # [сеть — чью статистику показат�
     done < "$SMART_DIR/nets.tsv"
   fi
   printf '],'
-  # варианты сети (удачи, ошибки, сколько сайтов на варианте) и сайты, у
-  # которых на текущем варианте ошибок больше, чем удач
+  # Strategy variants per network (ok, err, site count) and failing hosts
   f="$SMART_DIR/$view.tsv"
   if smart_valid_net "$view" && [ -f "$f" ] && head -n 1 "$f" | grep -q '^#v[234]'; then
-    # до v4 «не похоже на блокировку» ставилось по ложным ошибкам — не показываем
+# Exclude false-positive non-DPI flags from legacy formats
     local v3=0
     head -n 1 "$f" | grep -q '^#v4' && v3=1
     sed -n 's/^#@\([a-z]*\) \([0-9]*\) \(.*\)$/N\t\1\t\2\t\3/p' "$STRATEGIES_DIR/smart.conf" 2>/dev/null |
@@ -2078,8 +2024,7 @@ cmd_smart_status() { # [сеть — чью статистику показат�
         function get(s, v,   a, k, i, p) { k = split(s, a, ","); for (i = 1; i <= k; i++) { split(a[i], p, ":"); if (p[1] == v) return p[2] } return 0 }
         function add(s, arr, slot,   a, k, i, p) { k = split(s, a, ","); for (i = 1; i <= k; i++) { split(a[i], p, ":"); arr[slot "|" p[1]] += p[2]; seen[slot "|" p[1]] = 1 } }
         function q(s) { gsub(/["\\]/, "", s); return s }
-        # имя варианта: tls_cf, tls_16… берут имена у tls; подстройка — имя
-        # основы и что в ней изменено
+        # Strategy variant name: tls_cf/tls_16 share tls names; tuning: base + diff
         function bname(slot, v,   b) {
           if ((slot "|" v) in name) return name[slot "|" v]
           b = slot; sub(/_.*/, "", b)
@@ -2098,10 +2043,9 @@ cmd_smart_status() { # [сеть — чью статистику показат�
           add($4, ok, $1); add($5, err, $1)
           sites[$1 "|" $3]++; seen[$1 "|" $3] = 1; slots[$1] = 1
           o = get($4, $3); e = get($5, $3)
-          # точность — без сайтов «не похоже на блокировку»: там не DPI
+# Success rate excluding non-DPI domains
           if (!(v3 && get($6, 0) + 0 > now + 0)) { aok += sum($4); aerr += sum($5) }
-          # «0:время» в столбце остывания — не похоже на блокировку: умный режим
-          # такой сайт не трогает, и в «сайты с ошибками» он не идёт
+# '0:timestamp' in err column indicates non-DPI flag
           if (v3 && get($6, 0) + 0 > now + 0) { nq++; qh[nq] = $2 }
           else if (e >= 1 && e > o) { np++; ph[np] = $2; ps[np] = $1; pv[np] = $3; po[np] = o; pe[np] = e }
         }
@@ -2129,8 +2073,7 @@ cmd_smart_status() { # [сеть — чью статистику показат�
   fi
   printf '}\n'
 }
-# Забыть выученное: одной сети или всего. В памяти nfqws2 оно тоже есть —
-# служба перезапускается, иначе записала бы его обратно
+# Share learned state: network file -> 'name<TAB>path<TAB>[base64]'
 cmd_smart_reset() {
   case "$1" in
     all) rm -f "$SMART_DIR"/*.tsv ;;
@@ -2142,8 +2085,7 @@ cmd_smart_reset() {
   smart_net_update
   echo OK
 }
-# Сайты сети для экрана умного режима: <сеть> <tls|google|quic|problems|nodpi|all>
-# -> JSON-массив {host, slot, n, name, ok, err, e} — по удачам, до 300
+# Import foreign learned network: merge new hosts without overwriting existing entries
 cmd_smart_sites() {
   local f="$SMART_DIR/$1.tsv" grp="${2:-all}"
   smart_valid_net "$1" || { echo "Неверная сеть" >&2; return 1; }
@@ -2173,8 +2115,8 @@ cmd_smart_sites() {
           (grp == "problems" ? e : o), q($2), $1, $3, q(nm($1, $3)), o + 0.5, e + 0.5, ($8 == "e")
       }' | sort -t "$(printf '\t')" -k1,1nr | head -n 300 | cut -f2- | awk 'BEGIN { printf "[" } { printf "%s%s", (NR > 1 ? "," : ""), $0 } END { print "]" }'
 }
-# Поделиться обучением: файл выученного в сети -> «имя<TAB>путь<TAB>[base64]»
-cmd_smart_export() { # <сеть> [path|target_dir] [target_dir]
+      # Legacy formats: prune unreliable non-DPI cool flags
+cmd_smart_export() { # <network> [path|target_dir] [target_dir]
   local f="$SMART_DIR/$1.tsv"
   local name out dest_dir="$BACKUP_DIR" only_path=0
   smart_valid_net "$1" && [ -f "$f" ] || { echo "$(M 'В этой сети ещё ничего не выучено' 'Nothing learned on this network yet')" >&2; return 1; }
@@ -2192,11 +2134,8 @@ cmd_smart_export() { # <сеть> [path|target_dir] [target_dir]
   [ "$only_path" = 1 ] || b64e < "$out" | tr -d '\n'
   echo
 }
-# Чужое обучение — в текущую сеть: сайты, которых здесь ещё нет, с их
-# подстройками (номера подстроек — свои, совпадающие не дублируются). Своё
-# выученное важнее: сайты, что уже есть, не трогаются. Остывание и «не похоже
-# на блокировку» чужой сети не переносятся
-cmd_smart_import_b64() { # <base64 файла> -> число добавленных сайтов
+# Restart service to avoid in-memory state overwriting imported file
+cmd_smart_import_b64() { # <base64 file data> -> added host count
   local net f tmp src n
   net=$(cat "$SMART_NET_FILE" 2>/dev/null)
   smart_valid_net "$net" || { echo "$(M 'Сеть ещё не определена — подключитесь к сети' 'The network is not known yet — connect first')" >&2; return 1; }
@@ -2206,8 +2145,7 @@ cmd_smart_import_b64() { # <base64 файла> -> число добавленн�
   case "$(head -n 1 "$src")" in
     '#v4'*) ;;
     '#v2'*|'#v3'*)
-      # старые форматы: колонки те же, но метки «не похоже на блокировку»
-      # (cool 0:*) ставились по ложным ошибкам — при миграции отбрасываем
+# Background training: probe a random site via service.sh smartkill
       { printf '#v4 slot\thost\tcur\tok\terr\tcool\tseen\tflags\n'
         sed '1d' "$src" | awk -F'\t' -v OFS='\t' '{
           if ($6 != "") {
@@ -2256,13 +2194,12 @@ cmd_smart_import_b64() { # <base64 файла> -> число добавленн�
     END { print n + 0 > cnt }
   ' "$f" "$src" > "$tmp" && mv -f "$tmp" "$f"
   n=$(cat "$tmp.n" 2>/dev/null); rm -f "$src" "$tmp" "$tmp.n"
-  # в памяти nfqws2 своё выученное — служба перезапускается, иначе записала бы его поверх
+# Smart mode site key (matches lua site_key): 2 levels, or 3 for shared TLDs
   if is_running && smart_active; then sh "$SERVICE" restart >/dev/null 2>&1; fi
   echo "${n:-0}"
 }
-# Фоновое обучение: один случайный сайт — из своего списка, «Проверки
-# доступности», обучения и сайтов пользователя. Зовёт помощник умного режима
-# (service.sh smartkill) раз в SMART_LEARN_EVERY секунд
+# smart-apply-variant <slot> <v> [host]
+# Pin variant for host or set as starting variant for current network
 cmd_smart_learn_once() {
   local tool kind bin h r n=0 ok=0
   [ "$(cat "$SMART_NET_FILE" 2>/dev/null)" = offline ] && return 0
@@ -2284,17 +2221,15 @@ cmd_smart_learn_once() {
   printf 'n=%s\nok=%s\nlast=%s\nt=%s\n' "$n" "${ok:-0}" "$h" "$(date +%s)" > "$SMART_LEARN_FILE.tmp" && mv -f "$SMART_LEARN_FILE.tmp" "$SMART_LEARN_FILE"
 }
 
-smart_variant_name() { # <slot> <v> -> имя варианта
+smart_variant_name() { # <slot> <v> -> variant name
   local slot="$1" v="$2" name=""
   name=$(sed -n "s/^#@${slot}[[:space:]]\+${v}[[:space:]]\+//p" "$STRATEGIES_DIR/smart.conf" 2>/dev/null | tr -d '\r')
   [ -z "$name" ] && name="Вариант #$v"
   printf '%s' "$name"
 }
 
-# Ключ сайта так, как его хранит умный режим (lua site_key): два последних
-# лейбла, для общей зоны — три. IP и однословные имена остаются как есть.
-# Без этого закрепление по «www.example.com» создаёт строку, которую движок
-# никогда не найдёт: он ключует БД по example.com.
+# Rapid testing of smart mode slot variants without service restart
+# smart-bench [domain] [slot]
 smart_site_key() {
   printf '%s' "$1" | awk '
     BEGIN {
@@ -2314,8 +2249,9 @@ smart_site_key() {
     }'
 }
 
-# smart-apply-variant <slot> <v> [host]
-# Закрепляет вариант за сайтом или делает его стартовым лидером в текущей сети
+# ---------------------------------------------------------------- strategy benchmark
+# Parallel benchmark spawns private nfqws2 instances on isolated queues, measuring
+# multiple strategies concurrently without restarting service or dropping user connections.
 cmd_smart_apply_variant() {
   local slot="${1:-tls}" v="$2" host="${3:-}"
   case "$slot" in ''|*[!a-z0-9_]*) echo "Неверный слот" >&2; return 1 ;; esac
@@ -2388,8 +2324,7 @@ cmd_smart_apply_variant() {
   echo OK
 }
 
-# Экспресс-тестирование вариантов слота умного режима без перезапуска службы
-# smart-bench [domain] [slot]
+# <128 MB RAM: avoid spawning extra instances to prevent OOM
 cmd_smart_bench() {
   local target_domain="${1:-}" slot_arg="${2:-}"
   local tool kind bin
@@ -2529,21 +2464,9 @@ cmd_smart_bench() {
   printf 'SMART_BENCH_BEST\t%s\t%s\t%s\t%s\t%s\t%s\n' "$slot" "$best_v" "$best_name" "$best_ok" "$best_total" "$best_ms"
 }
 
-# ---------------------------------------------------------------- подбор стратегий
-# Последовательный подбор перезапускает службу на каждую стратегию: тридцать
-# стратегий — тридцать обрывов пользовательских соединений. Параллельный путь
-# поднимает приватные экземпляры nfqws2 на своих очередях и меряет несколько
-# стратегий сразу, не трогая службу. Проба слота уходит в его очередь по
-# локальному порту: curl --local-port держит порт в диапазоне слота, а правило
-# --sport/--dport ловит только эти порты. Диапазон выбирается вне
-# ip_local_port_range и без единого сокета внутри, так что чужой трафик в
-# очередь подбора не попадает. NFQUEUE везде с --queue-bypass: мёртвый экземпляр
-# означает «пропустить без изменений», а не «потерять пакет».
-# Правила слота стоят до цепей службы, поэтому ограничитель пакетов на
-# соединение (PKT_LIMIT_*) к пробе не применяется. Победитель перепроверяется
-# через службу, где он есть: параллельный заезд — отсев, а не приговор.
+# Budget 256 MB RAM for system
 
-BENCH_PORT_WIDTH=256   # TIME_WAIT держит порт около минуты, а слот за раунд открывает десятки соединений
+BENCH_PORT_WIDTH=256   # TIME_WAIT retains port ~1min while slot opens tens of connections per round
 BENCH_PORT_BASE=0
 BENCH_ACTIVE=""
 BENCH_WORKERS=""
@@ -2557,7 +2480,7 @@ BENCH_PARALLEL_TRIED=0
 bench_slot_q() { printf '%s' "$((NFQUEUE_NUM + 1 + $1))"; }
 bench_slot_lo() { printf '%s' "$((BENCH_PORT_BASE + $1 * BENCH_PORT_WIDTH))"; }
 
-bench_slot_count() { # [свободные КБ] -> число слотов; BENCH_SLOTS задаёт вручную, 0 — последовательный путь
+bench_slot_count() { # [free KB] -> slot count; BENCH_SLOTS sets explicitly, 0 = sequential
   local n avail="${1:-}"
   case "${BENCH_SLOTS:-}" in
     ''|*[!0-9]*) ;;
@@ -2569,21 +2492,21 @@ bench_slot_count() { # [свободные КБ] -> число слотов; BEN
   esac
   [ -n "$avail" ] || avail=$(awk '/^MemAvailable:/ { print $2; exit }' /proc/meminfo 2>/dev/null)
   case "$avail" in ''|*[!0-9]*) avail=0 ;; esac
-  # меньше 128 МБ свободных — лишний экземпляр опаснее, чем медленный подбор
+# Hex port conversion without gawk strtonum
   if [ "$avail" -lt 131072 ]; then printf '0'; return 0; fi
-  # экземпляр с LuaJIT и hostlist'ами — десятки мегабайт; системе оставляем 256 МБ
+  # Avoid mksh per-byte read bug on /proc/sys
   n=$(( (avail - 262144) / 65536 ))
   [ "$n" -gt "$BENCH_SLOTS_MAX" ] && n="$BENCH_SLOTS_MAX"
   [ "$n" -lt 1 ] && n=1
   printf '%s' "$n"
 }
 
-bench_ports_free() { # <lo> <hi> -> 0, если в диапазоне нет ни одного сокета
+bench_ports_free() { # <lo> <hi> -> 0 if no sockets exist in range
   local f n
   for f in "${PROC_NET_ROOT:-/proc/net}"/tcp "${PROC_NET_ROOT:-/proc/net}"/tcp6 \
            "${PROC_NET_ROOT:-/proc/net}"/udp "${PROC_NET_ROOT:-/proc/net}"/udp6; do
     [ -r "$f" ] || continue
-    # порт в /proc/net/* шестнадцатеричный, а strtonum есть только в gawk
+  # Probe curl --local-port syntax support
     n=$(awk -v lo="$1" -v hi="$2" '
       function hex(h,   i, c, v, r) {
         r = 0; h = toupper(h)
@@ -2601,12 +2524,10 @@ bench_ports_free() { # <lo> <hi> -> 0, если в диапазоне нет н�
   return 0
 }
 
-bench_port_base() { # <слотов> -> первый порт диапазона слотов
+bench_port_base() { # <slots> -> first port of slot range
   local need=$(( $1 * BENCH_PORT_WIDTH )) rng lo hi cand r
   r="${PROC_SYS_ROOT:-/proc/sys}/net/ipv4/ip_local_port_range"
-  # Не builtin read: /proc/sys отдаёт содержимое одним чтением, а mksh (Android's
-  # /system/bin/sh) читает посимвольно — вторая порция с того же дескриптора уже
-  # EOF, и диапазон схлопнулся бы в «3». sysctl_apply обходит то же через tr.
+# Wait for nfqws2 queue binding before injecting firewall rules
   rng=$(awk 'NR == 1 { print $1 " " $2; exit }' "$r" 2>/dev/null)
   lo="${rng% *}"; hi="${rng#* }"
   case "$lo" in ''|*[!0-9]*) lo=32768 ;; esac
@@ -2622,15 +2543,13 @@ bench_port_base() { # <слотов> -> первый порт диапазона
   return 1
 }
 
-bench_curl_local_port() { # <curl> -> 0, если --local-port поддерживается
-  # --version печатает и выходит, но неизвестная опция ломает разбор раньше,
-  # чем до него доходит очередь: порядок аргументов и делает вызов проверкой.
-  # Диапазон заведомо корректный — иначе curl ответил бы кодом 2 и на новый.
+bench_curl_local_port() { # <curl> -> 0 if --local-port supported
+# Substitute entire strategy mode with $MODE_ALL preserving quotes
   "$1" --local-port 1024-65535 --version >/dev/null 2>&1 || return 1
   return 0
 }
 
-bench_parallel_possible() { # <вид> <curl> -> "<слотов> <первый порт>", иначе код 1
+bench_parallel_possible() { # <mode> <curl> -> "<slots> <first port>", else code 1
   local n base
   [ "$1" = "curl" ] || return 1
   case "$NFQUEUE_NUM" in ''|*[!0-9]*) return 1 ;; esac
@@ -2642,7 +2561,7 @@ bench_parallel_possible() { # <вид> <curl> -> "<слотов> <первый �
   printf '%s %s' "$n" "$base"
 }
 
-bench_jumps() { # <cmd> — переходы первыми: служба могла переприменить свои правила
+bench_jumps() { # <cmd> — jumps first: service may have re-applied rules
   local C="$1" hook chain
   for hook in "POSTROUTING $BENCH_CHAIN_OUT" "PREROUTING $BENCH_CHAIN_IN"; do
     chain="${hook#* }"
@@ -2666,7 +2585,7 @@ bench_chains_up() {
   return 0
 }
 
-bench_slot_rules() { # <i> — правила слота, только после того как экземпляр поднят
+bench_slot_rules() { # <i> — slot rules, applied only after instance is running
   local i="$1" q lo hi C
   q=$(bench_slot_q "$i"); lo=$(bench_slot_lo "$i"); hi=$((lo + BENCH_PORT_WIDTH - 1))
   for C in iptables ip6tables; do
@@ -2692,7 +2611,7 @@ bench_round_reset() {
   return 0
 }
 
-bench_slot_args() { # <conf слота> <очередь> <лог> -> аргументы приватного экземпляра
+bench_slot_args() { # <slot_conf> <queue> <log> -> private instance arguments
   (
     . "$1" >/dev/null 2>&1 || exit 1
     set_defaults
@@ -2713,9 +2632,7 @@ bench_slot_alive() { # <i>
   pid_is_ours "$pid"
 }
 
-# pidfile появляется раньше, чем демон привязывает очередь: правило, добавленное
-# в этот зазор, отдало бы первые пакеты пробы в обход стратегии (--queue-bypass).
-# Нет файла (песочница, ядро без netfilter) — проверять нечего, остаётся pidfile.
+# Private orchestrator state for bench instances
 bench_slot_bound() { # <i>
   local f=/proc/net/netfilter/nfnetlink_queue q
   [ -r "$f" ] || return 0
@@ -2723,24 +2640,21 @@ bench_slot_bound() { # <i>
   awk -v q="$q" '$1 == q { found = 1 } END { exit !found }' "$f" 2>/dev/null
 }
 
-bench_slot_seq() { # <i> -> счётчик пакетов очереди слота i (id_sequence)
+bench_slot_seq() { # <i> -> slot i queue packet counter (id_sequence)
   local f=/proc/net/netfilter/nfnetlink_queue q
   [ -r "$f" ] || return 0
   q=$(bench_slot_q "$1")
   awk -v q="$q" '$1 == q { print $8; exit }' "$f" 2>/dev/null
 }
 
-bench_queue_seq() { # [queue_num] -> счётчик пакетов очереди
+bench_queue_seq() { # [queue_num] -> queue packet counter
   local f=/proc/net/netfilter/nfnetlink_queue q="${1:-$NFQUEUE_NUM}"
   [ -r "$f" ] || return 0
   awk -v q="$q" '$1 == q { print $8; exit }' "$f" 2>/dev/null
 }
 
-# Подменить режим на $MODE_ALL целиком. sed здесь не годится: у многострочного
-# NFQWS_EXTRA_ARGS он заменяет первую строку и оставляет хвост со висящей
-# кавычкой — такой nfqws2.conf не читает уже ни один `. "$CONFFILE"`. Чётность
-# кавычек считается так же, как в merge_user_keys (lib/common.sh).
-bench_set_mode_all() { # <источник> <приёмник>
+  # Separate log file per probe to avoid write races
+bench_set_mode_all() { # <source> <dest>
   local tmp="$2.tmp.$$"
   awk '
     function qcount(s,   t) { t = s; return gsub(/"/, "", t) }
@@ -2754,7 +2668,7 @@ bench_set_mode_all() { # <источник> <приёмник>
   mv -f "$tmp" "$2"
 }
 
-bench_slot_start() { # <i> <стратегия>
+bench_slot_start() { # <i> <strategy>
   local i="$1" st="$2" q conf log pidf args orch w=0
   q=$(bench_slot_q "$i")
   conf="$STATE_DIR/bench_slot.$i.conf"
@@ -2768,7 +2682,7 @@ bench_slot_start() { # <i> <стратегия>
   args=$(bench_slot_args "$conf" "$q" "$log") || return 1
   [ -n "$args" ] || return 1
   dry_run_check "$args" >/dev/null 2>&1 || return 1
-  # память оркестратора — своя копия: экземпляры подбора не пишут в файл службы
+# Verified run overrides parallel result for winner selection
   orch="$STATE_DIR/bench_slot.$i.orchestra.json"
   rm -f "$orch"
   [ -f "$ORCHESTRA_MEMORY_FILE" ] && cp -f "$ORCHESTRA_MEMORY_FILE" "$orch" 2>/dev/null
@@ -2796,10 +2710,9 @@ bench_slot_start() { # <i> <стратегия>
   return 1
 }
 
-bench_screen() { # <вид> <curl> <res> <метка> -> 0, если стратегия прошла отсев
+bench_screen() { # <mode> <curl> <res> <tag> -> 0 if strategy passes filter
   local kind="$1" bin="$2" res="$3" f="$STATE_DIR/bench_screen.$4.$$.tmp" r_yt r_dc
-  # каждой пробе свой файл: общий `> file` и `>> file` из двух фоновых подоболочек
-  # теряют строку, если truncate случается после первой записи
+# Candidate leaders: highest ok count, then lowest latency
   ( probe_attempt "$kind" "$bin" "redirector.googlevideo.com" 3 > "$f.yt" ) &
   ( probe_attempt "$kind" "$bin" "gateway.discord.gg" 3 > "$f.dc" ) &
   wait
@@ -2814,7 +2727,7 @@ bench_screen() { # <вид> <curl> <res> <метка> -> 0, если страт�
   return 0
 }
 
-bench_hosts_probe() { # <вид> <curl> <список хостов> <res>
+bench_hosts_probe() { # <mode> <curl> <hostlist> <res>
   local kind="$1" bin="$2" hosts="$3" res="$4" h batch=0
   while IFS= read -r h; do
     [ -z "$h" ] && continue
@@ -2836,13 +2749,13 @@ bench_hosts_probe() { # <вид> <curl> <список хостов> <res>
   wait
 }
 
-bench_failed() { # <idx> <стратегия> <причина> [всего]
+bench_failed() { # <idx> <strategy> <reason> [total]
   local idx="$1" st="$2" reason="$3" total="${4:-0}"
   printf 'BENCH_RES\t%s\t%s\t0\t%s\t0\t%s\t0\t0\n' "$idx" "$st" "$total" "$reason"
   printf '%s\t%s\t0\t%s\t0\t%s\t0\t0\t99999\t99999\n' "$idx" "$st" "$total" "$reason" >> "$BENCH_STATS"
 }
 
-bench_aggregate() { # <res> <idx> <стратегия> — печатает BENCH_RES и копит статистику
+bench_aggregate() { # <res> <idx> <strategy> — prints BENCH_RES and aggregates stats
   local res="$1" idx="$2" st="$3" h_val k r_val r_st r_detail
   local ok_cnt=0 total_cnt=0 sum_ms=0 fail_reasons="" is_yt is_dc
   local yt_ok=0 yt_sum=0 dc_ok=0 dc_sum=0
@@ -2887,11 +2800,8 @@ bench_aggregate() { # <res> <idx> <стратегия> — печатает BENC
     "$idx" "$st" "$ok_cnt" "$total_cnt" "$avg_ms" "$top_fail" "$yt_ok" "$dc_ok" "$yt_avg" "$dc_avg" "$broken_cnt" >> "$BENCH_STATS"
 }
 
-# Последняя строка на idx побеждает: перепроверка победителя заменяет его
-# параллельный результат, а не добавляется к нему. Когда BENCH_VERIFIED задан,
-# выбор делается только среди перепроверенных: сравнение цифры заезда с
-# одиночной цифрой систематически нечестно к первой.
-bench_best_line() { # -> idx<TAB>имя<TAB>ok<TAB>всего<TAB>среднее<TAB>yt<TAB>dc
+# IPv6 disabled: probe only IPv4
+bench_best_line() { # -> idx<TAB>name<TAB>ok<TAB>total<TAB>avg<TAB>yt<TAB>dc
   if [ ! -s "$BENCH_STATS" ]; then
     printf '%s\t%s\t0\t0\t0\t%s\t%s\n' - - - -
     return 0
@@ -2921,15 +2831,14 @@ bench_best_line() { # -> idx<TAB>имя<TAB>ok<TAB>всего<TAB>среднее
     }' "$BENCH_STATS"
 }
 
-bench_best_read() { # заполняет b_idx b_name b_ok b_total b_avg b_yt b_dc вызывающего
+bench_best_read() { # populates caller b_idx b_name b_ok b_total b_avg b_yt b_dc
   IFS="$(printf '\t')" read -r b_idx b_name b_ok b_total b_avg b_yt b_dc <<EOF
 $(bench_best_line)
 EOF
 }
 
-# Лидеры заезда: только те, у кого хоть что-то открылось, по ok, при равенстве —
-# по времени. Именно они и перепроверяются поодиночке.
-bench_top_indices() { # <сколько> -> idx через пробел
+# Verify firewall jump ordering after watchdog/network changes
+bench_top_indices() { # <count> -> space-separated idx
   local k="${1:-3}"
   [ -s "$BENCH_STATS" ] || return 0
   awk -F'\t' -v k="$k" '
@@ -2952,7 +2861,7 @@ bench_top_indices() { # <сколько> -> idx через пробел
     }' "$BENCH_STATS"
 }
 
-bench_measure_serial() { # <idx> <стратегия> <хосты> <домен> <вид> <curl> <res> — через перезапуск службы
+bench_measure_serial() { # <idx> <strategy> <hosts> <domain> <mode> <curl> <res> — via service restart
   local idx="$1" st="$2" hosts="$3" target="$4" kind="$5" bin="$6" res="$7"
   local patched="$STATE_DIR/strat_bench.$$.tmp" ready=false wait_i=0
   if build_strategy_conf "$st" "$patched" && bench_set_mode_all "$patched" "$CONFFILE"; then
@@ -2990,10 +2899,10 @@ bench_measure_serial() { # <idx> <стратегия> <хосты> <домен> 
   return 0
 }
 
-bench_slot_probe() { # <порты> <idx> <res> <хосты> <домен> <вид> <curl>
+bench_slot_probe() { # <ports> <idx> <res> <hosts> <domain> <mode> <curl>
   PROBE_LOCAL_PORT="$1"
   PROBE_FORCE_IPV4=0
-  # при выключенном IPv6 служба его не перехватывает — мерить надо IPv4
+  # Match rule output both with and without leading space
   [ "$IPV6_ENABLED" = "0" ] && PROBE_FORCE_IPV4=1
   local idx="$2" res="$3" hosts="$4" target="$5" kind="$6" bin="$7"
   : > "$res"
@@ -3003,16 +2912,11 @@ bench_slot_probe() { # <порты> <idx> <res> <хосты> <домен> <ви�
   bench_hosts_probe "$kind" "$bin" "$hosts" "$res"
 }
 
-# Служба переприменяет свои правила при смене сети, дома и по watchdog, и её
-# jump в этом случае встаёт перед нашим: пробы раунда уходят в живую очередь, а
-# не в слот. Достаточно проверить POSTROUTING — firewall_start ставит оба
-# перехода одной операцией, так что сдвиг одного означает сдвиг второго.
-bench_jump_first() { # <cmd> -> 0, если наш переход раньше перехода службы
+# Invalidate measurements if service rules displaced benchmark jumps
+bench_jump_first() { # <cmd> -> 0 if our jump precedes service jump
   local C="$1" out n_bench n_post
   out=$($C -w -t mangle -S POSTROUTING 2>/dev/null)
-  # паттерн без lead-пробела внутри «-j»: настоящий iptables печатает
-  # "-A POSTROUTING -j nfqws_bench_out", а тестовая запись хранит правило без
-  # префикса — находить надо обе формы
+# Drop results if bench instance crashed
   n_bench=$(printf '%s\n' "$out" | grep -n -- "-j $BENCH_CHAIN_OUT" | head -1 | cut -d: -f1)
   n_post=$(printf '%s\n' "$out" | grep -n -- "-j $IPT_GROUP_POST" | head -1 | cut -d: -f1)
   [ -n "$n_bench" ] || return 1
@@ -3029,7 +2933,7 @@ bench_jumps_in_order() {
   return 0
 }
 
-bench_round_contaminated() { # раунд не удался дважды: цифры не годятся, слоты долой
+bench_round_contaminated() { # round failed twice: discard stats and terminate slots
   local i idx st res
   while IFS="$(printf '\t')" read -r i idx st res; do
     [ -z "$res" ] && continue
@@ -3043,7 +2947,7 @@ bench_round_contaminated() { # раунд не удался дважды: циф
   BENCH_ACTIVE=""
 }
 
-bench_round_run() { # <хосты> <домен> <вид> <curl> — пробы слотов раунда и разбор
+bench_round_run() { # <hosts> <domain> <mode> <curl> — round slot probes and parse
   local hosts="$1" target="$2" kind="$3" bin="$4" C i idx st res lo hi
   for C in iptables ip6tables; do
     [ "$C" = "ip6tables" ] && [ "$IPV6_ENABLED" = "0" ] && continue
@@ -3063,14 +2967,14 @@ bench_round_run() { # <хосты> <домен> <вид> <curl> — пробы �
   done < "$BENCH_ROUND"
   wait
   if ! bench_jumps_in_order; then
-    # ничего не агрегируем: эти пробы могла мерить живая служба
+# Re-inject displaced jumps
     rm -f "$seq_file"
     return 1
   fi
   while IFS="$(printf '\t')" read -r i idx st res; do
     [ -z "$res" ] && continue
     case " $BENCH_ACTIVE " in *" $i "*) ;; *) continue ;; esac
-    # умерший под пробой экземпляр мерил бы «голый» трафик: результат не годится
+# Draining cleanup loop
     if bench_slot_alive "$i"; then
       local bypass=0
       if [ -s "$seq_file" ]; then
@@ -3097,14 +3001,12 @@ bench_round_run() { # <хосты> <домен> <вид> <curl> — пробы �
   rm -f "$seq_file"
 }
 
-bench_round_finish() { # <хосты> <домен> <вид> <curl> — раунд с одной пересъёмкой
+bench_round_finish() { # <hosts> <domain> <mode> <curl> — round with single retry
   local hosts="$1" target="$2" kind="$3" bin="$4"
   if bench_round_run "$hosts" "$target" "$kind" "$bin"; then
     return 0
   fi
-  # переходы съехали посреди раунда: переставляем (bench_round_run сам это
-  # делает в начале) и меряем заново; второй срыв означает чистый замер сейчас
-  # невозможен, и раунд не получает права на рекомендацию
+# Drain residual jump rules
   printf 'BENCH_WARN\tround_rerecorded\n'
   if bench_round_run "$hosts" "$target" "$kind" "$bin"; then
     return 0
@@ -3114,7 +3016,7 @@ bench_round_finish() { # <хосты> <домен> <вид> <curl> — раун�
   return 0
 }
 
-bench_parallel_run() { # <слотов> <список стратегий> <хосты> <домен> <вид> <curl>
+bench_parallel_run() { # <slots> <strat_list> <hosts> <domain> <mode> <curl>
   local nslots="$1" list="$2" hosts="$3" target="$4" kind="$5" bin="$6"
   local i=0 idx st res
   bench_chains_up || return 1
@@ -3161,8 +3063,7 @@ cmd_bench_strategies() {
   : > "$BENCH_ROUND"
 
   bench_cleanup() {
-    # прерванный заезд: пробы не должны пережить очистку и снова насыпать
-    # временных файлов поверх уже восстановленного конфига
+# Double re-check across all target hosts
     local cw
     for cw in $BENCH_WORKERS; do
       kill_descendants "$cw"
@@ -3250,11 +3151,7 @@ cmd_bench_strategies() {
 
   local b_idx b_name b_ok b_total b_avg b_yt b_dc
   bench_best_read
-  # Цифры заезда сравнимы только между собой: в раунде несколько экземпляров
-  # делят CPU, а ограничитель пакетов на соединение к пробе не применяется — на
-  # телефоне стратегия с 3/3 в заезде показала 2/3 в одиночку. Поэтому лидеры
-  # перепроверяются по одному через службу, а итог выбирается по перепроверенным
-  # цифрам, а не по смешанным.
+# Verified re-check runs sequentially through main service
   if [ "$nslots" -gt 0 ] && [ "$b_idx" != "-" ]; then
     local vi vname vres
     BENCH_VERIFIED=""
@@ -3326,10 +3223,9 @@ cmd_probe_dpi() {
   echo done
 }
 
-# ---------------------------------------------------------------- обновления списков
-# Установщик кладёт новую версию списка в .pending, если пользователь правил
-# свой; здесь её можно принять.
-cmd_list_update() { # <имя списка>
+# ---------------------------------------------------------------- list updates
+# Pending updates from module installer for user-modified lists
+cmd_list_update() { # <list_name>
   local f p
   f=$(list_file "$1") || { echo "Неизвестный список" >&2; return 1; }
   p="$LISTS_PENDING_DIR/${f##*/}"
@@ -3412,10 +3308,7 @@ cmd_lint_lists() {
   [ "$rc" -eq 0 ]
 }
 
-# Список записан на диск, но служба его ещё не перечитала. Провал перезагрузки
-# говорим словами, а не глотаем: правка сделана, но в работу не пошла — это важно
-# знать. Код возврата не роняем, потому что основное действие уже выполнено; а вот
-# провал самого действия роняет — раньше он не ронял ничего (см. ветки ниже).
+# Warn user if reload failed after writing list to disk
 reload_after_change() {
   is_running || return 0
   sh "$SERVICE" reload >/dev/null 2>&1 && return 0
@@ -3677,14 +3570,8 @@ cmd_tg_affinity() {
   if [ -s "$TG_AFFINITY_FILE" ]; then cat "$TG_AFFINITY_FILE"; else echo '{}'; fi
 }
 
-# ---------------------------------------------------------------- цвета системы
-# Тема WebUI «как у системы»: готовые цвета ролей Material You (Android 14+:
-# android:color/system_<роль>_light|_dark и *_fixed) — их Android считает сам,
-# со стилем прошивки (тональный, яркий, выразительный…) и контрастом, поэтому
-# WebUI выглядит как «Настройки». cmd overlay lookup — по процессу на цвет, это
-# секунды, поэтому ответ хранится в state/monet.cache, пока не сменятся обои
-# или стиль (secure theme_customization_overlay_packages). Вывод: строки
-# «style ИМЯ», «seed #rrggbb», «роль режим #rrggbb» (режим light|dark|fixed)
+# ---------------------------------------------------------------- system theme colors
+# Material You theme colors extracted via cmd overlay lookup; cached in state/monet.cache
 MONET_ROLES="primary on_primary primary_container on_primary_container secondary on_secondary secondary_container on_secondary_container tertiary on_tertiary tertiary_container on_tertiary_container error on_error error_container on_error_container background on_background surface on_surface surface_variant on_surface_variant surface_dim surface_bright surface_container_lowest surface_container_low surface_container surface_container_high surface_container_highest outline outline_variant"
 MONET_FIXED="primary_fixed primary_fixed_dim on_primary_fixed on_primary_fixed_variant secondary_fixed secondary_fixed_dim on_secondary_fixed on_secondary_fixed_variant tertiary_fixed tertiary_fixed_dim on_tertiary_fixed on_tertiary_fixed_variant"
 cmd_monet_system() {
@@ -3698,7 +3585,7 @@ cmd_monet_system() {
   seed=$(printf '%s' "$key" | sed -n 's/.*"android\.theme\.customization\.system_palette"[[:space:]]*:[[:space:]]*"\(#\{0,1\}\)\([0-9A-Fa-f]\{6,8\}\)".*/\2/p')
   [ ${#seed} -eq 8 ] && seed=${seed#??}
   tmp="$STATE_DIR/monet.d"; rm -rf "$tmp"; mkdir -p "$tmp" || return 1
-  # по 12 запросов разом: каждый — отдельный процесс Java
+# Batch 12 requests per command to minimize Java startup overhead
   for r in $MONET_ROLES $MONET_FIXED; do
     case " $MONET_FIXED " in *" $r "*) set -- "$r:fixed" ;; *) set -- "$r:light" "$r:dark" ;; esac
     for m in "$@"; do
@@ -3714,7 +3601,7 @@ cmd_monet_system() {
     echo "key $key"
     [ -n "$style" ] && echo "style $style"
     [ -n "$seed" ] && echo "seed #$(printf '%s' "$seed" | tr 'A-F' 'a-f')"
-    # ни одного цвета (Android до 14) — тоже ответ: стиль и сид
+# Pre-Android 14 fallback: return style and seed
     for f in "$tmp"/*; do [ -f "$f" ] && cat "$f"; done
     true
   } > "$cache.tmp" && mv -f "$cache.tmp" "$cache"
@@ -3722,10 +3609,8 @@ cmd_monet_system() {
   tail -n +2 "$cache"
 }
 
-# Действия пользователя, меняющие состояние модуля из WebUI или консоли, —
-# строкой в журнал службы до выполнения. Содержимое (base64) не пишется —
-# только что и куда
-user_action() { # <команда> [аргументы] -> описание | пусто, если не действие
+# Audit log state-modifying actions prior to execution
+user_action() { # <command> [args] -> description | empty if not action
   case "$1" in
     start) echo "service started" ;;
     stop) echo "service stopped" ;;
@@ -3806,8 +3691,7 @@ case "$1" in
     if err=$(validate_conf_file "$t" 2>&1); then
       cp -f "$CONFFILE" "$CONFFILE.bak" 2>/dev/null; mv -f "$t" "$CONFFILE"; chmod 0644 "$CONFFILE"; echo OK; need_restart_note
     else echo "Конфиг отклонён: $err" >&2; rm -f "$t"; exit 1; fi ;;
-  # Сброс — к исходнику текущей стратегии, а не к стандартному конфигу: так
-  # «Сбросить» отменяет ручные правки, не меняя выбранную стратегию.
+  # Reset to strategy template rather than default config
   reset-conf)
     cur=$(get_current_strategy)
     if [ "$cur" != "default" ] && ! strategy_file "$cur" >/dev/null; then cur=default; fi
@@ -3820,8 +3704,7 @@ case "$1" in
   strategy-get-b64)
     case "$2" in default) f="$MODDIR/defaults/nfqws2.conf" ;; *) f=$(strategy_file "$2") ;; esac
     [ -n "$f" ] && [ -f "$f" ] || { echo "Стратегия не найдена" >&2; exit 1; }
-    # Импорт из старой версии мог остаться в исходном виде Keenetic —
-    # в редактор он попадает уже приведённым к виду встроенной стратегии.
+    # Normalize legacy Keenetic import to builtin strategy format
     case "$2" in imp:*) normalize_import "$f" ;; *) cat "$f" ;; esac \
       | b64e ;;
   strategy-save-b64)
@@ -3845,7 +3728,7 @@ case "$1" in
       imp:*) dst="$IMPORTS_DIR/${n#imp:}.conf" ;;
       *) dst="$USER_STRATEGIES_DIR/$n.conf"
          b=$(strategy_builtin_file "$n")
-         # Текст совпал с исходником — правки нет, копия не нужна.
+# Template matches: drop modified copy
          if [ -n "$b" ] && cmp -s "$t" "$b"; then rm -f "$t" "$dst"; echo OK; exit 0; fi ;;
     esac
     [ -f "$dst" ] && archive_replaced_preset "$dst"
@@ -3866,8 +3749,7 @@ case "$1" in
   delete-import)
     strategy_name_ok "$2" || { echo "Некорректное имя" >&2; exit 1; }
     rm -f "$IMPORTS_DIR/$2.conf"
-    # Удалённый импорт был активной стратегией: конфиг остаётся, но вернуть его
-    # «к исходнику» больше не к чему — дальше он считается стандартным.
+    # Active deleted import falls back to standard baseline
     [ "$(get_current_strategy)" = "imp:$2" ] && echo default > "$ACTIVE_FILE"
     echo OK ;;
   rename-import)
@@ -3888,14 +3770,12 @@ case "$1" in
     [ -f "$f" ] || cp -f "$MODDIR/defaults/lists/${f##*/}" "$f" 2>/dev/null || cp -f "$MODDIR/lists/${f##*/}" "$f" 2>/dev/null
     if [ -f "$f" ]; then cat "$f"; fi ;;
   save-list-b64) f=$(list_file "$2") || { echo "Неизвестный список" >&2; exit 1; }
-    # Проверяем саму запись: без этого упавший mv (полный диск, права, каталог
-    # на месте файла) заканчивался `echo OK`, и правки пользователя молча
-    # терялись — UI показывал успех.
+    # Verify write success to catch filesystem errors
     { b64d "$3" | tr -d '\r' > "$f.tmp"; } && mv -f "$f.tmp" "$f" ||
       { rm -f "$f.tmp"; echo "Не удалось сохранить ${f##*/}" >&2; exit 1; }
     chmod 0644 "$f"
     rm -f "$LIST_COUNTS_CACHE" 2>/dev/null
-    # Пользователь сам привёл список к новой версии — предлагать её больше незачем.
+# User adopted new version: clear pending notification
     cmp -s "$f" "$LISTS_PENDING_DIR/${f##*/}" 2>/dev/null && rm -f "$LISTS_PENDING_DIR/${f##*/}"
     if [ "$2" = "apps" ]; then cmd_apply_apps; exit $?; fi
     if [ "$2" = "home" ]; then sh "$SERVICE" home_check >/dev/null 2>&1; echo OK; exit 0; fi
@@ -3949,8 +3829,7 @@ case "$1" in
     shift
     [ $# -eq 0 ] && { echo "Некорректный домен" >&2; exit 1; }
     ul="$LISTS_DIR/user.list"
-    # echo >> склеил бы новый домен с последней строкой, если файл не заканчивается переводом:
-    # портились обе записи, и проверка дедупликации ниже тоже переставала срабатывать.
+    # Ensure newline before appending to prevent merged records
     ensure_eol "$ul"
     added_list=""
     for raw_d; do
@@ -3972,10 +3851,7 @@ case "$1" in
   clear-auto)
     : > "$LISTS_DIR/auto.list" || { echo "Не удалось очистить auto.list" >&2; exit 1; }
     reload_after_change; echo OK ;;
-  # auto.list здесь намеренно нет: он выученный, и сброс не должен стирать
-  # наработку — для него есть отдельная команда clear-auto. Установщик
-  # (customize.sh) кладёт все шесть, включая auto. Списки обязаны различаться
-  # ровно на auto, это проверяет test_data.sh.
+  # auto.list preserved on reset (cleared via clear-auto)
   reset-lists)
     for f in user exclude ipset ipset_exclude probe_hosts; do
       cp -f "$MODDIR/defaults/lists/$f.list" "$LISTS_DIR/$f.list" ||
@@ -3994,7 +3870,7 @@ case "$1" in
     set_conf_param "$2" "$3"; echo OK
     case "$2" in
       APP_MODE) load_conf >/dev/null 2>&1; cmd_apply_apps ;;
-      # Пауза в домашней сети, VPN и наблюдатели не требуют перезапуска службы
+# Home network pause, VPN, and netwatch do not require service restart
       HOME_WIFI|WATCHDOG|VPN_PAUSE) sh "$SERVICE" home_check >/dev/null 2>&1 ;;
       WL_PAUSE) [ "$3" = 0 ] && rm -f "$WL_FILE"; sh "$SERVICE" home_check >/dev/null 2>&1 ;;
       SMART_LEARN) ;;
@@ -4003,7 +3879,7 @@ case "$1" in
         # firewall_apply on a stopped service leaves NFQUEUE jumps (and the
         # Meta QUIC reject) behind with no listener; the next start applies them
         if is_running; then sh "$SERVICE" firewall_apply >/dev/null 2>&1; fi ;;
-      # отдельная цепочка — меняется без перезапуска службы
+# Dedicated sub-chain: updateable without restarting service
       META_QUIC_REJECT) load_conf >/dev/null 2>&1; if is_running; then meta_quic_start; fi ;;
       NET_STRATEGY) load_conf >/dev/null 2>&1; sh "$SERVICE" net_check >/dev/null 2>&1; sh "$SERVICE" ensure_watchdog >/dev/null 2>&1 ;;
       WAKELOCK)

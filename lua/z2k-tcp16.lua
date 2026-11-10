@@ -1,37 +1,23 @@
--- z2k-tcp16.lua — обрыв на 16 КБ: подстановка белого имени по сети.
+-- z2k-tcp16.lua — 16 KB cutoff bypass: whitelisted SNI substitution by network.
 --
--- Класс блокировки: коробка провайдера пропускает рукопожатие и первые
--- 15-16 КБ ответа, дальше поток встаёт. Перебором стратегий он не лечится
--- (рукопожатие проходит), а пробивается фейковым ClientHello с именем из белого
--- списка провайдера рядом с настоящим.
+-- Blocking pattern: ISP passes handshake and first 15-16 KB of payload, then flow stalls.
+-- Strategy rotation does not help; flow is unblocked by a fake ClientHello carrying
+-- a whitelisted domain recognized by the ISP DPI.
 --
--- Этот файл — ТОЛЬКО рантайм. Ничего не детектирует и в ротации не участвует
--- (решение Марка 10.09.2026): есть ли блок на линии и какое имя берёт какую
--- сеть, выясняет проба (files/z2k-tcp16-probe.sh, z2k-detect tcp16), а сюда
--- приходит готовая карта «AS → имя». Здесь: адрес назначения → AS по карте
--- сетей → имя по карте имён → блоб z2k_ch, который шлёт штатный fake:optional.
+-- Runtime only. Does not detect or rotate: probe discovers line block and matching names,
+-- passing ready AS -> domain map here. Map destination IP -> AS -> SNI -> blob z2k_ch
+-- sent via standard fake:optional.
 --
--- Файлы (пути переопределяются переменными окружения — так тесты подсовывают
--- свои):
---   state/tcp16_asn.txt   — AS, где блок подтверждён (Z2K_TCP16_ASN)
---   lists/tcp16_nets.txt  — «AS<TAB>префикс», огрублено до /16 и /32 (Z2K_TCP16_NETS)
---   state/tcp16_sni.txt   — «AS<TAB>имя» (Z2K_TCP16_SNI)
---   lists/sni_wl_pin.txt  — ручное закрепление одного имени на всю линию
---                           (Z2K_SNI_PIN); действует, только когда карты имён нет
+-- File paths (overrideable via environment variables for testing):
+--   state/tcp16_asn.txt   — confirmed blocked ASNs (Z2K_TCP16_ASN)
+--   lists/tcp16_nets.txt  — "ASN<TAB>prefix", coarsened to /16 and /32 (Z2K_TCP16_NETS)
+--   state/tcp16_sni.txt   — "ASN<TAB>domain" (Z2K_TCP16_SNI)
+--   lists/sni_wl_pin.txt  — manual single domain pin for entire link (Z2K_SNI_PIN)
 --
--- Грузится ПОСЛЕ zapret-lib.lua и zapret-antidpi.lua: нужны blob, tls_mod,
--- tls_client_hello_mod, direction_check, payload_check, replay_first.
+-- Loaded AFTER zapret-lib.lua and zapret-antidpi.lua: requires blob, tls_mod.
 
--- КОМУ СТАВИТЬ ИМЯ: ТОЛЬКО СЕТЯМ, ГДЕ БЛОК НАЙДЕН.
---
--- Без этого имя уходило всему пулу подряд: замер 30.08.2026 — linode, cdn77,
--- aws и scaleway доезжают целиком и без имени, то есть платили за лишний фейк
--- в каждом рукопожатии зря.
---
--- Огрубление до /16 (v4) и /32 (v6) намеренное: точных префиксов у этих AS
--- около 52 тысяч, а огрублённых — 6 тысяч. Цена — имя достанется соседям по
--- /16; замерено, что лишний фейк рабочим сайтам не мешает.
-local z2k_nets, z2k_nets_loaded = nil, false
+-- Assign SNI only to subnets where 16 KB blocking is confirmed.
+-- Coarsening to /16 (v4) and /32 (v6) reduces 52k prefixes to 6k.
 local function z2k_nets_load()
 	if z2k_nets_loaded then return z2k_nets end
 	z2k_nets_loaded = true
@@ -53,8 +39,7 @@ local function z2k_nets_load()
 	for line in nf:lines() do
 		local a, p = line:match("^(%d+)\t([^%s]+)")
 		if a and p and want[a] then
-			-- v4 «a.b.0.0/16» кладём ключом a*256+b, v6 «xxxx:yyyy::/32» —
-			-- первыми двумя группами. Сравнение потом идёт по тому же ключу.
+  -- v4 "a.b.0.0/16" keyed by a*256+b, v6 "xxxx:yyyy::/32" by first two words.
 			local o1, o2 = p:match("^(%d+)%.(%d+)%.")
 			if o1 then
 				set[tonumber(o1) * 256 + tonumber(o2)] = a
@@ -75,7 +60,7 @@ local function z2k_nets_load()
 	return set
 end
 
--- Какой AS принадлежит адрес назначения.
+-- Lookup ASN for destination address.
 local function z2k_asn_of(desync)
 	local set = z2k_nets_load()
 	if not set then return nil end
@@ -95,11 +80,7 @@ local function z2k_asn_of(desync)
 	return nil
 end
 
--- КАЖДОЙ СЕТИ — СВОЁ ИМЯ.
---
--- Одного имени на всех не бывает. Замер 30.08.2026 на линии владельца:
--- hcaptcha.com бьёт двадцать AS, но НЕ Hetzner; Hetzner, DigitalOcean и OVH
--- берёт 300.ya.ru; Melbicom — ad.adriver.ru; семь AS не берёт ничто из списка.
+-- Per-network domain mapping (different ASNs require different whitelisted domains).
 local z2k_asn_sni, z2k_asn_sni_loaded = nil, false
 local function z2k_asn_sni_load()
 	if z2k_asn_sni_loaded then return z2k_asn_sni end
@@ -119,11 +100,8 @@ local function z2k_asn_sni_load()
 	return m
 end
 
--- ЗАКРЕПЛЁННОЕ ИМЯ ЛИНИИ — ручной рычаг.
---
--- Один файл, одно имя. Годится, чтобы прижать линию к одному имени руками,
--- пока карта имён не собрана. Читаем не чаще раза в секунду: это путь КАЖДОГО
--- исходящего хелло, а один io.open в секунду на весь роутер не стоит ничего.
+-- Pinned domain override: manual single-domain fallback when no map is available.
+-- Throttled to max 1 read per second.
 local z2k_pin_name, z2k_pin_at = nil, 0
 local Z2K_PIN_RECHECK = tonumber(os.getenv("Z2K_PIN_RECHECK")) or 1
 function z2k_sni_pinned()
@@ -143,9 +121,7 @@ function z2k_sni_pinned()
 	return nm
 end
 
--- Имя для этого адреса: своё для его AS; карты нет вовсе — закрепление.
--- AS известна, а имени для неё нет — значит проба его не нашла, и подставлять
--- чужое незачем. Адрес вне карты — сети с блоком его не покрывают, имя не нужно.
+-- Resolve domain for address: specific for ASN, pinned fallback, or nil if unmapped.
 function z2k_sni_for(desync, pin)
 	local m = z2k_asn_sni_load()
 	if not m then return pin end
@@ -154,17 +130,8 @@ function z2k_sni_for(desync, pin)
 	return nil
 end
 
--- ПОДСТАНОВКА ИМЕНИ В ФЕЙКОВЫЙ ClientHello.
---
--- Сам не отправляет: готовит блоб и кладёт его в поле desync, а шлёт штатный
--- fake с флагом optional. Так мы не повторяем своими руками ttl, badsum,
--- tcp_ts и repeats — всё это остаётся в ведении движка, — а optional даёт
--- тихий пропуск, когда имени для этой сети нет.
---
--- Ставится ДО circular и БЕЗ strategy=N: инстанс без этого аргумента circular
--- не вызывает вовсе, его исполняет линейный оркестратор. Значит имя
--- подставляется на ЛЮБОМ плече, а разрез продолжает ротироваться штатно —
--- имя и разрез это разные оси.
+-- Inject domain into fake ClientHello blob for desync: prepares blob and stores in desync,
+-- sent via standard fake:optional. Positioned before circular without strategy=N.
 function z2k_sni_pick(ctx, desync)
 	direction_cutoff_opposite(ctx, desync)
 	if not desync.dis or not desync.dis.tcp then return end
@@ -174,19 +141,13 @@ function z2k_sni_pick(ctx, desync)
 	local name = z2k_sni_for(desync, z2k_sni_pinned())
 	if not name then return end
 
-	-- КЛОН НАСТОЯЩЕГО HELLO, а не чужое тело с подменённым именем (решение
-	-- Марка 11.09.2026, как и во всех плечах): берём собранный ClientHello
-	-- самого человека и меняем в нём только имя — у фейка тот же отпечаток,
-	-- что у реального трафика этого устройства. Замер 10.09 на линии
-	-- владельца: как фейк клон открыл то, что встроенный блоб не открыл.
-	-- Если hello не разобрался — прежний путь: встроенный блоб + tls_mod.
+  -- Clone real ClientHello: preserve user TLS fingerprint, swapping only the SNI.
+  -- Fallback to builtin blob + tls_mod if dissection fails.
 	local ch
 	local okc, cloned = pcall(tls_client_hello_mod, desync.reasm_data or desync.dis.payload,
 		{ sni_del = true, sni_first = name, sni_snt_new = 0 })
 	if okc and cloned then
-		-- Та же декорация, что у штатных плеч: random случайный, session id
-		-- настоящий. Клон без неё несёт random настоящего hello, и DPI видит
-		-- два hello с одним random и разным именем (r-84, 11.09.2026).
+  -- Standard decoration: randomized client random, real session ID.
 		local okm, mod = pcall(tls_mod, cloned, "rnd,dupsid", desync.reasm_data or desync.dis.payload)
 		ch = (okm and mod) or cloned
 	else

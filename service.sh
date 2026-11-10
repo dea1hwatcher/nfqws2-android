@@ -110,10 +110,8 @@ start() {
       smartkill_chain del
     fi
 
-    # nfqws2, запущенный модулем, но потерянный (его нет в PID-файле): держит
-    # очередь NFQUEUE, и новый не запустится («nfq_create_queue(): Operation not
-    # permitted»). Свой — по --pidfile модуля в командной строке: nfqws2 других
-    # модулей не трогаем
+    # Orphaned nfqws2 holds NFQUEUE, causing EPERM on next bind.
+    # Match by our module's --pidfile in cmdline; leave other modules intact.
     local op
     for op in $(pidof nfqws2 2>/dev/null); do
       tr '\0' ' ' < "/proc/$op/cmdline" 2>/dev/null | grep -qF -- "--pidfile=$PIDFILE" || continue
@@ -342,8 +340,8 @@ stop() {
     smartkill_chain del
   fi
   firewall_stop
-  # параллельный подбор ставит свои цепи перед нашими; прерванный SIGKILL он
-  # убрать не успевает, а «остановлено» должно означать чистый iptables
+  # Clean up benchmark chains: interrupted bench may leave rules behind,
+  # but "stopped" must guarantee clean iptables.
   if bench_leftovers; then bench_purge; fi
   # kernel settings we tuned for the bypass go back to what they were
   sysctl_restore
@@ -404,7 +402,7 @@ ensure_helper() {
 }
 
 ensure_watchdog() {
-  # обрыв застрявших соединений — пока работает умный режим
+  # Terminate stuck connections while smart mode is active
   is_running && ensure_helper "$SK_PIDFILE" smartkill smart_active
   ensure_helper "$WL_PIDFILE" wlwatch wl_wanted
   watchers_wanted || return 0
@@ -412,7 +410,7 @@ ensure_watchdog() {
   ensure_netwatch
 }
 
-# ── Умный режим: обрыв застрявших соединений ─────────────────────────────
+# ── Smart mode: stuck connection reset ───────────────────────────────────
 SK_CHAIN=nfqws_smartkill
 smartkill_chain() { # <add|del>
   local c
@@ -433,8 +431,7 @@ smartkill() {
   protect_process
   trap 'smartkill_exit; exit 0' TERM INT HUP
   local w="$SMART_KILL_FILE.work" ver ip lp c up flush=0 n learn_at=0 lp_pid= every
-  # заявки прошлого запуска — до того, как цепочка заработает: их порты уже
-  # могли достаться другим соединениям
+  # Discard requests from previous run before chain starts (ports may be reused)
   rm -f "$SMART_KILL_FILE"
   smartkill_chain add
   while :; do
@@ -442,7 +439,7 @@ smartkill() {
     conf_refresh
     if ! is_running || ! smart_active; then break; fi
     read -r up _ < /proc/uptime; up=${up%.*}
-    # фоновое обучение: раз в SMART_LEARN_EVERY секунд для сети подключения
+    # Background training: once every SMART_LEARN_EVERY seconds per active network
     [ "$learn_at" = 0 ] && learn_at=$((up + 60))
     every=$SMART_LEARN_EVERY
     if [ -f "$SMART_TURBO_FILE" ] && [ "$(cat "$SMART_TURBO_FILE" 2>/dev/null)" -gt "$(date +%s)" ] 2>/dev/null; then
@@ -868,14 +865,10 @@ case "$1" in
   firewall_apply)     firewall_start ;;
   firewall_stop)      firewall_stop ;;
   *)
-    # Метка «загрузочный запуск закончен» — её ждёт boot-completed.sh
+    # Boot marker for boot-completed.sh
     rm -f "$STATE_DIR/boot_done"
-    # Повторный загрузочный запуск без перезагрузки ядра (перезапуск Android:
-    # «мягкая перезагрузка» LSPosed/Vector, падение system_server) — процессы
-    # модуля живы, и PID в файлах — их. Сбросив файлы, служба теряла живой
-    # nfqws2: он держал очередь NFQUEUE, и каждый новый запуск падал с
-    # «nfq_create_queue(): Operation not permitted» (Honor, MagicOS 11).
-    # Ядро то же — тот же boot_id: сначала остановить всё прежнее
+    # Soft reboot (system_server crash, LSPosed soft restart): kernel is same,
+    # boot_id unchanged, but previous processes still hold NFQUEUE. Stop them first.
     bid=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null)
     if [ -n "$bid" ] && [ "$bid" = "$(cat "$STATE_DIR/boot_id" 2>/dev/null)" ]; then
       log_msg "Повторная загрузка Android без перезагрузки ядра — останавливаю прежние процессы модуля"

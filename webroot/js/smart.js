@@ -1,10 +1,7 @@
-/* nfqws2 WebUI · smart.js — умный режим: выученное по сетям и обучение
-   Скрипты подключаются из index.html обычными <script> по порядку и делят одну
-   глобальную область: функции и let/const одного файла видны в остальных. */
+/* nfqws2 WebUI · smart.js — smart mode: network profiles and training */
 
-/* ══ УМНЫЙ РЕЖИМ ═════════════════════════════════════════════════════════
-   Стратегия smart сама подбирает вариант обхода для каждого сайта и помнит
-   его отдельно для каждой сети. Здесь — состояние, выученное, обучение и сброс. */
+/* ══ SMART MODE ══════════════════════════════════════════════════════════
+   Smart mode auto-selects bypass variants per host and network profile. */
 let SMS = null, smartTimer = null, smartView = null;
 let smartBenchRunning = false, smartBenchCancelled = false;
 // Every run gets a token: a cancelled run keeps streaming lines, and without it
@@ -47,11 +44,11 @@ async function smartLoad(){
   if(smartBenchRunning) return;
   const r = await ctlx(smartView ? ['smart-status', smartView] : ['smart-status']);
   try { SMS = JSON.parse(r.out); } catch(e){ SMS = null; }
-  // выбранной сети больше нет (забыли) — обратно на текущую
+  // Selected network was deleted — fall back to active network
   if(SMS && smartView && !(SMS.nets || []).some(n => n.id === smartView)){ smartView = null; return smartLoad(); }
   renderSmart();
   clearTimeout(smartTimer);
-  // пока экран открыт — раз в 20 секунд обновлять данные
+  // Refresh status every 20s while page is visible
   if(SMS && currentPage === 'smart') smartTimer = setTimeout(() => { if(currentPage === 'smart') smartLoad(); }, 20000);
 }
 
@@ -64,14 +61,14 @@ function renderSmart(){
   const cur = nets.find(n => n.id === (smartView || m.view)) || nets.find(n => n.current == 1);
   const parts = [];
 
-  // Подсказка, если умный режим не выбран основной стратегией
+  // Banner if smart mode is not the active strategy
   if(m.active != 1){
     parts.push('<div class="suggest">' + icon('auto', 's24') + '<span class="grow">' +
       esc(t('Умный режим сейчас не выбран.')) + '</span>' +
       '<button class="btn tonal sm state" onclick="smartEnable()">' + esc(t('Включить')) + '</button></div>');
   }
 
-  // Состояние в текущей / выбранной сети
+  // Status in current or selected network
   const netText = m.offline == 1 ? t('Нет связи — перебор на паузе') : cur ? smartNetLabel(cur) : t('Сеть ещё не определена');
   parts.push('<div class="list">' +
     settingsRow({icon: m.offline == 1 ? 'warn' : (cur && /^mobile/.test(cur.id) ? 'globe' : 'wifi'),
@@ -84,7 +81,7 @@ function renderSmart(){
       value: t('Удачных {0} · с ошибками {1}', cur.ok, cur.err)}) : '') +
   '</div>');
 
-  // Калибровка вариантов умного режима
+  // Smart mode variant bench calibration
   const curSlot = SMART_BENCH_SLOTS.find(([sl]) => sl === smartBenchSlot) || SMART_BENCH_SLOTS[0];
   parts.push('<h2 class="subhead">' + esc(t('Калибровка вариантов')) + '</h2>' +
     '<div class="group" id="smart-bench-box">' +
@@ -114,7 +111,7 @@ function renderSmart(){
       '</div>' +
     '</div>');
 
-  // Обучение
+  // Background training
   const bg = m.bg || {}, ls = smartLearnState(m);
   parts.push('<h2 class="subhead">' + esc(t('Обучение')) + '</h2>' +
     '<div class="list">' +
@@ -124,7 +121,7 @@ function renderSmart(){
         value: ls.on ? (bg.n ? t('Идёт ({0})', bg.n) : t('Идёт')) : ls.value}) : '') +
     '</div>');
 
-  // Что работает в этой сети
+  // Top functioning strategies on this network
   const top = m.top || {};
   const activeGroups = SMART_GROUPS.filter(([, , slots]) => slots.some(sl => (top[sl] || []).length));
   if(activeGroups.length){
@@ -141,7 +138,7 @@ function renderSmart(){
     });
   }
 
-  // Сайты с ошибками: умный режим уже ищет им другой вариант
+  // Problematic sites awaiting alternative variants
   const probs = m.problems || [];
   if(probs.length){
     parts.push('<h2 class="subhead">' + esc(t('Сайты с ошибками')) + '</h2>' +
@@ -149,21 +146,21 @@ function renderSmart(){
         settingsRow({icon: 'warn', title: p.host, sub: (p.name || '#' + p.n) + ' · ' + t('удачных {0} · с ошибками {1}', p.ok, p.err)})).join('') + '</div>');
   }
 
-  // Ни один вариант не помог — дело не в блокировке
+  // Sites failing all variants (not DPI-blocked)
   const nodpi = m.nodpi || [];
   if(nodpi.length){
     parts.push('<h2 class="subhead">' + esc(t('Не похоже на блокировку')) + '</h2>' +
       '<div class="list">' + nodpi.slice(0, 10).map(h => settingsRow({icon: 'info', title: h})).join('') + '</div>');
   }
 
-  // Резервная копия и перенос
+  // Backup and export
   parts.push('<h2 class="subhead">' + esc(t('Резервная копия выученного')) + '</h2>' +
     '<div class="list">' +
       settingsRow({icon: 'share', title: 'Поделиться обучением', on: 'smartExport()'}) +
       settingsRow({icon: 'upload', title: 'Загрузить обучение', on: "$('smart-imp').click()"}) +
     '</div>');
 
-  // Сети: выученное хранится отдельно для каждой
+  // Network list: learned profiles per network
   parts.push('<h2 class="subhead">' + esc(t('Сети')) + '</h2>' +
     (nets.length ? '<div class="list">' + nets.map(n =>
       '<div class="list-item">' +

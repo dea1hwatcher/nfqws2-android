@@ -548,10 +548,8 @@ section "a firewall re-apply without a stop keeps POSTROUTING single"
 conf_reset
 load_conf >/dev/null 2>&1
 ipt_reset
-# На телефоне правила копились именно здесь: прямой путь _firewall_start вставляет
-# -I POSTROUTING 2/3, а защищён от повтора только restore-путь с проверкой -C.
-# iptables-restore убираем, чтобы firewall_start пошёл прямым путём, как на ядрах
-# без него.
+# Prevent rule accumulation: direct _firewall_start inserts -I POSTROUTING 2/3,
+# verified against duplicate insertion without iptables-restore.
 mv "$MOCKBIN/iptables-restore" "$SANDBOX/iptables-restore.off"
 mv "$MOCKBIN/ip6tables-restore" "$SANDBOX/ip6tables-restore.off"
 firewall_start >/dev/null 2>&1
@@ -691,11 +689,10 @@ svc stop >/dev/null 2>&1
 rm -f "$MOCKBIN/ip" "$WN_PIDFILE" "$WD_PIDFILE" "$MOCK_DIR/route"
 
 section "a lost nfqws2 of ours is stopped before a start"
-# Honor, MagicOS 11: служба потеряла свой nfqws2 (PID-файл сброшен), а он
-# держал очередь NFQUEUE — каждый новый запуск падал с «nfq_create_queue():
-# Operation not permitted». Свой — по --pidfile модуля, чужой не трогаем
+# Honor/MagicOS: service lost PID file while nfqws2 held NFQUEUE, causing
+# nfq_create_queue() EPERM on restart. Cleans orphaned instance by module --pidfile.
 svc stop >/dev/null 2>&1
-# pidof Android (toybox) находит и скрипты, pidof procps — только с -x
+# Android toybox pidof matches scripts; procps pidof requires -x
 pidof_real=$(command -v pidof 2>/dev/null)
 if [ -n "$pidof_real" ]; then
   printf '#!/bin/sh\nexec %s -x "$@"\n' "$pidof_real" > "$MOCKBIN/pidof"
@@ -734,8 +731,8 @@ rm -f "$MOCKBIN/pidof"
 svc stop >/dev/null 2>&1
 
 section "boot again without a kernel reboot (Android restart)"
-# Мягкая перезагрузка (LSPosed/Vector) запускает service.sh заново, а процессы
-# модуля живы: тот же boot_id — сначала остановить прежнее, а не терять его
+# Soft reboot (LSPosed/Vector) re-runs service.sh while processes still alive:
+# matching boot_id triggers stop before restart
 cp "$CONFFILE" "$SANDBOX/conf.keep"
 printf 'AUTOSTART=0\nWATCHDOG=0\n' >> "$CONFFILE"
 if [ -r /proc/sys/kernel/random/boot_id ]; then

@@ -301,7 +301,7 @@ function http_multidisorder(ctx, desync)
 	end
 end
 
--- Улучшенный methodeol - добавляет больше мусора в начало
+-- Enhanced methodeol: prepends padding before request
 function http_methodeol_v2(ctx, desync)
     if not desync.dis.tcp then
         instance_cutoff_shim(ctx, desync)
@@ -312,7 +312,7 @@ function http_methodeol_v2(ctx, desync)
         local hdis = http_dissect_req(desync.dis.payload)
         local ua = hdis.headers["user-agent"]
         if ua then
-            -- Добавляем несколько пустых строк и пробелы
+            -- Add blank lines and whitespace
             local garbage = "\r\n \r\n\t\r\n"
             desync.dis.payload = garbage .. string.sub(desync.dis.payload,1,ua.pos_end-2) .. (string.sub(desync.dis.payload,ua.pos_end+1) or "")
             DLOG("http_methodeol_v2: applied with extra garbage")
@@ -321,7 +321,7 @@ function http_methodeol_v2(ctx, desync)
     end
 end
 
--- Methodeol + изменение регистра Host
+-- Methodeol + Host header case alteration
 function http_methodeol_hostcase(ctx, desync)
     if not desync.dis.tcp then
         instance_cutoff_shim(ctx, desync)
@@ -331,10 +331,10 @@ function http_methodeol_hostcase(ctx, desync)
     if desync.l7payload=="http_req" and direction_check(desync) then
         local payload = desync.dis.payload
 
-        -- Меняем Host: на HoSt:
+        -- Change Host: to HoSt:
         payload = string.gsub(payload, "\r\nHost:", "\r\nHoSt:")
 
-        -- Добавляем мусор в начало
+        -- Prepend padding before request
         payload = "\r\n" .. payload
 
         desync.dis.payload = payload
@@ -975,15 +975,15 @@ function tls_disorder_gentle(ctx, desync)
 end
 
 -- ============================================================================
--- MGTS HTTP BYPASS STRATEGIES - специально для обхода умного DPI МГТС
+-- MGTS HTTP BYPASS STRATEGIES: optimized for MGTS DPI
 -- ============================================================================
 
 -- HTTP seqovl Host Override
--- Отправляем фейковый Host с seqovl, потом реальный который "перезаписывает"
--- DPI видит первый (фейковый), сервер принимает второй (реальный) по TCP reassembly
+-- Send fake Host with seqovl, then real Host that overwrites it
+-- DPI inspects fake Host first; server accepts real Host via TCP reassembly
 -- standard args : direction, payload, rawsend, reconstruct
--- arg : fake_host=<str> - фейковый хост (default google.com)
--- arg : seqovl=N - размер перекрытия (default = длина Host value)
+-- arg : fake_host=<str> - fake host name (default google.com)
+-- arg : seqovl=N - overlap size (default = length of Host value)
 function http_seqovl_host(ctx, desync)
 	if not desync.dis.tcp then
 		instance_cutoff(ctx)
@@ -1007,8 +1007,8 @@ function http_seqovl_host(ctx, desync)
 
 			DLOG("http_seqovl_host: real_host='"..real_host.."' fake_host='"..fake_host.."'")
 
-			-- Создаём фейковый HTTP запрос с fake_host
-			-- Нужно чтобы fake_host был той же длины что и real_host для точного seqovl
+			-- Build fake HTTP request with fake_host
+			-- Match lengths of fake_host and real_host for exact seqovl alignment
 			if #fake_host < #real_host then
 				fake_host = fake_host .. string.rep("x", #real_host - #fake_host)
 			elseif #fake_host > #real_host then
@@ -1026,30 +1026,30 @@ function http_seqovl_host(ctx, desync)
 				fooling = {}
 			}
 
-			-- Позиция начала Host value
+			-- Host value start position
 			local host_value_pos = host_pos.pos_value_start - 1  -- 0-based
 
-			-- STEP 1: Отправляем часть ДО Host value
+			-- STEP 1: Send portion before Host value
 			local before_host = string.sub(data, 1, host_pos.pos_value_start-1)
 			if b_debug then DLOG("http_seqovl_host: sending before_host len="..#before_host) end
 			if not rawsend_payload_segmented(desync, before_host, 0, opts_orig) then
 				return VERDICT_PASS
 			end
 
-			-- STEP 2: Отправляем ФЕЙКОВЫЙ Host value (DPI увидит это первым)
+			-- STEP 2: Send FAKE Host value (DPI sees this first)
 			if b_debug then DLOG("http_seqovl_host: sending FAKE host '"..fake_host.."'") end
 			if not rawsend_payload_segmented(desync, fake_host, host_value_pos, opts_orig) then
 				return VERDICT_PASS
 			end
 
-			-- STEP 3: Отправляем РЕАЛЬНЫЙ Host value с тем же offset (seqovl!)
-			-- TCP стек сервера должен принять этот пакет и перезаписать фейковый
+			-- STEP 3: Send REAL Host value at same offset (seqovl)
+			-- Server TCP stack reassembles and overwrites fake bytes
 			if b_debug then DLOG("http_seqovl_host: sending REAL host '"..real_host.."' (seqovl)") end
 			if not rawsend_payload_segmented(desync, real_host, host_value_pos, opts_orig) then
 				return VERDICT_PASS
 			end
 
-			-- STEP 4: Отправляем остаток ПОСЛЕ Host value
+			-- STEP 4: Send remainder after Host value
 			local after_host = string.sub(data, host_pos.pos_end+1)
 			if b_debug then DLOG("http_seqovl_host: sending after_host len="..#after_host) end
 			if not rawsend_payload_segmented(desync, after_host, host_pos.pos_end, opts_orig) then
@@ -1069,9 +1069,9 @@ function http_seqovl_host(ctx, desync)
 end
 
 -- HTTP with IP fragmentation
--- Разбивает IP пакет на фрагменты - DPI может не уметь их собирать
+-- Fragment IP packets to evade DPI without fragment reassembly
 -- standard args : direction, payload, rawsend
--- arg : frag_size=N - размер первого фрагмента (default 24 - разрежет внутри Host)
+-- arg : frag_size=N - first fragment size (default 24: splits inside Host)
 function http_ipfrag(ctx, desync)
 	if not desync.dis.tcp then
 		instance_cutoff(ctx)
@@ -1086,7 +1086,7 @@ function http_ipfrag(ctx, desync)
 
 			DLOG("http_ipfrag: fragmenting at IP level, frag_size="..frag_size)
 
-			-- Используем встроенную IP фрагментацию
+			-- Use native IP fragmentation
 			local opts = {
 				rawsend = rawsend_opts(desync),
 				reconstruct = {},
@@ -1110,7 +1110,7 @@ function http_ipfrag(ctx, desync)
 end
 
 -- HTTP Host case modification
--- Меняет регистр "Host:" header - некоторые DPI чувствительны к регистру
+-- Alter case in "Host:" header for case-sensitive DPI parsers
 -- standard args : direction, payload
 -- arg : case=<str> - "lower", "upper", "mixed", "space" (default mixed)
 function http_hostmod(ctx, desync)
@@ -1131,14 +1131,14 @@ function http_hostmod(ctx, desync)
 		elseif case_type == "mixed" then
 			new_host_header = "HoSt"
 		elseif case_type == "space" then
-			new_host_header = "Host "  -- пробел после
+			new_host_header = "Host "  -- trailing space
 		elseif case_type == "tab" then
-			new_host_header = "Host\t"  -- таб после
+			new_host_header = "Host\t"  -- trailing tab
 		else
 			new_host_header = case_type  -- custom
 		end
 
-		-- Найти и заменить "Host:" на новый вариант
+		-- Find and replace "Host:" header variant
 		local host_start = string.find(desync.dis.payload, "\r\nHost:", 1, true)
 		if host_start then
 			host_start = host_start + 2  -- skip \r\n
@@ -1155,14 +1155,12 @@ function http_hostmod(ctx, desync)
 end
 
 -- HTTP with absolute URL
--- Использует абсолютный URL в запросе: GET http://host/path HTTP/1.1
--- Некоторые DPI не парсят URL, только Host header
--- ВНИМАНИЕ: не используется каталогом. Перебор hdis.headers идёт по числовым
--- ключам (name == "host" не срабатывает, header.name отсутствует), поэтому
--- сборка запроса падает на nil; кроме того, длина запроса меняется, а seq
--- последующих пакетов — нет.
+-- Absolute URI request: GET http://host/path HTTP/1.1
+-- Bypasses DPI parsing only the Host header.
+-- NOTE: Not used by presets. Iterating hdis.headers uses numeric keys
+-- (header.name is absent, matching fails); length changes desync seq numbers.
 -- standard args : direction, payload
--- arg : fake_host=<str> - фейковый хост для Host header (default google.com)
+-- arg : fake_host=<str> - fake Host header value (default google.com)
 function http_absolute_url(ctx, desync)
 	if not desync.dis.tcp then
 		instance_cutoff(ctx)
@@ -1182,12 +1180,12 @@ function http_absolute_url(ctx, desync)
 		local fake_host = desync.arg.fake_host or "google.com"
 		local path = hdis.path or "/"
 
-		-- Создаём новый запрос с абсолютным URL
+		-- Build request with absolute URI
 		-- GET http://real_host/path HTTP/1.1\r\nHost: fake_host\r\n...
 		local abs_url = "http://" .. real_host .. path
 		local new_request = hdis.method .. " " .. abs_url .. " " .. hdis.version .. "\r\n"
 
-		-- Добавляем headers, но меняем Host на фейковый
+		-- Populate headers with fake Host
 		for name, header in pairs(hdis.headers) do
 			if name == "host" then
 				new_request = new_request .. "Host: " .. fake_host .. "\r\n"
@@ -1198,7 +1196,7 @@ function http_absolute_url(ctx, desync)
 		end
 		new_request = new_request .. "\r\n"
 
-		-- Добавляем body если есть
+		-- Append body if present
 		if hdis.body_start and hdis.body_start <= #desync.dis.payload then
 			new_request = new_request .. string.sub(desync.dis.payload, hdis.body_start)
 		end
@@ -1210,12 +1208,12 @@ function http_absolute_url(ctx, desync)
 end
 
 -- HTTP Triple seqovl attack
--- Отправляет 3 версии Host value с одинаковым seq number
--- 1. Fake host (DPI кеширует)
--- 2. Garbage (сбивает DPI)
--- 3. Real host (сервер принимает последний по TCP)
+-- Send 3 versions of Host value with identical seq number:
+-- 1. Fake host (cached by DPI)
+-- 2. Garbage (disrupts DPI state)
+-- 3. Real host (accepted last by server)
 -- standard args : direction, payload, rawsend, reconstruct
--- arg : fake_host=<str> - фейковый хост
+-- arg : fake_host=<str> - fake host
 function http_triple_seqovl(ctx, desync)
 	if not desync.dis.tcp then
 		instance_cutoff(ctx)
@@ -1238,7 +1236,7 @@ function http_triple_seqovl(ctx, desync)
 			local host_len = #real_host
 			local fake_host = desync.arg.fake_host or "www.google.com"
 
-			-- Подгоняем длину
+			-- Align length
 			if #fake_host < host_len then
 				fake_host = fake_host .. string.rep(".", host_len - #fake_host)
 			else
@@ -1256,32 +1254,32 @@ function http_triple_seqovl(ctx, desync)
 
 			local host_value_pos = host_pos.pos_value_start - 1
 
-			-- Отправляем часть ДО Host value
+			-- Send portion before Host value
 			local before_host = string.sub(data, 1, host_pos.pos_value_start-1)
 			if not rawsend_payload_segmented(desync, before_host, 0, opts_orig) then
 				return VERDICT_PASS
 			end
 
-			-- АТАКА: 3 пакета с одинаковым seq
+			-- ATTACK: 3 packets with matching seq
 			-- 1. Fake host
 			if b_debug then DLOG("http_triple_seqovl: [1] FAKE host '"..fake_host.."'") end
 			if not rawsend_payload_segmented(desync, fake_host, host_value_pos, opts_orig) then
 				return VERDICT_PASS
 			end
 
-			-- 2. Garbage (сбивает кеш DPI)
+			-- 2. Garbage (invalidates DPI cache)
 			if b_debug then DLOG("http_triple_seqovl: [2] GARBAGE") end
 			if not rawsend_payload_segmented(desync, garbage, host_value_pos, opts_orig) then
 				return VERDICT_PASS
 			end
 
-			-- 3. Real host (последний - сервер примет его)
+			-- 3. Real host (accepted by server)
 			if b_debug then DLOG("http_triple_seqovl: [3] REAL host '"..real_host.."'") end
 			if not rawsend_payload_segmented(desync, real_host, host_value_pos, opts_orig) then
 				return VERDICT_PASS
 			end
 
-			-- Отправляем остаток
+			-- Send remaining payload
 			local after_host = string.sub(data, host_pos.pos_end+1)
 			if not rawsend_payload_segmented(desync, after_host, host_pos.pos_end, opts_orig) then
 				return VERDICT_PASS
@@ -1298,7 +1296,7 @@ function http_triple_seqovl(ctx, desync)
 end
 
 -- HTTP Disorder + seqovl combo for MGTS
--- Комбинирует disorder с seqovl специально для Host header
+-- Combine disorder with seqovl targeted at Host header
 -- standard args : direction, payload, rawsend
 -- arg : fake_host=<str>
 function http_mgts_combo(ctx, desync)
@@ -1322,7 +1320,7 @@ function http_mgts_combo(ctx, desync)
 			local real_host = string.sub(data, host_pos.pos_value_start, host_pos.pos_end)
 			local fake_host = desync.arg.fake_host or "www.google.com"
 
-			-- Подгоняем длину
+			-- Align length
 			local host_len = #real_host
 			if #fake_host < host_len then
 				fake_host = fake_host .. string.rep("x", host_len - #fake_host)
@@ -1337,22 +1335,22 @@ function http_mgts_combo(ctx, desync)
 				fooling = {}
 			}
 
-			-- Разбиваем на 4 части:
-			-- 1. До "Host: "
-			-- 2. "Host: " + fake_host (seqovl с реальным)
-			-- 3. real_host (перезаписывает)
-			-- 4. После host value до конца
+			-- Split into 4 parts:
+			-- 1. Pre-"Host:"
+			-- 2. "Host: " + fake_host (seqovl overlap)
+			-- 3. real_host (overwrites fake)
+			-- 4. Post-host value to end
 
-			local part1 = string.sub(data, 1, host_pos.pos_start - 1)  -- до "Host:"
+			local part1 = string.sub(data, 1, host_pos.pos_start - 1)  -- pre-Host:
 			local part2_fake = "Host: " .. fake_host
 			local part3_real = real_host
-			local part4 = string.sub(data, host_pos.pos_end + 1)  -- после host value
+			local part4 = string.sub(data, host_pos.pos_end + 1)  -- post-Host value
 
 			local pos_host_start = host_pos.pos_start - 1  -- 0-based
 			local pos_host_value = host_pos.pos_value_start - 1
-			local pos_after_host = host_pos.pos_end  -- 0-based (после последнего символа host)
+			local pos_after_host = host_pos.pos_end  -- 0-based offset after host
 
-			-- DISORDER: отправляем в обратном порядке
+			-- DISORDER: send segments in reverse order
 			-- 4 -> 3 -> 2 -> 1
 
 			if b_debug then DLOG("http_mgts_combo: [4] after_host len="..#part4) end
@@ -1360,19 +1358,19 @@ function http_mgts_combo(ctx, desync)
 				return VERDICT_PASS
 			end
 
-			-- Реальный host (будет принят сервером)
+			-- Real host (accepted by server)
 			if b_debug then DLOG("http_mgts_combo: [3] REAL '"..part3_real.."'") end
 			if not rawsend_payload_segmented(desync, part3_real, pos_host_value, opts) then
 				return VERDICT_PASS
 			end
 
-			-- Фейковый "Host: fake" с seqovl (DPI увидит)
+			-- Fake "Host: fake" with seqovl (seen by DPI)
 			if b_debug then DLOG("http_mgts_combo: [2] FAKE '"..part2_fake.."' (seqovl)") end
 			if not rawsend_payload_segmented(desync, part2_fake, pos_host_start, opts) then
 				return VERDICT_PASS
 			end
 
-			-- Начало запроса
+			-- Request prefix
 			if b_debug then DLOG("http_mgts_combo: [1] before_host len="..#part1) end
 			if not rawsend_payload_segmented(desync, part1, 0, opts) then
 				return VERDICT_PASS
@@ -1462,44 +1460,44 @@ function tls_fake_disorder_gentle(ctx, desync)
 end
 
 --[[
-    multisplit_tls - multisplit с динамической генерацией TLS паттерна
+    multisplit_tls - multisplit with dynamic TLS pattern generation
 
-    Вместо статичного файла seqovl_pattern генерирует fake TLS на лету
-    с помощью tls_mod, подставляя нужный SNI (например www.google.com)
+    Generates fake TLS on the fly via tls_mod with target SNI (e.g. www.google.com)
+    instead of using a static seqovl_pattern file.
 
-    ВАЖНО: Если payload не является валидным TLS, функция НЕ применяет
-    tls_mod и использует fallback-паттерн или пропускает пакет без изменений.
+    IMPORTANT: If payload is not valid TLS, tls_mod is bypassed and fallback pattern
+    is used, or packet is passed through unmodified.
 
-    Аргументы:
-        pos         - позиции разреза (как в обычном multisplit): "2", "1,midsld", etc.
-        seqovl      - размер overlap в байтах (рекомендуется 650-700)
-        sni         - SNI для fake TLS (по умолчанию "www.google.com")
-        tls_rnd     - если указан, рандомизировать random/session_id в fake TLS
-        tls_dupsid  - если указан, скопировать session_id из реального пакета
-        nodrop      - не дропать оригинальный пакет
-        fallback    - что делать если payload не TLS: "pass" (пропустить), "split" (резать без seqovl), "pattern" (использовать raw pattern)
+    Arguments:
+        pos         - split positions: "2", "1,midsld", etc.
+        seqovl      - overlap size in bytes (recommended: 650-700)
+        sni         - fake TLS SNI (default: "www.google.com")
+        tls_rnd     - randomize random/session_id in fake TLS
+        tls_dupsid  - duplicate session_id from real packet
+        nodrop      - do not drop original packet
+        fallback    - non-TLS payload handling: "pass", "split", "pattern"
 
-    Пример использования:
+    Example:
         --lua-desync=multisplit_tls:seqovl=680:sni=www.google.com:tls_rnd:tls_dupsid:pos=2
 
 ┌─────────────────────────────────────────────────────────────────┐
-│                    КАК РАБОТАЕТ SEQOVL                         │
+│                    HOW SEQOVL WORKS                             │
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                 │
-│  Обычный пакет:    [TLS ClientHello с реальным SNI]            │
+│  Normal packet:    [TLS ClientHello with real SNI]              │
 │                     seq=1000, len=500                           │
 │                                                                 │
-│  С seqovl=650:     [FAKE TLS (650 байт)][Реальный TLS]        │
+│  With seqovl=650:  [FAKE TLS (650 bytes)][Real TLS]             │
 │                     seq=350, len=1150                           │
 │                                                                 │
-│  ТСПУ видит:       SNI из FAKE TLS (www.google.com)            │
-│  Сервер получает:  Реальный TLS (ТСПУ не может заблокировать) │
+│  TSPU sees:        SNI from FAKE TLS (www.google.com)           │
+│  Server receives:  Real TLS (TSPU cannot block)                 │
 │                                                                 │
-│  Почему? TCP overlap - сервер берёт данные с большим seq       │
+│  Why? TCP overlap - server favors data with higher sequence num │
 └─────────────────────────────────────────────────────────────────┘
 --]]
 
--- Вспомогательная функция: проверяет, является ли payload валидным TLS Client Hello
+-- Helper: validate TLS ClientHello record
 local function is_valid_tls_client_hello(data)
     if not data or #data < 6 then
         return false
@@ -1512,12 +1510,12 @@ local function is_valid_tls_client_hello(data)
     local version_major = string.byte(data, 2)
     local version_minor = string.byte(data, 3)
 
-    -- Проверяем что это Handshake record
+    -- Verify Handshake record type
     if content_type ~= 0x16 then
         return false
     end
 
-    -- Проверяем версию TLS (0x03 0x01-0x04)
+    -- Verify TLS version (0x03 0x01-0x04)
     if version_major ~= 0x03 then
         return false
     end
@@ -1526,8 +1524,8 @@ local function is_valid_tls_client_hello(data)
         return false
     end
 
-    -- Проверяем Handshake Type (должен быть 0x01 = Client Hello)
-    -- Handshake header начинается с позиции 6 (после TLS record header)
+    -- Verify Handshake Type (0x01 = ClientHello)
+    -- Handshake header starts at byte offset 6 (past 5-byte TLS record header)
     if #data >= 6 then
         local handshake_type = string.byte(data, 6)
         if handshake_type ~= 0x01 then
@@ -1539,7 +1537,7 @@ local function is_valid_tls_client_hello(data)
 end
 
 function multisplit_tls(ctx, desync)
-    -- Только для TCP
+    -- TCP only
     if not desync.dis.tcp then
         instance_cutoff_shim(ctx, desync)
         return
@@ -1547,23 +1545,23 @@ function multisplit_tls(ctx, desync)
 
     direction_cutoff_opposite(ctx, desync)
 
-    -- Получаем данные для обработки (reassembled TLS или текущий payload)
+    -- Retrieve reassembled TLS or raw payload
     local data = desync.reasm_data or desync.dis.payload
 
     -- ============================================
-    -- ЗАЩИТА: Пропускаем MTProto и Telegram
-    -- seqovl ломает соединения с Telegram!
+    -- GUARD: Bypass MTProto and Telegram traffic
+    -- seqovl breaks Telegram connections
     -- ============================================
 
-    -- 1. Пропускаем MTProto (это НЕ TLS, seqovl его ломает)
+    -- 1. Bypass MTProto (non-TLS protocol broken by seqovl)
     if desync.l7payload == "mtproto_initial" or desync.l7payload == "mtproto" then
         if b_debug then
             DLOG("multisplit_tls: SKIP MTProto traffic - not compatible with seqovl")
         end
-        return  -- Выходим без вердикта, пакет пройдёт как есть
+        return  -- Pass packet unmodified
     end
 
-    -- 2. Пропускаем домены Telegram (seqovl с ними не работает)
+    -- 2. Bypass Telegram domains
     if desync.hostname then
         local telegram_domains = {
             "telegram.org",
@@ -1577,40 +1575,40 @@ function multisplit_tls(ctx, desync)
                 if b_debug then
                     DLOG("multisplit_tls: SKIP Telegram domain: " .. desync.hostname)
                 end
-                return  -- Выходим без вердикта
+                return  -- Pass packet unmodified
             end
         end
     end
 
-    -- Проверяем условия: есть данные, правильное направление, нужный payload
+    -- Verify packet direction and payload requirements
     if #data > 0 and direction_check(desync) and payload_check(desync) then
         if replay_first(desync) then
-            -- Позиции для разреза (по умолчанию "2" = после 1-го байта)
+            -- Split positions (default "2" = after first payload byte)
             local spos = desync.arg.pos or "2"
 
             if b_debug then
                 DLOG("multisplit_tls: split pos: " .. spos)
             end
 
-            -- Вычисляем реальные позиции разреза
+            -- Resolve actual split offsets
             local pos = resolve_multi_pos(data, desync.l7payload, spos)
 
             if b_debug then
                 DLOG("multisplit_tls: resolved: " .. table.concat(zero_based_pos(pos), " "))
             end
 
-            -- Нельзя резать на позиции 1
+            -- Position 1 is invalid for split
             delete_pos_1(pos)
 
             if #pos > 0 then
                 -- ============================================
-                -- КЛЮЧЕВАЯ ПРОВЕРКА: является ли payload TLS?
+                -- Check if payload is TLS
                 -- ============================================
                 local payload_is_tls = is_valid_tls_client_hello(data)
                 local reasm_is_tls = desync.reasm_data and is_valid_tls_client_hello(desync.reasm_data)
                 local can_apply_tls_mod = payload_is_tls or reasm_is_tls
 
-                -- Также проверяем l7payload от движка
+                -- Check engine l7payload
                 if desync.l7payload == "tls_client_hello" then
                     can_apply_tls_mod = true
                 end
@@ -1622,46 +1620,46 @@ function multisplit_tls(ctx, desync)
                          " can_apply_tls_mod=" .. tostring(can_apply_tls_mod))
                 end
 
-                -- Отправляем части пакета
+                -- Transmit packet segments
                 for i = 0, #pos do
                     local pos_start = pos[i] or 1
                     local pos_end = i < #pos and pos[i + 1] - 1 or #data
                     local part = string.sub(data, pos_start, pos_end)
                     local seqovl = 0
 
-                    -- SEQOVL применяется только к ПЕРВОЙ части (i == 0)
+                    -- SEQOVL applies to FIRST segment only (i == 0)
                     if i == 0 and desync.arg.seqovl and tonumber(desync.arg.seqovl) > 0 then
                         seqovl = tonumber(desync.arg.seqovl)
 
                         -- ============================================
-                        -- БЕЗОПАСНАЯ ГЕНЕРАЦИЯ ПАТТЕРНА
+                        -- Safe pattern generation
                         -- ============================================
                         local pat = nil
 
                         if can_apply_tls_mod then
-                            -- Payload IS TLS - можем применять tls_mod
+                            -- TLS payload: apply tls_mod
 
-                            -- Берём базовый fake TLS (встроенный, ~680 байт)
+                            -- Base fake TLS template (~680 bytes)
                             local base_tls = blob(desync, "fake_default_tls")
 
-                            -- Собираем список модификаций
+                            -- Collect modifications
                             local mods = {}
 
-                            -- SNI (по умолчанию www.google.com)
+                            -- SNI (default www.google.com)
                             local sni = desync.arg.sni or "www.google.com"
                             table.insert(mods, "sni=" .. sni)
 
-                            -- Рандомизация random bytes и session id
+                            -- Randomize random bytes and session_id
                             if desync.arg.tls_rnd then
                                 table.insert(mods, "rnd")
                             end
 
-                            -- Копирование session id из реального пакета
-                            -- ТОЛЬКО если reasm_data валидный TLS
+                            -- Copy session_id from real packet
+                            -- ONLY when reasm_data is valid TLS
                             if desync.arg.tls_dupsid and reasm_is_tls then
                                 table.insert(mods, "dupsid")
                             elseif desync.arg.tls_dupsid and not reasm_is_tls then
-                                -- dupsid запрошен но reasm_data не TLS - пропускаем dupsid
+                                -- dupsid requested on non-TLS reasm_data: skip
                                 if b_debug then
                                     DLOG("multisplit_tls: skipping dupsid - reasm_data is not valid TLS")
                                 end
@@ -1673,13 +1671,13 @@ function multisplit_tls(ctx, desync)
                                 DLOG("multisplit_tls: applying tls_mod: " .. modlist)
                             end
 
-                            -- Применяем модификации к fake TLS
-                            -- Третий параметр нужен для dupsid - передаём только если это TLS
+                            -- Apply modifications to fake TLS
+                            -- Third parameter is real TLS packet for dupsid
                             local reasm_for_mod = reasm_is_tls and desync.reasm_data or nil
                             local fake_tls = tls_mod(base_tls, modlist, reasm_for_mod)
 
                             if fake_tls and #fake_tls > 0 then
-                                -- Создаём паттерн нужной длины (seqovl байт)
+                                -- Build pattern of requested length (seqovl bytes)
                                 pat = pattern(fake_tls, 1, seqovl)
 
                                 if b_debug then
@@ -1688,7 +1686,7 @@ function multisplit_tls(ctx, desync)
                                          " sni=" .. sni)
                                 end
                             else
-                                -- tls_mod вернул nil или пустую строку - используем fallback
+                                -- tls_mod returned empty: fallback
                                 if b_debug then
                                     DLOG("multisplit_tls: tls_mod returned empty, using raw blob")
                                 end
@@ -1696,7 +1694,7 @@ function multisplit_tls(ctx, desync)
                             end
                         else
                             -- ============================================
-                            -- PAYLOAD НЕ TLS - FALLBACK РЕЖИМ
+                            -- NON-TLS PAYLOAD: FALLBACK
                             -- ============================================
                             local fallback_mode = desync.arg.fallback or "pass"
 
@@ -1705,36 +1703,36 @@ function multisplit_tls(ctx, desync)
                             end
 
                             if fallback_mode == "pass" then
-                                -- Пропускаем пакет без изменений
+                                -- Pass packet unmodified
                                 DLOG("multisplit_tls: fallback=pass, letting packet through unchanged")
                                 return VERDICT_PASS
 
                             elseif fallback_mode == "split" then
-                                -- Делаем split но без seqovl
+                                -- Split without seqovl
                                 DLOG("multisplit_tls: fallback=split, splitting without seqovl")
                                 seqovl = 0
-                                -- pat остаётся nil, seqovl = 0 - просто разрежем без overlap
+                                -- pat remains nil, seqovl = 0 (plain split)
 
-                            else  -- "pattern" или любое другое значение
-                                -- Используем raw blob без tls_mod модификаций
-                                -- Это безопасно - просто добавляем байты перед пакетом
+                            else  -- "pattern" or fallback
+                                -- Raw blob without tls_mod modifications
+                                -- Safe raw bytes prepended before packet
                                 local raw_blob = blob(desync, "fake_default_tls")
                                 if raw_blob and #raw_blob > 0 then
                                     pat = pattern(raw_blob, 1, seqovl)
                                     DLOG("multisplit_tls: fallback=pattern, using raw blob without tls_mod")
                                 else
-                                    -- Даже blob не доступен - делаем split без seqovl
+                                    -- Blob unavailable: plain split without seqovl
                                     DLOG("multisplit_tls: no blob available, splitting without seqovl")
                                     seqovl = 0
                                 end
                             end
                         end
 
-                        -- Добавляем паттерн ПЕРЕД реальными данными (если есть)
+                        -- Prepend pattern before real payload
                         if pat and #pat > 0 then
                             part = pat .. part
                         else
-                            -- Нет паттерна - обнуляем seqovl
+                            -- No pattern available: reset seqovl
                             seqovl = 0
                         end
                     end
@@ -1745,7 +1743,7 @@ function multisplit_tls(ctx, desync)
                              " len=" .. #part .. " seqovl=" .. seqovl)
                     end
 
-                    -- Отправляем сегмент с уменьшенным seq (для overlap)
+                    -- Send segment with decremented sequence number (overlap)
                     if not rawsend_payload_segmented(desync, part, pos_start - 1 - seqovl) then
                         return VERDICT_PASS
                     end
@@ -1760,7 +1758,7 @@ function multisplit_tls(ctx, desync)
             DLOG("multisplit_tls: not acting on further replay pieces")
         end
 
-        -- Дропаем replayed пакеты если успешно отправили split
+        -- Drop replayed packets after successful split transmission
         if replay_drop(desync) then
             return desync.arg.nodrop and VERDICT_PASS or VERDICT_DROP
         end
@@ -1768,14 +1766,14 @@ function multisplit_tls(ctx, desync)
 end
 
 -- ============================================================================
--- NEW HTTP BYPASS STRATEGIES - Для обхода умного DPI (MTS/MGTS)
+-- HTTP evasion strategies for DPI
 -- ============================================================================
 
--- HTTP Garbage Prefix - Много мусора перед запросом
--- DPI часто парсит только начало пакета, мусор может сбить парсер
+-- HTTP Garbage Prefix: prepends junk before request
+-- Corrupts DPI stream parser looking only at initial bytes
 -- standard args : direction, payload
 -- arg : mode=<str> - "crlf", "spaces", "tabs", "mixed", "nulls" (default mixed)
--- arg : amount=N - количество мусора в байтах (default 50)
+-- arg : amount=N - garbage prefix size in bytes (default 50)
 function http_garbage_prefix(ctx, desync)
     if not desync.dis.tcp then
         instance_cutoff_shim(ctx, desync)
@@ -1789,16 +1787,16 @@ function http_garbage_prefix(ctx, desync)
         local garbage = ""
 
         if mode == "crlf" then
-            -- Много \r\n подряд
+            -- Consecutive \r\n sequences
             garbage = string.rep("\r\n", math.floor(amount / 2))
         elseif mode == "spaces" then
-            -- Пробелы с \r\n
+            -- Spaces with \r\n
             garbage = string.rep(" \r\n", math.floor(amount / 3))
         elseif mode == "tabs" then
-            -- Табы с \r\n
+            -- Tabs with \r\n
             garbage = string.rep("\t\r\n", math.floor(amount / 3))
         elseif mode == "mixed" then
-            -- Смешанный мусор: пробелы, табы, \r\n
+            -- Mixed whitespace and \r\n
             for i = 1, math.floor(amount / 4) do
                 local r = i % 4
                 if r == 0 then garbage = garbage .. "\r\n"
@@ -1808,7 +1806,7 @@ function http_garbage_prefix(ctx, desync)
                 end
             end
         elseif mode == "headers" then
-            -- Фейковые заголовки в начале (невалидные)
+            -- Invalid fake header lines at start
             garbage = "X-Fake: garbage\r\n" ..
                       "X-Ignore: me\r\n" ..
                       string.rep("\r\n", 5)
@@ -1820,10 +1818,10 @@ function http_garbage_prefix(ctx, desync)
     end
 end
 
--- HTTP Pipeline Fake - Отправить два запроса, первый фейковый
--- DPI может кэшировать домен из первого запроса
+-- HTTP Pipeline Fake: sends fake request ahead of real request
+-- DPI caches destination domain from initial request
 -- standard args : direction, payload, rawsend
--- arg : fake_host=<str> - хост для фейкового запроса (default www.google.com)
+-- arg : fake_host=<str> - fake request host (default www.google.com)
 function http_pipeline_fake(ctx, desync)
     if not desync.dis.tcp then
         instance_cutoff(ctx)
@@ -1836,7 +1834,7 @@ function http_pipeline_fake(ctx, desync)
         if replay_first(desync) then
             local fake_host = desync.arg.fake_host or "www.google.com"
 
-            -- Создаём фейковый HTTP запрос (очень короткий)
+            -- Generate minimal fake HTTP request
             local fake_request = "GET / HTTP/1.1\r\n" ..
                                 "Host: " .. fake_host .. "\r\n" ..
                                 "Connection: keep-alive\r\n" ..
@@ -1849,13 +1847,13 @@ function http_pipeline_fake(ctx, desync)
                 fooling = {}
             }
 
-            -- Отправляем ФЕЙКОВЫЙ запрос сначала
+            -- Transmit FAKE request first
             if b_debug then DLOG("http_pipeline_fake: sending FAKE request to "..fake_host) end
             if not rawsend_payload_segmented(desync, fake_request, 0, opts) then
                 return VERDICT_PASS
             end
 
-            -- Потом РЕАЛЬНЫЙ запрос с offset = длина фейкового
+            -- Transmit REAL request with offset = fake request length
             if b_debug then DLOG("http_pipeline_fake: sending REAL request") end
             if not rawsend_payload_segmented(desync, data, #fake_request, opts) then
                 return VERDICT_PASS
@@ -1871,11 +1869,11 @@ function http_pipeline_fake(ctx, desync)
     end
 end
 
--- HTTP Header Shuffle - Перемешать заголовки и добавить фейковые Host
--- Добавляет фейковый Host ДО реального, надеясь что DPI возьмёт первый
+-- HTTP Header Shuffle: reorders headers and prepends fake Host
+-- Injects fake Host before real Host, targeting first-match DPI parsers
 -- standard args : direction, payload
 -- arg : fake_host=<str>
--- arg : add_x_host - также добавить X-Host с реальным хостом
+-- arg : add_x_host - also add X-Host header containing real host
 function http_header_shuffle(ctx, desync)
     if not desync.dis.tcp then
         instance_cutoff_shim(ctx, desync)
@@ -1895,24 +1893,24 @@ function http_header_shuffle(ctx, desync)
         local real_host = string.sub(desync.dis.payload, host_pos.pos_value_start, host_pos.pos_end)
         local fake_host = desync.arg.fake_host or "www.google.com"
 
-        -- Находим конец первой строки (после GET / HTTP/1.1)
+        -- Locate end of request line (GET / HTTP/1.1)
         local first_line_end = string.find(desync.dis.payload, "\r\n", 1, true)
         if not first_line_end then
             DLOG("http_header_shuffle: cannot find end of first line")
             return
         end
 
-        -- Собираем новый запрос:
-        -- 1. Первая строка (GET / HTTP/1.1)
+        -- Assemble modified request:
+        -- 1. Request line (GET / HTTP/1.1)
         -- 2. FAKE Host header
-        -- 3. Остальные заголовки (включая реальный Host)
-        local new_payload = string.sub(desync.dis.payload, 1, first_line_end + 1) ..  -- включая \r\n
-                           "Host: " .. fake_host .. "\r\n" ..  -- Фейковый Host ПЕРВЫМ
-                           string.sub(desync.dis.payload, first_line_end + 2)  -- остаток
+        -- 3. Remaining headers (including real Host)
+        local new_payload = string.sub(desync.dis.payload, 1, first_line_end + 1) ..  -- including \r\n
+                           "Host: " .. fake_host .. "\r\n" ..  -- Fake Host FIRST
+                           string.sub(desync.dis.payload, first_line_end + 2)  -- remainder
 
-        -- Опционально добавить X-Host с реальным хостом
+        -- Optionally insert X-Host with real host
         if desync.arg.add_x_host then
-            -- Вставляем перед реальным Host
+            -- Insert before real Host
             local real_host_pos = string.find(new_payload, "\r\nHost: "..real_host, 1, true)
             if real_host_pos then
                 new_payload = string.sub(new_payload, 1, real_host_pos + 1) ..
@@ -1927,8 +1925,8 @@ function http_header_shuffle(ctx, desync)
     end
 end
 
--- HTTP Method Obfuscation - Обфускация HTTP метода
--- Некоторые DPI парсят только GET/POST, другие методы могут не блокироваться
+-- HTTP Method Obfuscation
+-- Evades DPI parsing standard GET/POST methods only
 -- standard args : direction, payload
 -- arg : method=<str> - "lowercase", "padding", "fake" (default lowercase)
 function http_method_obfuscate(ctx, desync)
@@ -1943,16 +1941,16 @@ function http_method_obfuscate(ctx, desync)
         local payload = desync.dis.payload
 
         if mode == "lowercase" then
-            -- GET -> get (некоторые серверы принимают)
+            -- Lowercase method: GET -> get
             payload = string.gsub(payload, "^GET ", "get ")
             payload = string.gsub(payload, "^POST ", "post ")
             payload = string.gsub(payload, "^HEAD ", "head ")
         elseif mode == "padding" then
-            -- GET -> GET  (доп пробелы)
+            -- Extra spaces: GET -> GET (extra trailing spaces)
             payload = string.gsub(payload, "^GET ", "GET  ")
             payload = string.gsub(payload, "^POST ", "POST  ")
         elseif mode == "fake" then
-            -- Добавить фейковый метод перед реальным
+            -- Prepend fake method before real method
             payload = "X " .. payload
         elseif mode == "case" then
             -- GET -> GeT
@@ -1966,9 +1964,9 @@ function http_method_obfuscate(ctx, desync)
     end
 end
 
--- HTTP Absolute URI - Использовать абсолютный URI в запросе
--- GET http://real-host.com/ HTTP/1.1 вместо GET / HTTP/1.1
--- Host header ставим фейковый
+-- HTTP Absolute URI
+-- Formats request as GET http://real-host.com/ HTTP/1.1
+-- Sets Host header to fake value
 -- standard args : direction, payload
 -- arg : fake_host=<str>
 function http_absolute_uri_v2(ctx, desync)
@@ -1990,7 +1988,7 @@ function http_absolute_uri_v2(ctx, desync)
         local real_host = string.sub(desync.dis.payload, host_pos.pos_value_start, host_pos.pos_end)
         local fake_host = desync.arg.fake_host or "www.google.com"
 
-        -- Ищем начало пути (после GET )
+        -- Locate URI start after method
         local method_end = string.find(desync.dis.payload, " ", 1, true)
         local path_end = string.find(desync.dis.payload, " HTTP/", 1, true)
 
@@ -1998,14 +1996,14 @@ function http_absolute_uri_v2(ctx, desync)
             local method = string.sub(desync.dis.payload, 1, method_end - 1)
             local path = string.sub(desync.dis.payload, method_end + 1, path_end - 1)
 
-            -- Создаём абсолютный URI
+            -- Construct absolute URI
             local abs_uri = "http://" .. real_host .. path
 
-            -- Новый запрос с абсолютным URI и фейковым Host
+            -- Format request with absolute URI and fake Host
             local new_payload = method .. " " .. abs_uri ..
                                string.sub(desync.dis.payload, path_end)
 
-            -- Заменяем Host на фейковый
+            -- Substitute Host with fake host
             new_payload = string.gsub(new_payload,
                                      "\r\nHost: " .. real_host,
                                      "\r\nHost: " .. fake_host)
@@ -2017,10 +2015,10 @@ function http_absolute_uri_v2(ctx, desync)
     end
 end
 
--- HTTP Split At Host Byte - Побайтовый split внутри Host value
--- Разрезает Host value на отдельные байты и отправляет с задержкой
+-- HTTP Split At Host Byte
+-- Splits Host value into byte-sized segments with transmission delay
 -- standard args : direction, payload, rawsend
--- arg : max_parts=N - максимум частей для Host (default 5)
+-- arg : max_parts=N - max segments for Host value (default 5)
 function http_host_bytesplit(ctx, desync)
     if not desync.dis.tcp then
         instance_cutoff(ctx)
@@ -2048,14 +2046,14 @@ function http_host_bytesplit(ctx, desync)
                 fooling = {}
             }
 
-            -- Часть 1: До Host value
+            -- Segment 1: Pre-Host value
             local before = string.sub(data, 1, host_pos.pos_value_start - 1)
             if b_debug then DLOG("http_host_bytesplit: [1] before len="..#before) end
             if not rawsend_payload_segmented(desync, before, 0, opts) then
                 return VERDICT_PASS
             end
 
-            -- Части 2..N: Host value побайтово
+            -- Segments 2..N: Host value chunks
             local host_value = string.sub(data, host_pos.pos_value_start, host_pos.pos_end)
             local chunk_size = math.max(1, math.floor(#host_value / max_parts))
             local pos = 0
@@ -2075,7 +2073,7 @@ function http_host_bytesplit(ctx, desync)
                 part_num = part_num + 1
             end
 
-            -- Последняя часть: После Host value
+            -- Final segment: Post-Host value
             local after = string.sub(data, host_pos.pos_end + 1)
             if b_debug then DLOG("http_host_bytesplit: ["..part_num.."] after len="..#after) end
             if not rawsend_payload_segmented(desync, after, host_pos.pos_end, opts) then
@@ -2092,8 +2090,8 @@ function http_host_bytesplit(ctx, desync)
     end
 end
 
--- HTTP Fake Continuation - Отправить фейковый "продолжение" соединения
--- DPI может не парсить keep-alive запросы
+-- HTTP Fake Continuation
+-- Previews keep-alive continuation to mislead DPI state
 -- standard args : direction, payload, rawsend
 -- arg : fake_host=<str>
 function http_fake_continuation(ctx, desync)
@@ -2115,19 +2113,19 @@ function http_fake_continuation(ctx, desync)
                 fooling = {}
             }
 
-            -- Отправляем "фейковый ответ" (DPI может подумать что это продолжение)
+            -- Send fake response segment (mimics prior keep-alive state)
             local fake_response = "HTTP/1.1 200 OK\r\n" ..
                                  "Content-Length: 0\r\n" ..
                                  "Connection: keep-alive\r\n" ..
                                  "\r\n"
 
-            -- Сначала "ответ"
+            -- First send fake response
             if b_debug then DLOG("http_fake_continuation: sending fake response") end
             if not rawsend_payload_segmented(desync, fake_response, 0, opts) then
                 return VERDICT_PASS
             end
 
-            -- Потом реальный запрос
+            -- Then send real request
             if b_debug then DLOG("http_fake_continuation: sending real request") end
             if not rawsend_payload_segmented(desync, data, #fake_response, opts) then
                 return VERDICT_PASS
@@ -2143,10 +2141,10 @@ function http_fake_continuation(ctx, desync)
     end
 end
 
--- HTTP Version Downgrade - Понизить версию HTTP
--- Некоторые DPI не парсят HTTP/1.0
+-- HTTP Version Downgrade
+-- Downgrades HTTP version for DPI lacking legacy support
 -- standard args : direction, payload
--- arg : version=<str> - "1.0" или "0.9" (default 1.0)
+-- arg : version=<str> - "1.0" or "0.9" (default 1.0)
 function http_version_downgrade(ctx, desync)
     if not desync.dis.tcp then
         instance_cutoff_shim(ctx, desync)
@@ -2160,10 +2158,10 @@ function http_version_downgrade(ctx, desync)
 
         if version == "1.0" then
             payload = string.gsub(payload, "HTTP/1.1", "HTTP/1.0")
-            -- Убираем Host header для HTTP/1.0 (опционально)
+            -- Strip Host header for HTTP/1.0
             -- payload = string.gsub(payload, "\r\nHost: [^\r\n]+", "")
         elseif version == "0.9" then
-            -- HTTP/0.9: только "GET /path" без версии и заголовков
+            -- HTTP/0.9: simple "GET /path" without version or headers
             local path_start = string.find(payload, " ", 1, true)
             local path_end = string.find(payload, " HTTP/", 1, true)
             if path_start and path_end then
@@ -2179,13 +2177,13 @@ function http_version_downgrade(ctx, desync)
     end
 end
 
--- HTTP Pipeline Fake v2 - Фейковый запрос умирает, реальный доходит
--- Фейковый запрос отправляется с badsum/низким TTL - сервер его отбросит
--- DPI видит фейковый хост, сервер получает только реальный запрос
+-- HTTP Pipeline Fake v2: fake request discarded, real request delivered
+-- Fake request sent with bad checksum or low TTL; server drops it
+-- DPI inspects fake host, server receives real request
 -- standard args : direction, payload, rawsend, fooling
--- arg : fake_host=<str> - хост для фейкового запроса (default www.google.com)
--- arg : ttl=N - TTL для фейкового пакета (default 1)
--- arg : badsum - использовать неверную checksum для fake (рекомендуется)
+-- arg : fake_host=<str> - fake request host (default www.google.com)
+-- arg : ttl=N - TTL for fake packet (default 1)
+-- arg : badsum - use invalid TCP checksum for fake packet (recommended)
 function http_pipeline_fake_v2(ctx, desync)
     if not desync.dis.tcp then
         instance_cutoff(ctx)
@@ -2199,23 +2197,23 @@ function http_pipeline_fake_v2(ctx, desync)
             local fake_host = desync.arg.fake_host or "www.google.com"
             local fake_ttl = tonumber(desync.arg.ttl) or 1
 
-            -- Создаём фейковый HTTP запрос
+            -- Build fake HTTP request
             local fake_request = "GET / HTTP/1.1\r\n" ..
                                 "Host: " .. fake_host .. "\r\n" ..
                                 "Connection: keep-alive\r\n" ..
                                 "\r\n"
 
-            -- Опции для ФЕЙКОВОГО пакета (badsum/низкий TTL - не дойдёт до сервера)
+            -- Configure FAKE packet (badsum/low TTL: dropped before server)
             local opts_fake = {
                 rawsend = rawsend_opts(desync),
                 reconstruct = reconstruct_opts(desync),
                 ipfrag = {},
                 fooling = {
-                    badsum = desync.arg.badsum or true,  -- неверная checksum
+                    badsum = desync.arg.badsum or true,  -- invalid checksum
                 }
             }
 
-            -- Опции для РЕАЛЬНОГО пакета (нормальные)
+            -- Configure REAL packet
             local opts_real = {
                 rawsend = rawsend_opts_base(desync),
                 reconstruct = {},
@@ -2223,11 +2221,11 @@ function http_pipeline_fake_v2(ctx, desync)
                 fooling = {}
             }
 
-            -- Отправляем ФЕЙКОВЫЙ запрос (с badsum - сервер отбросит, DPI увидит)
+            -- Send FAKE request (badsum: dropped by server, parsed by DPI)
             local fake_dis = deepcopy(desync.dis)
             fake_dis.payload = fake_request
 
-            -- Устанавливаем низкий TTL
+            -- Set low TTL
             if fake_dis.ip then
                 fake_dis.ip.ip_ttl = fake_ttl
             end
@@ -2238,7 +2236,7 @@ function http_pipeline_fake_v2(ctx, desync)
             if b_debug then DLOG("http_pipeline_fake_v2: sending FAKE (TTL="..fake_ttl..", badsum) to "..fake_host) end
             rawsend_dissect(fake_dis, opts_fake.rawsend)
 
-            -- Отправляем РЕАЛЬНЫЙ запрос (нормальный, дойдёт до сервера)
+            -- Send REAL request to server
             if b_debug then DLOG("http_pipeline_fake_v2: sending REAL request") end
             if not rawsend_payload_segmented(desync, data, 0, opts_real) then
                 return VERDICT_PASS
@@ -2254,8 +2252,8 @@ function http_pipeline_fake_v2(ctx, desync)
     end
 end
 
--- HTTP Fake Header Inject - Добавляет фейковый X-Host заголовок
--- Сервер игнорирует X-Host, но DPI может его прочитать
+-- HTTP Fake Header Inject: injects fake X-Host header
+-- Server ignores X-Host; DPI parser inspects it
 -- standard args : direction, payload
 -- arg : fake_host=<str>
 function http_fake_xhost(ctx, desync)
@@ -2269,11 +2267,11 @@ function http_fake_xhost(ctx, desync)
         local fake_host = desync.arg.fake_host or "www.google.com"
         local payload = desync.dis.payload
 
-        -- Находим конец первой строки
+        -- Locate end of request line
         local first_line_end = string.find(payload, "\r\n", 1, true)
         if first_line_end then
-            -- Вставляем X-Host ПЕРЕД настоящим Host (DPI может взять первый "Host"-подобный)
-            -- Некоторые DPI ищут просто "Host:" без проверки что это заголовок
+            -- Insert X-Host BEFORE real Host header
+            -- Targets DPI scanning for raw "Host:" string without header parsing
             local fake_header = "X-Host: " .. fake_host .. "\r\n" ..
                                "X-Forwarded-Host: " .. fake_host .. "\r\n"
 
@@ -2288,8 +2286,8 @@ function http_fake_xhost(ctx, desync)
     end
 end
 
--- HTTP with OOB byte - Добавляет TCP OOB байт перед запросом
--- Некоторые DPI не обрабатывают urgent data правильно
+-- HTTP with OOB byte: injects TCP out-of-band byte
+-- Disrupts DPI parsers handling urgent data incorrectly
 -- standard args : direction, payload
 function http_oob_prefix(ctx, desync)
     if not desync.dis.tcp then
@@ -2299,8 +2297,8 @@ function http_oob_prefix(ctx, desync)
     direction_cutoff_opposite(ctx, desync)
 
     if desync.l7payload=="http_req" and direction_check(desync) then
-        -- Добавляем мусорный байт в начало - сервера часто игнорируют лишние байты
-        -- перед GET/POST
+        -- Prepend garbage byte: servers ignore leading bytes
+        -- before GET/POST methods
         desync.dis.payload = "\n" .. desync.dis.payload
         DLOG("http_oob_prefix: added \\n prefix")
         return VERDICT_MODIFY
@@ -2308,8 +2306,8 @@ function http_oob_prefix(ctx, desync)
 end
 
 
--- Ещё безопаснее - добавить пустую строку внутри заголовков (не в начале)
--- Вставляет пустой X-заголовок который nginx игнорирует
+-- Insert blank X-header inside header block
+-- Safe header tolerated by nginx/Apache
 function http_inject_safe_header(ctx, desync)
     if not desync.dis.tcp then
         instance_cutoff_shim(ctx, desync)
@@ -2320,10 +2318,10 @@ function http_inject_safe_header(ctx, desync)
     if desync.l7payload=="http_req" and direction_check(desync) then
         local payload = desync.dis.payload
 
-        -- Находим позицию перед Host:
+        -- Locate offset before Host:
         local host_pos = string.find(payload, "\r\nHost:", 1, true)
         if host_pos then
-            -- Вставляем безопасный заголовок перед Host
+            -- Insert padding header before Host
             payload = string.sub(payload, 1, host_pos + 1) ..
                      "X-Padding: " .. string.rep("x", 50) .. "\r\n" ..
                      string.sub(payload, host_pos + 2)
@@ -2335,16 +2333,14 @@ function http_inject_safe_header(ctx, desync)
 end
 
 -- ============================================================================
--- METHODEOL VARIANTS - ПРЕФИКСНЫЕ: добавляют байты перед запросом
+-- METHODEOL PREFIX VARIANTS: prepends bytes before request
 -- ============================================================================
--- ВНИМАНИЕ: префикс/вставка в payload увеличивает длину данных, отправляемых
--- в TCP-поток, но не сдвигает sequence number последующих пакетов сокета.
--- Сервер подтверждает уже другие байты, и на постоянном соединении поток
--- рассогласуется. В каталоге эти модули не используются; для DPI-обхода
--- применяйте seqovl/disorder (сдвиг влево за окно), а не префикс вперёд.
+-- WARNING: Prepending or inserting into payload increases byte length
+-- in TCP stream without shifting socket sequence numbers.
+-- Causes persistent connections to desync. Use seqovl/disorder instead.
 
--- Вариант 1: Только \r\n в начало (без обрезания User-Agent)
--- Многие HTTP серверы игнорируют \r\n перед GET
+-- Variant 1: Leading \r\n only (without User-Agent truncation)
+-- HTTP servers ignore leading \r\n before GET
 function http_methodeol_safe(ctx, desync)
     if not desync.dis.tcp then
         instance_cutoff_shim(ctx, desync)
@@ -2353,15 +2349,15 @@ function http_methodeol_safe(ctx, desync)
     direction_cutoff_opposite(ctx, desync)
 
     if desync.l7payload=="http_req" and direction_check(desync) then
-        -- Только \r\n в начало, ничего не обрезаем
+        -- Prepend \r\n, preserve original headers
         desync.dis.payload = "\r\n" .. desync.dis.payload
         DLOG("http_methodeol_safe: added \\r\\n prefix")
         return VERDICT_MODIFY
     end
 end
 
--- Вариант 2: Пробел перед GET (некоторые серверы принимают)
--- " GET / HTTP/1.1" вместо "GET / HTTP/1.1"
+-- Variant 2: Leading space before GET
+-- Formatted as " GET / HTTP/1.1"
 function http_space_prefix(ctx, desync)
     if not desync.dis.tcp then
         instance_cutoff_shim(ctx, desync)
@@ -2376,7 +2372,7 @@ function http_space_prefix(ctx, desync)
     end
 end
 
--- Вариант 3: \n вместо \r\n (Unix-style line ending)
+-- Variant 3: Unix \n newline instead of \r\n
 function http_lf_prefix(ctx, desync)
     if not desync.dis.tcp then
         instance_cutoff_shim(ctx, desync)
@@ -2391,7 +2387,7 @@ function http_lf_prefix(ctx, desync)
     end
 end
 
--- Вариант 4: Таб перед GET
+-- Variant 4: Leading tab before GET
 function http_tab_prefix(ctx, desync)
     if not desync.dis.tcp then
         instance_cutoff_shim(ctx, desync)
@@ -2406,8 +2402,8 @@ function http_tab_prefix(ctx, desync)
     end
 end
 
--- Вариант 5: Добавить безопасный X-заголовок (100% совместимо)
--- X-Padding header игнорируется сервером но сбивает парсер DPI
+-- Variant 5: Safe X-Padding header
+-- X-Padding header is ignored by server but confuses DPI parsing
 function http_xpadding(ctx, desync)
     if not desync.dis.tcp then
         instance_cutoff_shim(ctx, desync)
@@ -2418,11 +2414,11 @@ function http_xpadding(ctx, desync)
     if desync.l7payload=="http_req" and direction_check(desync) then
         local payload = desync.dis.payload
 
-        -- Находим конец первой строки (GET / HTTP/1.1\r\n)
+        -- Locate end of request line (GET / HTTP/1.1\r\n)
         local first_line_end = string.find(payload, "\r\n", 1, true)
         if first_line_end then
-            -- Вставляем длинный X-заголовок сразу после первой строки
-            local padding = string.rep("x", 100)  -- 100 символов мусора
+            -- Insert X-header following request line
+            local padding = string.rep("x", 100)  -- 100 padding characters
             payload = string.sub(payload, 1, first_line_end + 1) ..
                      "X-Pad: " .. padding .. "\r\n" ..
                      string.sub(payload, first_line_end + 2)
@@ -2433,8 +2429,8 @@ function http_xpadding(ctx, desync)
     end
 end
 
--- Вариант 6: Несколько \r\n подряд (агрессивнее)
--- arg : count=N - количество \r\n (default 3)
+-- Variant 6: Multiple \r\n sequences
+-- arg : count=N - number of \r\n sequences (default 3)
 function http_multi_crlf(ctx, desync)
     if not desync.dis.tcp then
         instance_cutoff_shim(ctx, desync)
@@ -2451,7 +2447,7 @@ function http_multi_crlf(ctx, desync)
     end
 end
 
--- Вариант 7: Комбинация - \r\n + пробелы
+-- Variant 7: Combined \r\n and spaces
 function http_mixed_prefix(ctx, desync)
     if not desync.dis.tcp then
         instance_cutoff_shim(ctx, desync)
@@ -2460,14 +2456,14 @@ function http_mixed_prefix(ctx, desync)
     direction_cutoff_opposite(ctx, desync)
 
     if desync.l7payload=="http_req" and direction_check(desync) then
-        -- \r\n потом пробелы потом таб
+        -- Sequence of \r\n followed by spaces and tab
         desync.dis.payload = "\r\n \t" .. desync.dis.payload
         DLOG("http_mixed_prefix: added mixed whitespace prefix")
         return VERDICT_MODIFY
     end
 end
 
--- HTTP combo bypass v2 - исправлена ошибка с tcp_seq
+-- HTTP combo bypass v2: corrected tcp_seq tracking
 function http_combo_bypass(ctx, desync)
     if not desync.dis.tcp then
         instance_cutoff(ctx)
@@ -2483,7 +2479,7 @@ function http_combo_bypass(ctx, desync)
             local prefix = desync.arg.prefix or "\r\n"
             local hostcase = desync.arg.hostcase or "HoSt"
 
-            -- 1. ОТПРАВЛЯЕМ FAKE ПАКЕТЫ
+            -- 1. SEND FAKE PACKETS
             local fake_http = "GET / HTTP/1.1\r\nHost: " .. fake_host ..
                              "\r\nUser-Agent: Mozilla/5.0\r\nAccept: */*\r\n" ..
                              "Connection: keep-alive\r\n\r\n"
@@ -2504,7 +2500,7 @@ function http_combo_bypass(ctx, desync)
             DLOG("http_combo_bypass: sending "..repeats.." fake packets")
             rawsend_dissect(fake_dis, opts_fake.rawsend)
 
-            -- 2. МОДИФИЦИРУЕМ PAYLOAD
+            -- 2. MODIFY PAYLOAD
             local modified = data
 
             if prefix and #prefix > 0 then
@@ -2515,7 +2511,7 @@ function http_combo_bypass(ctx, desync)
                 modified = string.gsub(modified, "Host:", hostcase..":", 1)
             end
 
-            -- 3. ОТПРАВЛЯЕМ КАК ЕДИНЫЙ ПАКЕТ (без split)
+            -- 3. SEND AS SINGLE PACKET (no split)
             local opts_real = {
                 rawsend = rawsend_opts_base(desync),
                 reconstruct = {},
@@ -2539,8 +2535,8 @@ function http_combo_bypass(ctx, desync)
     end
 end
 
--- Упрощённая версия - только \r\n + hostcase, без split
--- Для серверов которые чувствительны к split
+-- Simplified variant: \r\n prefix + hostcase without split
+-- For servers intolerant of TCP segmentation
 function http_simple_bypass(ctx, desync)
     if not desync.dis.tcp then
         instance_cutoff_shim(ctx, desync)
@@ -2554,10 +2550,10 @@ function http_simple_bypass(ctx, desync)
 
         local payload = desync.dis.payload
 
-        -- Добавляем \r\n в начало
+        -- Prepend \r\n
         payload = prefix .. payload
 
-        -- Меняем Host: на HoSt:
+        -- Change Host: to HoSt:
         payload = string.gsub(payload, "Host:", hostcase..":", 1)
 
         desync.dis.payload = payload
@@ -2567,38 +2563,38 @@ function http_simple_bypass(ctx, desync)
 end
 
 -- ============================================================================
--- DISCORD BYPASS STRATEGIES - Экспериментальные техники обхода DPI
--- Автор: lua-strategy-creator agent
+-- DISCORD BYPASS STRATEGIES: Experimental DPI evasion techniques
+-- Author: lua-strategy-creator agent
 -- ============================================================================
 
 --[[
-Название: discord_window_collapse
-Описание: Атака через Window=0 для сброса сессии DPI.
-          Отправляем первый фрагмент, затем ACK с Window=0.
-          DPI видит нулевое окно и может сбросить сессию по таймауту,
-          после чего отправляем оставшиеся данные.
+Name: discord_window_collapse
+Description: Window=0 attack to reset DPI session state.
+             Sends first segment, then ACK with Window=0.
+             DPI sees zero window and drops session tracking on timeout,
+             after which remaining payload is delivered.
 
-Использование: --lua-desync=discord_window_collapse
+Usage: --lua-desync=discord_window_collapse
 
-Параметры:
-  - pos: позиция разбиения (default: "host" для TLS SNI)
-  - delay: задержка перед отправкой второй части в мс (опционально)
+Parameters:
+  - pos: split position (default: "host" for TLS SNI)
+  - delay: delay before sending second part in ms (optional)
 ]]
 function discord_window_collapse(ctx, desync)
-    -- Проверка наличия TCP
+    -- Verify TCP protocol
     if not desync.dis.tcp then
         instance_cutoff_shim(ctx, desync)
         return
     end
 
-    -- Отключаем обработку в обратном направлении
+    -- Disable reverse direction processing
     direction_cutoff_opposite(ctx, desync, "out")
 
-    -- Проверяем направление и тип payload
+    -- Verify packet direction and payload type
     if not direction_check(desync, "out") then return end
     if not payload_check(desync, "tls_client_hello") then return end
 
-    -- Работаем только с первым пакетом
+    -- Process initial packet only
     if not replay_first(desync) then
         if replay_drop(desync) then
             return VERDICT_DROP
@@ -2611,12 +2607,12 @@ function discord_window_collapse(ctx, desync)
 
     DLOG("discord_window_collapse: processing TLS Client Hello len="..#data)
 
-    -- Определяем позицию разбиения (по умолчанию - начало SNI)
+    -- Determine split offset (default: SNI start)
     local split_marker = desync.arg.pos or "host"
     local split_pos = resolve_pos(data, desync.l7payload, split_marker)
 
     if not split_pos or split_pos <= 1 or split_pos >= #data then
-        -- Fallback: разбиваем на позиции 50 (примерно после TLS заголовков)
+        -- Fallback: split at offset 50 (past TLS record header)
         split_pos = math.min(50, math.floor(#data / 2))
         DLOG("discord_window_collapse: using fallback split_pos="..split_pos)
     else
@@ -2625,7 +2621,7 @@ function discord_window_collapse(ctx, desync)
 
     local base_seq = desync.dis.tcp.th_seq
 
-    -- Опции для отправки
+    -- Packet transmission options
     local opts = {
         rawsend = rawsend_opts_base(desync),
         reconstruct = {},
@@ -2634,7 +2630,7 @@ function discord_window_collapse(ctx, desync)
         fooling = {}
     }
 
-    -- ШАГ 1: Отправляем первую часть данных (до SNI)
+    -- STEP 1: Send initial data segment (pre-SNI)
     local part1 = string.sub(data, 1, split_pos - 1)
     local pkt1 = deepcopy(desync.dis)
     pkt1.payload = part1
@@ -2643,29 +2639,29 @@ function discord_window_collapse(ctx, desync)
     DLOG("discord_window_collapse: sending part1 len="..#part1)
     rawsend_dissect(pkt1, opts.rawsend, opts.reconstruct)
 
-    -- ШАГ 2: Отправляем ACK с Window=0 (сигнал о переполнении буфера)
-    -- DPI может интерпретировать это как "соединение приостановлено"
+    -- STEP 2: Send ACK with Window=0 (buffer full signal)
+    -- DPI enters connection stall tracking state
     local ack_pkt = deepcopy(desync.dis)
     ack_pkt.payload = ""
     ack_pkt.tcp.th_seq = base_seq + #part1
     ack_pkt.tcp.th_flags = TH_ACK
-    ack_pkt.tcp.th_win = 0  -- Нулевое окно!
+    ack_pkt.tcp.th_win = 0  -- Zero window
 
     DLOG("discord_window_collapse: sending Window=0 ACK")
     rawsend_dissect(ack_pkt, opts.rawsend, opts.reconstruct)
 
-    -- ШАГ 3: Отправляем Window Update (восстанавливаем окно)
+    -- STEP 3: Send Window Update (restore window)
     local update_pkt = deepcopy(desync.dis)
     update_pkt.payload = ""
     update_pkt.tcp.th_seq = base_seq + #part1
     update_pkt.tcp.th_flags = TH_ACK
-    update_pkt.tcp.th_win = 65535  -- Восстанавливаем окно
+    update_pkt.tcp.th_win = 65535  -- Restore window
 
     DLOG("discord_window_collapse: sending Window Update")
     rawsend_dissect(update_pkt, opts.rawsend, opts.reconstruct)
 
-    -- ШАГ 4: Отправляем вторую часть данных (с SNI)
-    -- К этому моменту DPI мог сбросить состояние сессии
+    -- STEP 4: Send second data segment (contains SNI)
+    -- DPI session state has cleared or stalled
     local part2 = string.sub(data, split_pos)
     local pkt2 = deepcopy(desync.dis)
     pkt2.payload = part2
@@ -2681,17 +2677,16 @@ end
 
 
 --[[
-Название: discord_router_alert
-Описание: Добавляем IP Option Router Alert (type=148/0x94).
-          Аппаратные DPI на маршрутизаторах часто пропускают пакеты
-          с Router Alert option через fast path без глубокой инспекции,
-          так как это опция для RSVP/IGMP.
+Name: discord_router_alert
+Description: Appends IP Option Router Alert (type=148/0x94).
+             Router-based hardware DPI often fast-paths Router Alert
+             packets without deep inspection, as used by RSVP/IGMP.
 
-Использование: --lua-desync=discord_router_alert
+Usage: --lua-desync=discord_router_alert
 
-Параметры:
-  - split: дополнительно разбить payload (default: false)
-  - pos: позиция разбиения если split=true
+Parameters:
+  - split: split payload into segments (default: false)
+  - pos: split position if split=true
 ]]
 function discord_router_alert(ctx, desync)
     if not desync.dis.tcp then
@@ -2715,7 +2710,7 @@ function discord_router_alert(ctx, desync)
 
     DLOG("discord_router_alert: processing TLS len="..#data)
 
-    -- Опции для отправки
+    -- Packet transmission options
     local opts = {
         rawsend = rawsend_opts_base(desync),
         reconstruct = {},
@@ -2724,43 +2719,43 @@ function discord_router_alert(ctx, desync)
         fooling = {}
     }
 
-    -- Создаём IP Option Router Alert
+    -- Construct IP Option Router Alert
     -- Format: Type(1) + Length(1) + Value(2)
-    -- Type = 0x94 (148) = копировать при фрагментации + класс 0 + номер 20
+    -- Type = 0x94 (148): copy on fragmentation + class 0 + number 20
     -- Length = 4
     -- Value = 0x0000 (Router shall examine packet)
     local router_alert_option = string.char(0x94, 0x04, 0x00, 0x00)
 
     if desync.dis.ip then
-        -- IPv4: добавляем Router Alert option
+        -- IPv4: append Router Alert option
         local pkt = deepcopy(desync.dis)
 
-        -- Добавляем опцию к существующим или создаём новые
+        -- Append to existing IP options or create new option header
         if pkt.ip.options then
             pkt.ip.options = pkt.ip.options .. router_alert_option
         else
             pkt.ip.options = router_alert_option
         end
 
-        -- IP Header Length увеличивается (options добавляют байты)
-        -- winws2 пересчитает автоматически при reconstruct
+        -- IP header length expanded by option bytes;
+        -- winws2 recalculates automatically during packet reconstruction
 
         DLOG("discord_router_alert: added Router Alert IP option")
 
         if desync.arg.split then
-            -- Дополнительно разбиваем на части
+            -- Segment payload
             local split_marker = desync.arg.pos or "host"
             local split_pos = resolve_pos(data, desync.l7payload, split_marker) or math.floor(#data / 2)
 
             if split_pos > 1 and split_pos < #data then
                 local base_seq = pkt.tcp.th_seq
 
-                -- Часть 1 с Router Alert
+                -- Segment 1 with Router Alert
                 local pkt1 = deepcopy(pkt)
                 pkt1.payload = string.sub(data, 1, split_pos - 1)
                 rawsend_dissect(pkt1, opts.rawsend, opts.reconstruct)
 
-                -- Часть 2 с Router Alert
+                -- Segment 2 with Router Alert
                 local pkt2 = deepcopy(pkt)
                 pkt2.payload = string.sub(data, split_pos)
                 pkt2.tcp.th_seq = base_seq + split_pos - 1
@@ -2772,25 +2767,25 @@ function discord_router_alert(ctx, desync)
             end
         end
 
-        -- Отправляем единым пакетом с Router Alert
+        -- Send single packet with Router Alert
         rawsend_dissect(pkt, opts.rawsend, opts.reconstruct)
         replay_drop_set(desync)
         return VERDICT_DROP
 
     elseif desync.dis.ip6 then
-        -- IPv6: используем Hop-by-Hop Options с Router Alert
-        -- Это сложнее, создаём extension header
+        -- IPv6: Hop-by-Hop Options extension header with Router Alert
+        -- Construct extension header
         local pkt = deepcopy(desync.dis)
 
-        -- Hop-by-Hop Options Header с Router Alert
+        -- Hop-by-Hop Options Header with Router Alert
         -- Next Header (1) + Hdr Ext Len (1) + Options
         -- Router Alert Option: Type=5, Len=2, Value=0x0000
         local hop_by_hop_data = string.char(
             0x05, 0x02, 0x00, 0x00,  -- Router Alert option
-            0x01, 0x00              -- PadN для выравнивания до 8 байт
+            0x01, 0x00              -- PadN to 8-byte boundary
         )
 
-        -- Вставляем Hop-by-Hop header (должен быть первым после IPv6)
+        -- Insert Hop-by-Hop header immediately following IPv6 header
         insert_ip6_exthdr(pkt.ip6, 1, IPPROTO_HOPOPTS, hop_by_hop_data)
         fix_ip6_next(pkt.ip6, IPPROTO_TCP)
 
@@ -2803,18 +2798,17 @@ end
 
 
 --[[
-Название: discord_ecn_exploit
-Описание: Используем ECN (Explicit Congestion Notification) флаги.
-          ECE и CWR флаги в TCP + ECN биты в IP ToS заставляют
-          некоторые DPI идти по fast path, так как ECN-трафик
-          требует приоритетной обработки.
+Name: discord_ecn_exploit
+Description: ECN (Explicit Congestion Notification) flag evasion.
+             ECE/CWR TCP flags with ECN bits in IP ToS force certain DPI
+             engines to fast-path traffic requiring priority processing.
 
-Использование: --lua-desync=discord_ecn_exploit
+Usage: --lua-desync=discord_ecn_exploit
 
-Параметры:
-  - split: разбить payload на части (default: true)
-  - pos: позиция разбиения
-  - disorder: отправить в обратном порядке
+Parameters:
+  - split: split payload into segments (default: true)
+  - pos: split position
+  - disorder: send segments out of order
 ]]
 function discord_ecn_exploit(ctx, desync)
     if not desync.dis.tcp then
@@ -2846,21 +2840,21 @@ function discord_ecn_exploit(ctx, desync)
         fooling = {}
     }
 
-    -- Функция для применения ECN marking
+    -- Apply ECN marking
     local function apply_ecn(pkt)
-        -- TCP: добавляем ECE (ECN-Echo) флаг
-        -- CWR можно добавить, но он обычно только в ответ
+        -- TCP: set ECE (ECN-Echo) flag
+        -- CWR set only in response
         pkt.tcp.th_flags = bitor(pkt.tcp.th_flags, TH_ECE)
 
-        -- IP: устанавливаем ECN bits в ToS/Traffic Class
-        -- ECN использует 2 младших бита поля ToS:
+        -- IP: set ECN bits in ToS / Traffic Class field
+        -- ECN occupies low-order 2 bits of ToS
         -- 00 = Not-ECT, 01 = ECT(1), 10 = ECT(0), 11 = CE (Congestion Experienced)
-        -- Используем CE (11) - сигнал о перегрузке
+        -- Set CE (11): Congestion Experienced
         if pkt.ip then
-            -- Сохраняем DSCP (старшие 6 бит), устанавливаем ECN=CE (11)
+            -- Preserve DSCP (upper 6 bits), set ECN=CE (11)
             pkt.ip.ip_tos = bitor(bitand(pkt.ip.ip_tos, 0xFC), 0x03)
         elseif pkt.ip6 then
-            -- Для IPv6 ECN в Traffic Class (те же 2 младших бита)
+            -- IPv6: set ECN in Traffic Class low-order bits
             pkt.ip6.ip6_flow = bitor(bitand(pkt.ip6.ip6_flow, 0xFFCFFFFF), 0x00300000)
         end
     end
@@ -2889,7 +2883,7 @@ function discord_ecn_exploit(ctx, desync)
         apply_ecn(pkt2)
 
         if desync.arg.disorder then
-            -- Отправляем в обратном порядке
+            -- Transmit in reverse order (disorder)
             DLOG("discord_ecn_exploit: sending disorder with ECN, part2 first")
             rawsend_dissect(pkt2, opts.rawsend, opts.reconstruct)
             rawsend_dissect(pkt1, opts.rawsend, opts.reconstruct)
@@ -2899,7 +2893,7 @@ function discord_ecn_exploit(ctx, desync)
             rawsend_dissect(pkt2, opts.rawsend, opts.reconstruct)
         end
     else
-        -- Без разбиения - просто добавляем ECN
+        -- Unfragmented transmission with ECN marking
         local pkt = deepcopy(desync.dis)
         apply_ecn(pkt)
         DLOG("discord_ecn_exploit: sending single packet with ECN")
@@ -2912,18 +2906,18 @@ end
 
 
 --[[
-Название: discord_timestamp_travel
-Описание: Отправляем TCP пакет с Timestamp из "прошлого".
-          DPI с PAWS (Protection Against Wrapped Sequences) проверкой
-          может отбросить такой пакет как невалидный, но сервер
-          без строгой PAWS проверки примет.
+Name: discord_timestamp_travel
+Description: TCP packet with timestamp from the past.
+             DPI enforcing PAWS (Protection Against Wrapped Sequences)
+             may discard the packet, while servers without strict PAWS
+             accept it.
 
-Использование: --lua-desync=discord_timestamp_travel
+Usage: --lua-desync=discord_timestamp_travel
 
-Параметры:
-  - offset_sec: смещение timestamp в секундах назад (default: 7200 = 2 часа)
-  - split: разбить на части
-  - pos: позиция разбиения
+Parameters:
+  - offset_sec: timestamp offset backward in seconds (default: 7200 = 2 hours)
+  - split: split payload into segments
+  - pos: split position
 ]]
 function discord_timestamp_travel(ctx, desync)
     if not desync.dis.tcp then
@@ -2955,43 +2949,43 @@ function discord_timestamp_travel(ctx, desync)
         fooling = {}
     }
 
-    -- Смещение в миллисекундах (TCP timestamp обычно в ms)
-    local offset_sec = tonumber(desync.arg.offset_sec) or 7200  -- 2 часа по умолчанию
+    -- Offset in milliseconds (TCP timestamp format)
+    local offset_sec = tonumber(desync.arg.offset_sec) or 7200  -- 2 hours default
     local offset_ms = offset_sec * 1000
 
-    -- Функция для модификации TCP Timestamp
+    -- Modify TCP Timestamp option
     local function modify_timestamp(pkt, time_offset)
         if not pkt.tcp.options then
-            -- Создаём timestamp option если его нет
+            -- Generate timestamp option if absent
             -- Kind=8, Length=10, TSval(4 bytes), TSecr(4 bytes)
-            local now = os.time() * 1000  -- Примерное значение
+            local now = os.time() * 1000  -- Timestamp estimate
             local old_ts = now - time_offset
-            -- Упаковываем в big-endian
+            -- Pack big-endian timestamp
             local tsval = string.char(
                 bitand(bitright(old_ts, 24), 0xFF),
                 bitand(bitright(old_ts, 16), 0xFF),
                 bitand(bitright(old_ts, 8), 0xFF),
                 bitand(old_ts, 0xFF)
             )
-            local tsecr = string.char(0, 0, 0, 0)  -- TSecr = 0 для исходящих
+            local tsecr = string.char(0, 0, 0, 0)  -- TSecr = 0 for outbound
             pkt.tcp.options = {{kind = 8, data = tsval .. tsecr}}
             return true
         end
 
-        -- Ищем существующий timestamp option
+        -- Locate existing timestamp option
         local ts_idx = find_tcp_option(pkt.tcp.options, 8)
         if ts_idx then
             local opt = pkt.tcp.options[ts_idx]
             if opt.data and #opt.data >= 4 then
-                -- Читаем текущий TSval (первые 4 байта)
+                -- Read TSval (first 4 bytes)
                 local b1, b2, b3, b4 = string.byte(opt.data, 1, 4)
                 local current_ts = b1 * 16777216 + b2 * 65536 + b3 * 256 + b4
 
-                -- Вычитаем offset (уходим в "прошлое")
+                -- Decrement timestamp into the past
                 local new_ts = current_ts - time_offset
                 if new_ts < 0 then new_ts = 0 end
 
-                -- Упаковываем обратно
+                -- Repack modified TSval
                 local new_tsval = string.char(
                     bitand(bitright(new_ts, 24), 0xFF),
                     bitand(bitright(new_ts, 16), 0xFF),
@@ -2999,7 +2993,7 @@ function discord_timestamp_travel(ctx, desync)
                     bitand(new_ts, 0xFF)
                 )
 
-                -- Сохраняем TSecr (оставшиеся 4 байта)
+                -- Preserve TSecr (remaining 4 bytes)
                 local tsecr = string.sub(opt.data, 5, 8)
                 if #tsecr < 4 then tsecr = string.char(0,0,0,0) end
 
@@ -3023,11 +3017,11 @@ function discord_timestamp_travel(ctx, desync)
 
         local base_seq = desync.dis.tcp.th_seq
 
-        -- Первая часть - с нормальным timestamp
+        -- Segment 1: standard timestamp
         local pkt1 = deepcopy(desync.dis)
         pkt1.payload = string.sub(data, 1, split_pos - 1)
 
-        -- Вторая часть - с timestamp из "прошлого"
+        -- Segment 2: past timestamp
         local pkt2 = deepcopy(desync.dis)
         pkt2.payload = string.sub(data, split_pos)
         pkt2.tcp.th_seq = base_seq + split_pos - 1
@@ -3037,7 +3031,7 @@ function discord_timestamp_travel(ctx, desync)
         rawsend_dissect(pkt1, opts.rawsend, opts.reconstruct)
         rawsend_dissect(pkt2, opts.rawsend, opts.reconstruct)
     else
-        -- Весь пакет с timestamp из прошлого
+        -- Full packet with past timestamp
         local pkt = deepcopy(desync.dis)
         modify_timestamp(pkt, offset_ms)
         DLOG("discord_timestamp_travel: sending packet with old timestamp")
@@ -3050,17 +3044,16 @@ end
 
 
 --[[
-Название: discord_urgent_sni
-Описание: Используем URG флаг + Urgent Pointer на середину SNI.
-          URG данные обрабатываются вне очереди (out-of-band).
-          DPI может неправильно интерпретировать границы данных
-          когда urgent pointer указывает в середину важных данных.
+Name: discord_urgent_sni
+Description: URG flag + Urgent Pointer pointing to middle of SNI.
+             Out-of-band urgent pointer corrupts DPI state tracking
+             by misaligning inspection boundaries.
 
-Использование: --lua-desync=discord_urgent_sni
+Usage: --lua-desync=discord_urgent_sni
 
-Параметры:
-  - urgent_pos: позиция urgent pointer (default: "midsld" - середина домена)
-  - urgent_byte: байт для urgent data (default: 0x00)
+Parameters:
+  - urgent_pos: urgent pointer position (default: "midsld")
+  - urgent_byte: byte value for urgent data (default: 0x00)
 ]]
 function discord_urgent_sni(ctx, desync)
     if not desync.dis.tcp then
@@ -3092,37 +3085,37 @@ function discord_urgent_sni(ctx, desync)
         fooling = {}
     }
 
-    -- Определяем позицию для Urgent Pointer
+    -- Locate offset for Urgent Pointer
     local urgent_marker = desync.arg.urgent_pos or "midsld"
     local urgent_pos = resolve_pos(data, desync.l7payload, urgent_marker)
 
     if not urgent_pos or urgent_pos <= 0 or urgent_pos > #data then
-        -- Fallback: середина payload
+        -- Fallback: payload midpoint
         urgent_pos = math.floor(#data / 2)
         DLOG("discord_urgent_sni: using fallback urgent_pos="..urgent_pos)
     else
         DLOG("discord_urgent_sni: resolved '"..urgent_marker.."' to pos="..urgent_pos)
     end
 
-    -- Urgent pointer указывает на байт ПОСЛЕ urgent данных
-    -- Если urp=5, то байты 1-5 - urgent, байт 6+ - обычные
+    -- Urgent pointer points to byte following urgent data
+    -- If urp=5, bytes 1-5 are urgent, bytes 6+ are normal
 
     local pkt = deepcopy(desync.dis)
 
-    -- Устанавливаем URG флаг
+    -- Set TCP URG flag
     pkt.tcp.th_flags = bitor(pkt.tcp.th_flags, TH_URG)
 
-    -- Urgent Pointer - смещение от начала данных до конца urgent части
-    -- Указываем на середину SNI, чтобы запутать DPI
+    -- Urgent Pointer: byte offset to end of urgent data
+    -- Point to middle of SNI to misalign DPI inspection
     pkt.tcp.th_urp = urgent_pos
 
-    -- Опционально: вставляем urgent byte в начало payload
-    -- Это OOB данные которые не должны влиять на TLS handshake
+    -- Optional: insert urgent byte at payload start
+    -- Out-of-band byte disregarded by TLS handshake
     if desync.arg.urgent_byte then
         local urg_byte = string.char(tonumber(desync.arg.urgent_byte) or 0)
-        -- Вставляем urgent byte, корректируем urgent pointer
+        -- Insert urgent byte, adjust urgent pointer
         pkt.payload = urg_byte .. data
-        pkt.tcp.th_urp = 1  -- Urgent pointer на первый байт
+        pkt.tcp.th_urp = 1  -- Urgent pointer to first byte
         DLOG("discord_urgent_sni: inserted urgent byte at start")
     end
 
@@ -3135,18 +3128,18 @@ end
 
 
 --[[
-Название: discord_ultimate_combo
-Описание: Комбинированная атака: обратный порядок сегментов (disorder) +
-          ECN marking + случайные IP ID + разбиение на SNI.
-          Максимально запутывает DPI множеством аномалий одновременно.
+Name: discord_ultimate_combo
+Description: Combined attack: reverse segment order (disorder) +
+             ECN marking + randomized IP ID + SNI split.
+             Multi-anomaly evasions disrupt DPI flow reassembly.
 
-Использование: --lua-desync=discord_ultimate_combo
+Usage: --lua-desync=discord_ultimate_combo
 
-Параметры:
-  - pos: позиция первого разбиения (default: "host")
-  - pos2: позиция второго разбиения (default: "endhost")
-  - fakes: количество fake пакетов с низким TTL (default: 2)
-  - ttl: TTL для fake пакетов (default: 3)
+Parameters:
+  - pos: first split position (default: "host")
+  - pos2: second split position (default: "endhost")
+  - fakes: number of fake packets with low TTL (default: 2)
+  - ttl: TTL for fake packets (default: 3)
 ]]
 function discord_ultimate_combo(ctx, desync)
     if not desync.dis.tcp then
@@ -3178,17 +3171,17 @@ function discord_ultimate_combo(ctx, desync)
         fooling = {}
     }
 
-    -- Параметры
+    -- Configuration parameters
     local pos1_marker = desync.arg.pos or "host"
     local pos2_marker = desync.arg.pos2 or "endhost"
     local num_fakes = tonumber(desync.arg.fakes) or 2
     local fake_ttl = tonumber(desync.arg.ttl) or 3
 
-    -- Определяем позиции разбиения
+    -- Resolve split offsets
     local pos1 = resolve_pos(data, desync.l7payload, pos1_marker)
     local pos2 = resolve_pos(data, desync.l7payload, pos2_marker)
 
-    -- Валидация позиций
+    -- Validate split positions
     if not pos1 or pos1 <= 1 then pos1 = math.floor(#data / 3) end
     if not pos2 or pos2 <= pos1 then pos2 = math.floor(#data * 2 / 3) end
     if pos2 >= #data then pos2 = #data - 1 end
@@ -3199,14 +3192,14 @@ function discord_ultimate_combo(ctx, desync)
 
     local base_seq = desync.dis.tcp.th_seq
 
-    -- Разбиваем на 3 части
+    -- Split payload into 3 segments
     local part1 = string.sub(data, 1, pos1 - 1)
     local part2 = string.sub(data, pos1, pos2 - 1)
     local part3 = string.sub(data, pos2)
 
-    -- Функция для применения ECN и случайного IP ID
+    -- Apply ECN marking and randomized IP ID
     local function apply_combo_mods(pkt, add_ecn)
-        -- Случайный IP ID
+        -- Randomize IP ID
         if pkt.ip then
             pkt.ip.ip_id = math.random(1, 65535)
         end
@@ -3220,7 +3213,7 @@ function discord_ultimate_combo(ctx, desync)
         end
     end
 
-    -- ШАГ 1: Отправляем fake пакеты с низким TTL
+    -- STEP 1: Transmit fake packets with low TTL
     if num_fakes > 0 then
         local fake_blob = blob(desync, "fake_default_tls")
         if fake_blob then
@@ -3240,10 +3233,10 @@ function discord_ultimate_combo(ctx, desync)
         end
     end
 
-    -- ШАГ 2: Отправляем реальные части в ОБРАТНОМ порядке (disorder)
-    -- Это ключевая техника - DPI видит части не по порядку
+    -- STEP 2: Transmit real segments in REVERSE order (disorder)
+    -- DPI parser processes segments out of order
 
-    -- Часть 3 (последняя) - отправляем ПЕРВОЙ
+    -- Segment 3 (tail): send FIRST
     local pkt3 = deepcopy(desync.dis)
     pkt3.payload = part3
     pkt3.tcp.th_seq = base_seq + #part1 + #part2
@@ -3253,7 +3246,7 @@ function discord_ultimate_combo(ctx, desync)
     DLOG("discord_ultimate_combo: sending part3 (disorder) len="..#part3.." seq_offset="..(#part1 + #part2))
     rawsend_dissect(pkt3, opts_real.rawsend, opts_real.reconstruct)
 
-    -- Часть 2 (средняя, содержит SNI) - отправляем ВТОРОЙ
+    -- Segment 2 (middle, contains SNI): send SECOND
     local pkt2 = deepcopy(desync.dis)
     pkt2.payload = part2
     pkt2.tcp.th_seq = base_seq + #part1
@@ -3263,11 +3256,11 @@ function discord_ultimate_combo(ctx, desync)
     DLOG("discord_ultimate_combo: sending part2 (disorder) len="..#part2.." seq_offset="..#part1)
     rawsend_dissect(pkt2, opts_real.rawsend, opts_real.reconstruct)
 
-    -- Часть 1 (первая) - отправляем ПОСЛЕДНЕЙ
+    -- Segment 1 (head): send LAST
     local pkt1 = deepcopy(desync.dis)
     pkt1.payload = part1
     pkt1.tcp.th_flags = bitor(TH_ACK, TH_PSH)
-    apply_combo_mods(pkt1, false)  -- Первая часть без ECN для вариативности
+    apply_combo_mods(pkt1, false)  -- First segment without ECN for diversity
 
     DLOG("discord_ultimate_combo: sending part1 (disorder) len="..#part1.." seq_offset=0")
     rawsend_dissect(pkt1, opts_real.rawsend, opts_real.reconstruct)
@@ -3611,11 +3604,10 @@ function desync_combo(ctx, desync)
 end
 
 -- ============================================================================
--- БЕЛОЕ ИМЯ ПО ПОДСЕТИ
--- Перебор делает штатный circular: пары «белое имя + способ доставки» записаны
--- в пресете строками strategy=N. Здесь только то, чего в движке нет: память по
--- сайту и подсети сервера, признак «зависло после ~16 КБ» и доставка белого
--- приветствия в перекрытии.
+-- SUBNET-AWARE DOMAIN EVASION
+-- Preset iterates strategies via circular selector.
+-- Manages domain and server subnet state tracking,
+-- 16 KB stall detection, and fake ClientHello overlap delivery.
 --
 -- --writable
 -- --out-range=-s34228 --in-range=-s29500
@@ -3623,15 +3615,16 @@ end
 -- --payload=tls_client_hello
 -- --lua-desync=white_seqovl:sni=web.max.ru:strategy=1
 -- --lua-desync=fake:blob=fake_default_tls:tls_mod=rnd,dupsid,sni=web.max.ru:badsum:strategy=2
--- Стратегия, которая в подсети ещё не срабатывала, меняется после одной неудачи,
--- сработавшая - после fails. Что победило блокировку на одном сайте, первым
--- пробуется на остальных. reset сразу обрывает соединение, которое не прошло.
--- Входящие пакеты нужны обоим признакам: в пресете должен быть --wf-tcp-in.
+-- Subnet strategy rotates on first failure until proven;
+-- proven strategy rotates after fail threshold.
+-- Winning strategy prioritized for peer domains in subnet.
+-- reset flag immediately terminates failing stream.
+-- Requires --wf-tcp-in for inbound verification.
 -- ============================================================================
 
--- hostkey для circular: подсеть сервера вместо имени сайта
--- arg : mask=N - длина префикса IPv4 (по умолчанию 24)
--- arg : mask6=N - длина префикса IPv6 (по умолчанию 48)
+-- circular hostkey: server subnet prefix
+-- arg : mask=N - IPv4 prefix length (default 24)
+-- arg : mask6=N - IPv6 prefix length (default 48)
 function subnet_hostkey(desync)
 	local raw = desync.target and (desync.target.ip or desync.target.ip6)
 	if not raw then return nil end
@@ -3652,10 +3645,10 @@ function subnet_hostkey(desync)
 	return ntop(table.concat(net)).."/"..bits
 end
 
--- hostkey для circular: сайт (домен nld-го уровня), а пока имя неизвестно - подсеть.
--- У разных сайтов одной подсети обход может быть разным, поэтому счёт ведётся по сайту.
--- arg : nld=N - до какого уровня обрезать имя (по умолчанию 2 : a.b.site.com => site.com)
--- arg : mask, mask6 - как у subnet_hostkey
+-- circular hostkey: host domain (nld-level) or subnet fallback.
+-- Evaluates per host domain to support heterogeneous subnet services.
+-- arg : nld=N - domain level (default 2: a.b.site.com => site.com)
+-- arg : mask, mask6 - subnet mask lengths
 function white_hostkey(desync)
 	local host = desync.track and desync.track.hostname
 	if host and not desync.track.hostname_is_ip then
@@ -3664,16 +3657,11 @@ function white_hostkey(desync)
 	return subnet_hostkey(desync)
 end
 
--- Память подбора между подсетями и между запусками. Незаблокированный сайт
--- открывается с любой стратегией, поэтому ценны только победы над блокировкой :
--- стратегии, сработавшие в подсети после неудачи (mem.best, свежие впереди).
--- Память только подсказывает, с чего начать и что пробовать первым : для сайта
--- это его прошлая стратегия, потом стратегия его подсети, потом mem.best.
--- Доверие (смена только после fails неудач) стратегия получает, лишь сработав
--- на этом сайте в текущем запуске. С аргументом state память лежит в файле.
--- arg : state=<filename> - имя файла памяти. У каждого circular свой файл.
--- winws2 под Windows может писать только в каталог из параметра --writable,
--- поэтому файл кладётся туда (переменная окружения WRITABLE)
+-- Inter-subnet and cross-session evasion state cache.
+-- Tracks confirmed bypass strategies that defeated blocks (mem.best).
+-- Priority order: last host strategy, subnet strategy, mem.best.
+-- Strategy gains sticky trust only after verified success on host.
+-- arg : state=<filename> - state file name in writable directory.
 function white_mem(desync, hrec)
 	local askey = (desync.arg.key and #desync.arg.key>0) and desync.arg.key or desync.func_instance
 	if not white_memory then white_memory = {} end
@@ -3683,7 +3671,7 @@ function white_mem(desync, hrec)
 		mem = { keys = {}, best = {}, count = 0, file = name and #name>0 and (dir and dir.."/"..name or name) or nil }
 		white_memory[askey] = mem
 		local ok, text = pcall(readfile, mem.file or "")
-		-- номера стратегий годятся, только пока в пресете их столько же
+		-- Valid only while strategy count in preset matches
 		if not ok then
 			DLOG("white_mem: no saved memory")
 		elseif tonumber(string.match(text, "^strategies (%d+)\r?\n"))~=hrec.ctstrategy then
@@ -3709,7 +3697,7 @@ function white_mem_store(desync, w)
 	local mem = white_mem(desync, w.hrec)
 	local changed = false
 	if w.hrec.white_failed and mem.best[1]~=w.strategy then
-		-- победа над блокировкой : стратегия встаёт первой в mem.best
+		-- Block defeated: prioritize in mem.best
 		for i=#mem.best,1,-1 do
 			if mem.best[i]==w.strategy then table.remove(mem.best, i) end
 		end
@@ -3717,11 +3705,11 @@ function white_mem_store(desync, w)
 		mem.best[6] = nil
 		changed = true
 	end
-	-- запоминается и для сайта, и для его подсети
+	-- Store for host domain and server subnet
 	for i, key in ipairs({ w.key, w.net }) do
 		if mem.keys[key]~=w.strategy then
 			if not mem.keys[key] then
-				-- память не растёт без конца : переполнилась - начинаем заново
+				-- Cap cache capacity: purge on overflow
 				if mem.count>=3000 then
 					DLOG("white_mem: "..mem.count.." records. starting over")
 					mem.keys = {}
@@ -3733,7 +3721,7 @@ function white_mem_store(desync, w)
 			changed = true
 		end
 	end
-	-- файл переписывается, только когда что-то поменялось
+	-- Persist to disk on state mutations only
 	if changed and mem.file and not mem.nosave then
 		local t = { "strategies "..w.hrec.ctstrategy }
 		for i, n in ipairs(mem.best) do
@@ -3749,7 +3737,7 @@ function white_mem_store(desync, w)
 		end
 	end
 end
--- что пробовать сайту : его прошлая стратегия, стратегия подсети, победители блокировок
+-- Priority order: previous host strategy, subnet strategy, verified winners
 function white_mem_hints(desync, w)
 	local mem = white_mem(desync, w.hrec)
 	local hints = { mem.keys[w.key], mem.keys[w.net] }
@@ -3763,11 +3751,9 @@ function white_mem_hints(desync, w)
 	return t
 end
 
--- Запись соединения для white_*_detector. crec у automate один на всё соединение,
--- поэтому своё лежит в подтаблице. Запись сайта (hrec) и его стратегия берутся в
--- момент, когда уходят первые данные соединения (ClientHello) : раньше имя сайта
--- неизвестно. Стратегия запоминается, потому что браузер открывает к сайту сразу
--- несколько соединений, и неудачи старых засчитывались бы уже новой стратегии.
+-- Connection record for white_*_detector.
+-- Attached to connection on first payload packet (ClientHello).
+-- Locked to connection to prevent multi-stream race corruption.
 function white_conn_state(desync, crec)
 	if not crec.white then crec.white = {} end
 	local w = crec.white
@@ -3778,7 +3764,7 @@ function white_conn_state(desync, crec)
 		w.net = subnet_hostkey(desync) or w.key
 		if w.hrec and w.key then
 			if not w.hrec.white_seen then
-				-- сайт встретился впервые : начинаем с подсказки из памяти
+				-- Unseen host: seed from memory hint
 				w.hrec.white_seen = true
 				local n = white_mem_hints(desync, w)[1]
 				if n and n<=w.hrec.ctstrategy and n~=w.hrec.nstrategy then
@@ -3793,8 +3779,8 @@ function white_conn_state(desync, crec)
 	end
 	return w
 end
--- true, если соединение не должно влиять на выбор стратегии сайта :
--- это не TLS, или сайт уже переключился на другую стратегию
+-- True if stream should not affect strategy scoring:
+-- non-TLS or host already transitioned to another strategy
 function white_conn_skip(desync, crec)
 	if crec.nocheck then return true end
 	local w = white_conn_state(desync, crec)
@@ -3811,10 +3797,9 @@ function white_conn_skip(desync, crec)
 	end
 	return false
 end
--- Неудача засчитана. Стратегии, которая на этом сайте ещё не сработала, хватает
--- одной неудачи, сработавшей нужно fails. Следующей берётся не соседняя по
--- номеру, а первая ещё не пробованная из подсказок памяти, и только потом по
--- порядку. circular сам прибавит к номеру единицу, поэтому ставится номер перед нужным.
+-- Record failure. Unproven strategy rotates on single error;
+-- proven strategy rotates after fails threshold. Next strategy selected
+-- from memory hints before fallback sequence.
 function white_conn_failed(desync, crec)
 	local w = crec.white
 	local hrec = w.hrec
@@ -3847,7 +3832,7 @@ function white_conn_failed(desync, crec)
 		end
 	end
 	if not nxt then
-		-- перепробовано всё : круг начинается заново
+	-- Failure: immediately terminate socket with RST
 		hrec.white_tried = {}
 		nxt = cur%ct+1
 	end
@@ -3858,8 +3843,8 @@ function white_conn_failed(desync, crec)
 	return true
 end
 
--- success_detector для circular. args - как у standard_success_detector.
--- Сработавшая стратегия запоминается для сайта и его подсети (см. white_mem)
+-- Inbound traffic tracker.
+-- Confirms whether server response data reached the host.
 function white_success_detector(desync, crec)
 	if white_conn_skip(desync, crec) then return false end
 	if not standard_success_detector(desync, crec) then return false end
@@ -3872,15 +3857,7 @@ function white_success_detector(desync, crec)
 	return true
 end
 
--- failure_detector для circular. К штатным признакам добавляет «зависло»:
--- от сервера пришло от stall_lo до stall_hi байт, после чего он замолчал, и
--- клиент сам закрыл соединение. Так выглядит блокировка «16 КБ»: сбросов и
--- повторов нет, поэтому standard_failure_detector её не видит.
--- args - как у standard_failure_detector, плюс :
--- arg : stall_lo=N - нижняя граница принятого от сервера, байт (по умолчанию 12000)
--- arg : stall_hi=N - верхняя граница (по умолчанию 26000). 0 - не искать зависания
--- arg : stall_time=N - сколько секунд тишины перед закрытием (по умолчанию 2)
--- arg : stall_any - считать и тогда, когда последний пакет сервера был с PSH (конец ответа)
+	-- Server responded: record strategy success
 function white_failure_detector(desync, crec)
 	if white_conn_skip(desync, crec) then return false end
 	if standard_failure_detector(desync, crec) then return white_conn_failed(desync, crec) end
@@ -3912,23 +3889,17 @@ function white_failure_detector(desync, crec)
 	return false
 end
 
--- Белое приветствие в перекрытии. Перед первым куском настоящего ClientHello
--- уходит ClientHello с белым именем, сдвинутый влево по sequence: сервер
--- отбрасывает его как данные до начала окна, а фильтр читает первым. Мод
--- padencap растягивает поле padding белого приветствия на всё настоящее, так
--- что вместе они выглядят одной TLS-записью.
--- Дальше работает штатный multisplit с его pos и nodrop. seqovl и seqovl_pattern
--- функция выставляет сама, payload всегда tls_client_hello.
+	-- Server returned RST: instant failure
 -- standard args : direction, fooling, ip_id, rawsend, reconstruct, ipfrag
--- arg : sni=<str> - белое имя
--- arg : blob=<blob> - образец TLS ClientHello (по умолчанию fake_default_tls)
--- arg : pos=<posmarker list> - где резать настоящее приветствие (по умолчанию 2)
+		-- Connection reset by server: record failure
 function white_seqovl(ctx, desync)
 	if not desync.arg.sni or #desync.arg.sni==0 then
 		error("white_seqovl: 'sni' arg required")
 	end
 	local sample = desync.arg.blob or "fake_default_tls"
-	-- blob у multisplit значит «отправить вместо настоящих данных», образец туда попасть не должен
+-- 16 KB TLS stall detector:
+-- Block closes connection after ~16 KB of TLS records.
+-- Evaluates incoming TCP payload volume.
 	desync.arg.blob = nil
 	desync.arg.payload = "tls_client_hello"
 	if desync.dis.tcp and desync.outgoing and desync.l7payload=="tls_client_hello" and replay_first(desync) then
@@ -3936,7 +3907,7 @@ function white_seqovl(ctx, desync)
 		local base = blob(desync, sample)
 		local pat = tls_mod(base, "rnd,dupsid,padencap,sni="..desync.arg.sni, hello)
 		if not pat then
-			-- padencap не применить, если padding в образце не последнее расширение
+	-- Server closed cleanly before threshold
 			DLOG("white_seqovl: padencap failed for '"..sample.."'. sending white hello without it")
 			pat = tls_mod(base, "rnd,dupsid,sni="..desync.arg.sni, hello)
 		end
@@ -3954,27 +3925,14 @@ end
 
 
 -- ============================================================================
--- ТЕНЕВЫЕ ПРОБЫ
--- Подбор стратегии без неудачных соединений браузера. Когда клиент шлёт TLS
--- ClientHello сайту, для которого стратегия ещё не известна, приветствие
--- придерживается, а к тому же серверу с других портов открываются служебные
--- соединения : каждое несёт копию приветствия со своей стратегией. Чьё первым
--- получило ответ сервера, та стратегия и применяется к настоящему приветствию
--- и запоминается для сайта. Ответы на служебные порты отбрасываются, чтобы
--- Windows не ответила на них сбросом. Порядок : две пробы без обхода, потом
--- волны стратегий, ответившая в волне стратегия перепроверяется в одиночку.
--- Одному ответу веры нет : фильтр бывает дырявым и часть соединений с
--- запрещённым именем пропускает сам.
--- Проба видит только, дошло ли приветствие. Блокировку, которая срабатывает
--- позже по объёму данных, ловит обратная связь от настоящих соединений : для
--- неё оркестратору нужны входящие пакеты до inseq (--in-range=-s29500).
+	-- Threshold reached without error:
+	-- confirmed bypass success
 --
 -- --wf-tcp-in=443 --in-range=-s29500 --payload=all
 -- --lua-desync=shadow_probe
 -- --lua-desync=fake:blob=fake_default_tls:badsum:strategy=1 --lua-desync=multisplit:strategy=1
 -- --lua-desync=multidisorder:pos=1,midsld:strategy=2
--- Профиль должен подходить и без имени сайта (без --hostlist) : ответ на
--- служебное соединение приходит раньше, чем движок узнаёт имя.
+	-- Connection stalled at ~16 KB: record failure
 -- ============================================================================
 
 function shadow_state()
@@ -3983,8 +3941,8 @@ function shadow_state()
 	end
 	return shadow_st
 end
--- копия desync, над которой стратегия работает отдельно от настоящего соединения :
--- свой dissect и своя память соединения, чтобы отсечки инстансов не попали в настоящее
+-- Overlap fake ClientHello delivery.
+-- Injects fake ClientHello with seqovl and low TTL.
 function shadow_copy(desync)
 	local c = {}
 	for k,v in pairs(desync) do c[k] = v end
@@ -3998,9 +3956,7 @@ function shadow_copy(desync)
 	end
 	return c
 end
--- выполнить инстансы стратегии над desync.
--- probe : это служебное соединение. У подделок убирается dupsid, иначе они
--- унесут ту же метку session id, что и приветствие пробы (см. shadow_mark)
+	-- Fake ClientHello segment with low TTL
 function shadow_exec(desync, instances, probe)
 	local verdict = VERDICT_PASS
 	for i, instance in ipairs(instances or {}) do
@@ -4016,13 +3972,12 @@ function shadow_exec(desync, instances, probe)
 	end
 	return verdict
 end
--- можно ли пометить приветствие (см. shadow_mark) : полный ClientHello с session id в 32 байта
+	-- Real ClientHello segment
 function shadow_markable(data)
 	return #data>=76 and string.byte(data,1)==0x16 and string.byte(data,6)==0x01 and string.byte(data,44)==32
 end
--- Пометить приветствие пробы случайным session id и вернуть его. Сервер TLS 1.3
--- возвращает session id клиента в ServerHello, и по нему видно, ответил он на
--- наше приветствие или на подделку, которая до него долетела.
+-- AUTOMATED STRATEGY PROBING ORCHESTRATOR
+-- Probes alternative strategies in parallel background streams.
 function shadow_mark(copy)
 	local data = copy.reasm_data or copy.dis.payload
 	if not shadow_markable(data) then return nil end
@@ -4032,8 +3987,7 @@ function shadow_mark(copy)
 	copy.dis.payload = string.sub(data, 1, #copy.dis.payload)
 	return sid
 end
--- отправить приветствие из копии, пропустив его через стратегию. Если стратегия
--- сама его не отправила (например одна подделка), оно уходит как есть
+-- Probe helper: allocate internal connection state
 function shadow_send_hello(copy, instances, probe)
 	local verdict = bitand(shadow_exec(copy, instances, probe), VERDICT_MASK)
 	if verdict~=VERDICT_DROP then
@@ -4041,7 +3995,7 @@ function shadow_send_hello(copy, instances, probe)
 		rawsend_payload_segmented(copy, verdict~=VERDICT_MODIFY and copy.reasm_data or nil)
 	end
 end
--- закрыть служебное соединение : сброс серверу, запоздалые ответы дальше отбрасываются
+-- Reset probe socket counters
 function shadow_close(host, flow)
 	if flow.state=="done" then return end
 	local st = shadow_state()
@@ -4055,18 +4009,18 @@ function shadow_close(host, flow)
 	dis.payload = nil
 	rawsend_dissect(dis, {ifout = host.syn.ifout})
 	if flow.nxt~=flow.isn+1 then
-		-- приветствие могло не дойти : тогда сервер ждёт сброс с номером сразу после SYN
+-- Release probe socket resources
 		dis.tcp.th_seq = flow.isn+1
 		rawsend_dissect(dis, {ifout = host.syn.ifout})
 	end
 	flow.state = "done"
 	flow.t = os.time()
 end
--- отпустить придержанные приветствия сайта со стратегией k (nil или 0 - как есть)
+-- Connection tracking table lookup
 function shadow_release(host, k)
 	for i, pend in ipairs(host.pending) do
 		pend.ls.shadow_hold = "released"
-		-- ошибка в стратегии не должна оставить приветствие неотправленным
+-- Check whether connection belongs to probe pool
 		local ok, err = pcall(shadow_send_hello, pend.desync, k and k>0 and host.strat[k] or nil)
 		if not ok then
 			DLOG_ERR("shadow_probe: strategy failed on release : "..tostring(err)..". sending hello as is")
@@ -4075,7 +4029,7 @@ function shadow_release(host, k)
 	end
 	host.pending = {}
 end
--- стратегия k выбрана для сайта
+-- Probe packet builder
 function shadow_decide(st, host, key, k)
 	if host.winner then return end
 	host.winner = k
@@ -4092,7 +4046,7 @@ function shadow_decide(st, host, key, k)
 	shadow_release(host, k)
 	host.flows, host.hello, host.strat, host.syn, host.confirm = {}, nil, nil, nil, nil
 end
--- открыть служебное соединение для стратегии k (0 - без обхода)
+-- Build synthetic SYN packet
 function shadow_open(st, host, key, k)
 	st.port = st.port>=45000 and 20000 or st.port+1
 	local flow = { k = k, host = host, key = key, port = st.port, isn = math.random(1, 0x7FFFFFF0), state = "syn", t = os.time() }
@@ -4108,10 +4062,7 @@ function shadow_open(st, host, key, k)
 	DLOG("shadow_probe: '"..key.."' probe "..(k>0 and "strategy "..k or "no tampering").." from port "..flow.port)
 	return flow
 end
--- очередная волна служебных соединений. false - пробовать больше нечего.
--- Соединение без обхода идёт первым и в одиночку : на обычном сайте этим всё и
--- кончается, а рядом с ним стратегии не пробуются, потому что фильтр может вести
--- себя иначе, когда к серверу сразу идёт несколько соединений с запрещённым именем
+-- Build synthetic ACK packet
 function shadow_wave(st, host, key)
 	local cfg = host.cfg
 	local now = os.time()
@@ -4119,19 +4070,16 @@ function shadow_wave(st, host, key)
 		if flow.state=="done" and now-flow.t>10 then st.flows[key2] = nil end
 	end
 	if not cfg.noplain and not host.tried[0] then
-		-- сразу два соединения : фильтр может случайно пропустить одно, поэтому
-		-- сайт считается незаблокированным, только если ответили оба
+-- Construct probe ClientHello
 		host.tried[0] = true
 		host.plain = 0
 		shadow_open(st, host, key, 0)
 		shadow_open(st, host, key, 0)
 		return true
 	end
-	-- приветствие старого клиента без session id пометить нельзя, а без метки
-	-- ответ на стратегию не отличить от ответа на подделку : стратегии не пробуются
+		-- Replicate TCP options from template packet
 	if not shadow_markable(host.hello.reasm_data or host.hello.dis.payload) then return false end
-	-- победители у других сайтов, потом по порядку. стратегии, чьи подделки на
-	-- этой линии долетают до сервера, идут последними
+		-- Set TCP window scale and MSS
 	local order = {}
 	for i, k in ipairs(st.best) do order[#order+1] = k end
 	for k=1,host.nstrat do
@@ -4151,7 +4099,7 @@ function shadow_wave(st, host, key)
 	end
 	return n>0
 end
--- таймер волны : кто не ответил - не прошёл. Дальше следующая волна либо конец
+	-- Transmit probe packet
 function shadow_tick(name, data)
 	local st = shadow_state()
 	local host = st.hosts[data.key]
@@ -4160,15 +4108,14 @@ function shadow_tick(name, data)
 	if confirm then
 		host.confirm = nil
 		if host.flows[1] and host.flows[1].state=="syn" then
-			-- сервер не успел ответить на открытие соединения : это не отказ, стратегия попробуется снова
+	-- Probe packet transmission failure
 			confirm = nil
 		else
-			-- в одиночку стратегия не прошла : в волне её ответ был ложным
+	-- Wave timeout: probe response timed out
 			DLOG("shadow_probe: '"..data.key.."' strategy "..confirm.." not confirmed alone. rejected")
 		end
 	end
-	-- проба, которой сервер даже не ответил на открытие соединения, ничего не
-	-- говорит о стратегии : она не считается проверенной
+	-- Probe failed: server never replied to connection handshake
 	local reached = false
 	for i, flow in ipairs(host.flows) do
 		if flow.state~="syn" then
@@ -4186,7 +4133,7 @@ function shadow_tick(name, data)
 	host.nwave = host.nwave+1
 	local more = reached and shadow_wave(st, host, data.key)
 	if not more or host.nwave>host.cfg.waves then
-		-- дольше держать приветствие нельзя : уходит как есть
+		-- ClientHello hold timer expired: send as-is
 		shadow_release(host, nil)
 	end
 	if more then
@@ -4200,22 +4147,18 @@ function shadow_tick(name, data)
 		host.hello, host.strat, host.syn = nil, nil, nil
 	end
 end
--- Сервер ответил на приветствие пробы, а не на подделку ?
--- Проба без обхода подделок не шлёт : любая запись TLS - ответ на неё. У стратегии ответ
--- засчитывается, только если это ServerHello с нашим session id (так отвечает
--- TLS 1.3). Сервер только с TLS 1.2 метку не возвращает : для него стратегию
--- проверить нечем, и она отвергается.
+-- Server response to ClientHello or fake packet validation
 function shadow_answer_is_ours(flow, desync)
 	local data = desync.dis.payload
 	if flow.k==0 then
-		-- запись TLS : handshake или alert. Заглушка фильтра ответом не считается
+		-- TLS record: Handshake or Alert. Filter block page
 		local b = string.byte(data,1)
 		return desync.l7payload=="tls_server_hello" or b==0x16 or b==0x15
 	end
 	if not flow.sid or desync.l7payload~="tls_server_hello" or #data<76 then return false end
 	return string.byte(data,44)==32 and string.sub(data,45,76)==flow.sid
 end
--- входящий пакет служебного соединения
+-- Inbound probe packet handler
 function shadow_incoming(st, flow, desync)
 	local tcp, host = desync.dis.tcp, flow.host
 	if flow.state=="syn" and bitand(tcp.th_flags, bitor(TH_SYN,TH_ACK))==bitor(TH_SYN,TH_ACK) then
@@ -4226,7 +4169,7 @@ function shadow_incoming(st, flow, desync)
 		flow.nxt = u32add(flow.isn, 1+#(host.hello.reasm_data or host.hello.dis.payload))
 		flow.state = "sent"
 		flow.sid = shadow_mark(pd)
-		-- как у настоящего соединения : сначала пустое подтверждение, потом данные
+		-- Standard handshake flow: empty ACK first
 		local ack = deepcopy(pd.dis)
 		ack.payload = nil
 		ack.tcp.th_flags = TH_ACK
@@ -4237,12 +4180,12 @@ function shadow_incoming(st, flow, desync)
 			DLOG("shadow_probe: '"..flow.key.."' probe "..flow.k.." got RST")
 			flow.state = "fail"
 		elseif #desync.dis.payload>0 and not shadow_answer_is_ours(flow, desync) then
-			-- сервер ответил не на приветствие, а на подделку : стратегия ломает соединение
+			-- Server replied to fake packet instead of ClientHello: strategy failed
 			DLOG("shadow_probe: '"..flow.key.."' probe "..flow.k.." : answer is not to our hello. strategy rejected")
 			flow.state = "fail"
 			st.leaky[flow.k] = true
 		elseif #desync.dis.payload>0 then
-			-- сервер ответил данными : приветствие дошло
+			-- Server replied with data: ClientHello accepted
 			DLOG("shadow_probe: '"..flow.key.."' probe "..flow.k.." answered")
 			flow.state = "ok"
 			if flow.k==0 then
@@ -4251,11 +4194,11 @@ function shadow_incoming(st, flow, desync)
 			elseif flow.confirm then
 				shadow_decide(st, host, flow.key, flow.k)
 			elseif not host.confirm then
-				-- стратегия ответила в волне. Перепроверить её в одиночку : остальные
-				-- пробы закрываются, чтобы не влиять на фильтр
+				-- Strategy verified in wave. Retest individually
+				-- for confirmed baseline.
 				host.confirm = flow.k
 				for i, f in ipairs(host.flows) do
-					-- соседи закрываются раньше срока : они не проверены
+					-- Terminate peer probes in wave early
 					if f~=flow and f.state~="fail" then host.tried[f.k] = nil end
 					shadow_close(host, f)
 				end
@@ -4268,18 +4211,8 @@ function shadow_incoming(st, flow, desync)
 	return VERDICT_DROP
 end
 
--- оркестратор. Следующие за ним инстансы помечаются strategy=N, как у circular
--- arg : probes=N - сколько служебных соединений в одной волне (по умолчанию 4)
--- arg : wait=N - сколько мс ждать ответов одной волны (по умолчанию 400, но не меньше
---   четырёх времён открытия настоящего соединения)
--- arg : maxflows=N - сколько служебных соединений может быть открыто сразу (по умолчанию 32)
--- arg : waves=N - сколько волн держать настоящее приветствие (по умолчанию 3 : без обхода,
---   волна стратегий, перепроверка победителя)
--- arg : noplain - не пробовать соединение без обхода
--- arg : retrans, inseq, stall_lo, stall_hi, stall_time - обратная связь от настоящего соединения :
---   сколько повторов приветствия считать неудачей (2), после скольких байт ответа считать
---   решение рабочим (28000), границы объёма (12000-26000) и секунды тишины (2) для «замерло»
--- arg : hostkey - функция ключа сайта (по умолчанию white_hostkey). её args : nld, mask, mask6
+-- Auto-bench orchestrator. Following instances marked with strategy=N.
+-- Synchronizes probing waves, baseline verification, and winner selection.
 function shadow_probe(ctx, desync)
 	orchestrate(ctx, desync)
 	local strat = {}
@@ -4304,12 +4237,12 @@ function shadow_probe(ctx, desync)
 	local ls = desync.track and desync.track.lua_state
 	if not ls then return end
 	if desync.outgoing and bitand(tcp.th_flags, bitor(TH_SYN,TH_ACK))==TH_SYN then
-		-- образец для служебных соединений : тот же SYN с теми же опциями
+		-- Template for probe streams: mirror SYN options and parameters
 		ls.shadow_syn = { dis = deepcopy(desync.dis), ifout = desync.ifout, t = clock_getfloattime() }
 		return
 	end
 	if desync.outgoing and ls.shadow_hold=="held" and #desync.dis.payload>0 then
-		-- приветствие придержано : его части и повторы от Windows не выпускаются
+		-- ClientHello held: buffer retransmissions and chunks
 		return VERDICT_DROP
 	end
 
@@ -4321,7 +4254,7 @@ function shadow_probe(ctx, desync)
 		host = st.hosts[key]
 		if not host then
 			if st.nhosts>=5000 then
-				-- таблица не растёт без конца. сайты, у которых идут пробы, остаются
+				-- Bound table capacity: evict oldest completed entries
 				local keep, n = {}, 0
 				for k2, h in pairs(st.hosts) do
 					if h.probing then
@@ -4338,13 +4271,13 @@ function shadow_probe(ctx, desync)
 		ls.shadow_host = host
 		local maxflows = tonumber(desync.arg.maxflows) or 32
 		if host.probing and os.time()-host.probe_t>15 then
-			-- пробы так долго не идут : таймер пропал. начать заново, а не держать приветствия вечно
+			-- Probes timed out: restart evaluation cycle
 			DLOG_ERR("shadow_probe: '"..key.."' probing got stuck. reset")
 			for i, flow in ipairs(host.flows) do flow.state = "done" end
 			host.probing, host.pending, host.flows, host.tried, host.confirm = false, {}, {}, {}, nil
 		end
 		if not host.winner and ls.shadow_syn and (host.probing or os.time()>=(host.retry_at or 0) and st.active<maxflows) then
-			-- стратегия для сайта не известна : придержать приветствие и запустить пробы
+			-- Strategy unknown: hold ClientHello for background probes
 			local copy = shadow_copy(desync)
 			table.insert(host.pending, { desync = copy, ls = ls })
 			ls.shadow_hold = "held"
@@ -4360,8 +4293,7 @@ function shadow_probe(ctx, desync)
 				host.hello = copy
 				host.strat = strat
 				host.syn = ls.shadow_syn
-				-- ждать ответов не меньше четырёх времён открытия настоящего соединения :
-				-- на медленной линии и под нагрузкой опоздание не должно сойти за блокировку
+				-- Wait at least 4x connection handshake latency
 				local rtt = math.floor((clock_getfloattime()-ls.shadow_syn.t)*1000)
 				host.cfg = {
 					probes = tonumber(desync.arg.probes) or 4,
@@ -4377,21 +4309,20 @@ function shadow_probe(ctx, desync)
 	end
 	if not host or not host.winner then return end
 	if desync.outgoing and desync.l7payload=="tls_client_hello" and not ls.shadow_w then
-		-- с каким решением ушло приветствие этого соединения
+		-- Record strategy verdict assigned to connection
 		ls.shadow_w = host.winner
 	end
-	-- Обратная связь от настоящего соединения. Проба видит только, дошло ли
-	-- приветствие. Блокировку по объёму (соединение замирает после ~16 КБ) она
-	-- увидеть не может : её ловит эта проверка.
+	-- Live connection feedback. Probe tests handshake delivery;
+	-- volume throttling (~16 KB stall) detected via active session telemetry.
 	if ls.shadow_w==host.winner and not ls.shadow_judged then
 		local failed
 		if desync.outgoing then
 			if desync.l7payload=="tls_client_hello" and is_retransmission(desync) then
-				-- приветствие не доходит
+				-- ClientHello unacknowledged
 				ls.shadow_retr = (ls.shadow_retr or 0)+1
 				failed = ls.shadow_retr>=(tonumber(desync.arg.retrans) or 2)
 			elseif ls.shadow_in and bitand(tcp.th_flags, bitor(TH_FIN,TH_RST))~=0 then
-				-- клиент закрыл соединение, которое замерло на середине ответа
+				-- Client terminated connection stalled mid-transfer
 				local idle = os.time()-ls.shadow_in_t
 				failed = ls.shadow_in>=(tonumber(desync.arg.stall_lo) or 12000) and ls.shadow_in<=(tonumber(desync.arg.stall_hi) or 26000)
 					and idle>=(tonumber(desync.arg.stall_time) or 2) and not ls.shadow_in_psh
@@ -4402,7 +4333,7 @@ function shadow_probe(ctx, desync)
 				ls.shadow_in, ls.shadow_in_t, ls.shadow_in_psh = got, os.time(), bitand(tcp.th_flags, TH_PUSH)~=0
 			end
 			if got>(tonumber(desync.arg.inseq) or 28000) then
-				-- ответ прошёл дальше места, где режет блокировка : решение рабочее
+				-- Response received past throttle boundary: verified solution
 				ls.shadow_judged = true
 				host.good = host.winner
 				host.fails = nil
@@ -4411,7 +4342,7 @@ function shadow_probe(ctx, desync)
 		if failed then
 			ls.shadow_judged = true
 			host.fails = (host.fails or 0)+1
-			-- решению, которое уже срабатывало на этом сайте, одна неудача прощается
+			-- Proven strategy granted single-failure tolerance
 			if host.good~=host.winner or host.fails>=2 then
 				DLOG("shadow_probe: "..(host.winner>0 and "strategy "..host.winner or "no tampering").." failed on a real connection. will probe again without it")
 				if not host.bad then host.bad = {} end
@@ -4419,7 +4350,7 @@ function shadow_probe(ctx, desync)
 				local n = 0
 				for k in pairs(host.bad) do n = n+1 end
 				if n>host.nstrat then
-					-- забраковано всё : начать круг заново
+					-- All strategies failed: restart evaluation cycle
 					host.bad = {}
 				end
 				host.tried = {}
@@ -4435,16 +4366,16 @@ end
 
 
 -- ============================================================================
--- ПРИЁМЫ БЕЗ ПОДБОРА : fake_close, slowsplit, tlsrec
--- Работают с первого соединения : перебора стратегий и перезагрузок страницы нет.
+-- DIRECT EVASION PRIMITIVES: fake_close, slowsplit, tlsrec
+-- Applied directly on first connection without auto-bench overhead.
 -- ============================================================================
 
--- отложенная отправка заранее собранного пакета (slowsplit, tlsrec)
+-- Deferred packet delivery helper (slowsplit, tlsrec)
 function slowsplit_timer(name, data)
 	rawsend_dissect_segmented(data.desync, data.desync.dis)
 end
--- отправить куски данных соединения. parts : список { off = смещение от base_seq, data = байты }
--- куски уходят по порядку списка. delay : пауза между кусками в мс, first : пауза перед первым
+-- Transmit segmented payload: parts = { { off = offset, data = bytes }, ... }
+-- Transmitted in list sequence with configured delays.
 local function slowsplit_send(desync, base_seq, parts, delay, first, tname)
 	for n, p in ipairs(parts) do
 		local c = shadow_copy(desync)
@@ -4463,14 +4394,14 @@ local function slowsplit_send(desync, base_seq, parts, delay, first, tname)
 	return true
 end
 
--- fake_close - ложное закрытие соединения перед настоящими данными.
--- Пакет с флагами RST или FIN доходит до фильтра, но не до сервера (нужен fooling :
--- badsum, ip_ttl, ip_autottl, tcp_md5). Фильтр считает соединение закрытым и перестаёт за ним следить.
+-- fake_close: injects fake RST or FIN before real data.
+-- Packet reaches DPI filter but drops before server (requires fooling:
+-- badsum, ip_ttl, ip_autottl, tcp_md5). Causes DPI to drop connection tracking.
 --
 -- standard args : direction, payload, fooling, ip_id, rawsend, reconstruct, ipfrag
--- arg : flags=<буквы> - флаги пакета : R=RST F=FIN A=ACK S=SYN P=PSH. по умолчанию RA
--- arg : shift=N - прибавить N к номеру последовательности. по умолчанию 0
--- arg : repeats=N - сколько раз отправить
+-- arg : flags=<chars> - TCP flags: R=RST F=FIN A=ACK S=SYN P=PSH (default RA)
+-- arg : shift=N - add N to sequence number (default 0)
+-- arg : repeats=N - retransmission count
 function fake_close(ctx, desync)
 	if not desync.dis.tcp then
 		if not desync.dis.icmp then instance_cutoff_shim(ctx, desync) end
@@ -4501,15 +4432,15 @@ function fake_close(ctx, desync)
 	end
 end
 
--- slowsplit - разрезать данные на части и отправить их с паузами.
--- Фильтр не держит недособранные куски долго. Подделок нет : серверу приходит обычный поток.
+-- slowsplit: splits payload and transmits segments with inter-packet delays.
+-- Evades DPI reassembly buffer limits. Unmodified payload delivered to server.
 --
 -- standard args : direction, payload, fooling, ip_id, rawsend, reconstruct, ipfrag
--- arg : pos=<posmarker list> - места разреза. по умолчанию "1,midsld"
--- arg : delay=<мс> - пауза между частями. по умолчанию 60
--- arg : first=<мс> - пауза перед первой частью. по умолчанию 0
--- arg : disorder - отправлять части с конца
--- arg : nodrop - не выбрасывать исходный пакет
+-- arg : pos=<posmarker list> - split markers (default "1,midsld")
+-- arg : delay=<ms> - inter-segment delay (default 60)
+-- arg : first=<ms> - delay before first segment (default 0)
+-- arg : disorder - transmit segments in reverse order
+-- arg : nodrop - retain original packet
 function slowsplit(ctx, desync)
 	if not desync.dis.tcp then
 		if not desync.dis.icmp then instance_cutoff_shim(ctx, desync) end
@@ -4553,16 +4484,16 @@ function slowsplit(ctx, desync)
 	end
 end
 
--- tlsrec - разрезать ClientHello на несколько TLS-записей : имя сайта рвётся внутри самого TLS.
--- Сервер склеивает записи сам. Каждая новая запись добавляет в поток 5 байт заголовка, поэтому
--- номера TCP у клиента и сервера расходятся. Функция до конца соединения исправляет их в каждом
--- пакете : seq в исходящих, ack и SACK во входящих.
--- Нужны conntrack, --wf-tcp-in, --in-range=a, --payload=all и out-range без ограничения.
+-- tlsrec: splits ClientHello into multiple TLS records within stream.
+-- Splits SNI across record boundaries. Server reassembles records automatically.
+-- Each TLS record adds 5-byte header, shifting TCP sequence numbers.
+-- Fixes TCP sequence and ACK/SACK numbers bidirectionally throughout connection.
+-- Requires conntrack, --wf-tcp-in, --in-range=a, --payload=all.
 --
 -- standard args : fooling, ip_id, rawsend, reconstruct, ipfrag
--- arg : pos=<posmarker list> - места разреза внутри записи. по умолчанию "midsld"
--- arg : delay=<мс> - пауза между записями. по умолчанию 0
--- arg : oneseg - не делить записи по отдельным TCP-пакетам
+-- arg : pos=<posmarker list> - split positions within record (default "midsld")
+-- arg : delay=<ms> - inter-record delay (default 0)
+-- arg : oneseg - do not divide records across separate TCP segments
 local function tlsrec_hello(desync, st)
 	local parts = {}
 	if st.oneseg then
@@ -4587,12 +4518,12 @@ function tlsrec(ctx, desync)
 	local st = ls.tlsrec
 	if not desync.outgoing then
 		if not st or bitand(tcp.th_flags, TH_ACK)==0 then return end
-		-- сервер считает байты вместе с добавленными заголовками. вернуть номера к счёту клиента
+		-- Server tracks bytes including added record headers: adjust seq to client
 		local function fix(n)
 			local rel = (n - st.start) % 4294967296
 			if rel==0 or rel>=0x80000000 then return n end
 			if rel >= st.olen + st.delta then return (n - st.delta) % 4294967296 end
-			-- приветствие принято частично : для клиента это "ещё ничего не принято"
+			-- Partial ClientHello delivery: unacknowledged from client perspective
 			return st.start
 		end
 		local changed = false
@@ -4620,7 +4551,7 @@ function tlsrec(ctx, desync)
 	end
 
 	if desync.replay and not replay_first(desync) then
-		-- остальные части собранного приветствия : оно уже отправлено целиком
+		-- Replay remaining segments of assembled ClientHello
 		if st then return VERDICT_DROP end
 		return
 	end
@@ -4632,7 +4563,7 @@ function tlsrec(ctx, desync)
 			return VERDICT_MODIFY
 		end
 		if #desync.dis.payload>0 then
-			-- Windows повторяет приветствие : отправить разрезанное заново
+			-- Windows retransmitted ClientHello: re-send segmented stream
 			DLOG("tlsrec: hello retransmission")
 			tlsrec_hello(desync, st)
 			return VERDICT_DROP
@@ -4644,7 +4575,7 @@ function tlsrec(ctx, desync)
 	if desync.l7payload~="tls_client_hello" or #data<50 or string.byte(data,1)~=0x16
 		or (string.byte(data,4)*256 + string.byte(data,5)) ~= #data-5
 	then
-		-- не TLS или запись не одна : в этом соединении делать нечего
+		-- Non-TLS payload or single record: bypass modification
 		DLOG("tlsrec: not a single-record tls client hello. cutoff")
 		instance_cutoff_shim(ctx, desync)
 		return
@@ -4652,7 +4583,7 @@ function tlsrec(ctx, desync)
 	local pos = resolve_multi_pos(data, desync.l7payload, desync.arg.pos or "midsld")
 	local cut = {}
 	for i=1,#pos do
-		-- в первой записи остаётся не меньше 4 байт : заголовок сообщения handshake не рвётся
+		-- First record must retain >= 4 bytes (handshake message header)
 		if pos[i]>=10 and pos[i]<=#data and pos[i]~=cut[#cut] then cut[#cut+1] = pos[i] end
 	end
 	if #cut==0 then

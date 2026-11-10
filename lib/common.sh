@@ -33,16 +33,16 @@ LISTS_PENDING_DIR="$LISTS_DIR/.pending"
 HOME_FILE="$CONFDIR/home_wifi.list"
 HOME_PAUSED_FILE="$STATE_DIR/home_paused"      # paused by home network; holds SSID
 HOME_OVERRIDE_FILE="$STATE_DIR/home_override"  # user re-enabled on this network
-SMART_DIR="$CONFDIR/smart"                     # умный режим: выученное по сетям (<сеть>.tsv)
-SMART_NET_FILE="$STATE_DIR/smart_net"          # id текущей сети для умного режима или offline
-SMART_NET_LAST="$STATE_DIR/smart_net_last"     # последняя настоящая сеть (без offline)
-IDLE_FILE="$STATE_DIR/idle"                    # спячка при отсутствии трафика
+SMART_DIR="$CONFDIR/smart"                     # smart mode: network training (<net>.tsv)
+SMART_NET_FILE="$STATE_DIR/smart_net"          # current network ID or offline
+SMART_NET_LAST="$STATE_DIR/smart_net_last"     # last real network ID (excluding offline)
+IDLE_FILE="$STATE_DIR/idle"                    # sleep when traffic is idle
 SMART_LEARN_FILE="$STATE_DIR/smart_learn"      # background learning state
 SMART_LEARN_EVERY=120                          # seconds between learning attempts
 SMART_TURBO_FILE="$STATE_DIR/smart_turbo"      # fast learning expiration
 SMART_TURBO_EVERY=15
-SK_PIDFILE="$STATE_DIR/smartkill.pid"          # обрыв застрявших соединений умного режима
-SMART_KILL_FILE="$STATE_DIR/smart_kill"        # их пишет оркестратор: «4|6 адрес локальный-порт»
+SK_PIDFILE="$STATE_DIR/smartkill.pid"          # smart mode stuck connection reset
+SMART_KILL_FILE="$STATE_DIR/smart_kill"        # written by orchestrator: "4|6 ip local-port"
 
 # VPN pause: bypass pauses while a VPN interface is active (VPN_PAUSE=1);
 # the reason is recorded as @vpn inside HOME_PAUSED_FILE
@@ -61,13 +61,13 @@ IPT_GROUP_QOUT="nfqws_qout"
 IPT_GROUP_QIN="nfqws_qin" # like QOUT, for incoming when connbytes is missing
 IPT_GROUP_APP="nfqws_app"
 IPT_GROUP_FWD="nfqws_fwd"
-IPT_GROUP_MQ="nfqws_mquic"     # filter: мгновенный отказ QUIC к Meta (META_QUIC_REJECT)
+IPT_GROUP_MQ="nfqws_mquic"     # filter: reject Meta QUIC immediately (META_QUIC_REJECT)
 
-# Сети Meta (Instagram, Facebook, WhatsApp): AS32934
+# Meta networks (Instagram, Facebook, WhatsApp): AS32934
 META_NET4="157.240.0.0/16 31.13.24.0/21 31.13.64.0/18 57.144.0.0/14 163.70.128.0/17 129.134.0.0/16 69.171.224.0/19 173.252.64.0/18 179.60.192.0/22 185.60.216.0/22 66.220.144.0/20 69.63.176.0/20 102.132.96.0/20 204.15.20.0/22 45.64.40.0/22"
 META_NET6="2a03:2880::/32"
 
-# Сети Telegram: CIDR диапазоны мессенджера для обхода звонков
+# Telegram networks: CIDR ranges for calls bypass
 TG_NET4="91.105.192.0/23 91.108.4.0/22 91.108.8.0/22 91.108.12.0/22 91.108.16.0/22 91.108.20.0/22 91.108.56.0/22 95.161.64.0/20 149.154.160.0/20 185.76.151.0/24"
 TG_NET6="2001:67c:4e8::/48 2001:b28:f23c::/48 2001:b28:f23d::/48 2001:b28:f23f::/48 2a0a:f280::/32"
 
@@ -307,9 +307,8 @@ our_pids() {
   done
 }
 
-# Список должен кончаться переводом строки: nfqws2 дописывает выученные домены
-# в auto.list как «домен\n», и без перевода в конце новый домен склеивается с
-# последней строкой («example1.comexample2.com»)
+# Lists must end with a newline: nfqws2 appends learned domains as "domain\n",
+# preventing line joining if the trailing newline was missing.
 ensure_eol() {
   [ -s "$1" ] && [ -n "$(tail -c 1 "$1")" ] && printf '\n' >> "$1"
   return 0
@@ -539,7 +538,7 @@ app_rules() {
   return 0
 }
 
-# Профиль звонков с подставленными сетями Meta и Telegram
+# Calls bypass profile with Meta and Telegram networks interpolated
 calls_args() {
   local m t
   m=$(printf '%s' "$META_NET4 $META_NET6" | tr ' ' ',')
@@ -547,10 +546,9 @@ calls_args() {
   norm_args "$(sed -e "s#@META@#$m#g" -e "s#@TG@#$t#g" "$MODDIR/defaults/calls-bypass.conf")"
 }
 
-# Добавить порты или диапазоны (a:b) в список для iptables. То, что новый
-# диапазон покрывает целиком, из списка уходит: multiport берёт не больше 15
-# портов (диапазон — за два), и лишние записи переполнили бы правило.
-port_list_add() { # <список> <порт|a:b>...
+# Add ports or ranges (a:b) to iptables list. Redundant entries covered by a
+# new range are dropped (multiport max 15 ports; ranges count as 2).
+port_list_add() { # <list> <port|a:b>...
   local l="$1"; shift
   printf '%s\n' "$@" | awk -v l="$l" '
     function lo(x) { return x ~ /:/ ? substr(x, 1, index(x, ":") - 1) + 0 : x + 0 }
@@ -605,7 +603,7 @@ _startup_args() {
   fi
 
   args="$args $base"
-  # Обход звонков — ставится перед стратегией
+  # Calls bypass profile placed before main strategy
   if [ "$CALLS_BYPASS" = "1" ] && [ -f "$MODDIR/defaults/calls-bypass.conf" ]; then
     args="$args --blob=calls_stun:@$BLOBS_DIR/stun.bin --blob=calls_tls:@$BLOBS_DIR/tls_clienthello.bin $(calls_args) --new"
   fi
@@ -1609,9 +1607,8 @@ _firewall_start() {
     _fw_iface_rules "$CMD" "" ""
   fi
 
-  # Переприменение без stop (смена сети, home_check, net_recheck) копило эти
-  # правила: firewall_stop их дренирует, restore-путь защищён проверкой -C, а
-  # здесь вставка шла поверх прежней. Сначала снять всё, что уже стоит.
+  # Drain existing NAT fix rules before inserting to prevent duplicates on
+  # reload without stop (network change, home_check, net_recheck).
   while $CMD -w -t mangle -D POSTROUTING -m mark --mark $MARK_PROCESSED -j CONNMARK --set-xmark $MARK_RENAT 2>/dev/null; do :; done
   while $CMD -w -t mangle -D POSTROUTING -m mark --mark $MARK_PROCESSED -j MARK --set-xmark 0x0/0x40000000 2>/dev/null; do :; done
 
@@ -1713,13 +1710,10 @@ _firewall_stop() {
   return 0
 }
 
-# QUIC к Meta — сразу отказ (ICMP «порт недоступен»), а не молчаливая потеря.
-# На мобильных сетях QUIC Instagram проходит обход, но потом встаёт посреди
-# ролика, а к cdn.fbsbx.com (картинки и GIF) не проходит вовсе; на молчаливую
-# потерю приложение ждёт таймаута. Получив отказ, оно сразу идёт по TCP — как
-# за роутером, где провайдер QUIC к Meta не пропускает. Правила в таблице
-# filter (REJECT в mangle нельзя), снимаются вместе с остальными.
-_meta_quic_chain() { # <iptables|ip6tables> <сети> <reject-with>
+# Meta QUIC: immediate REJECT (ICMP port unreachable) instead of silent drop,
+# forcing apps (Instagram, Facebook) to fall back to TCP immediately. Filter
+# table is used because mangle does not support REJECT targets.
+_meta_quic_chain() { # <iptables|ip6tables> <nets> <reject-with>
   local C="$1" n
   command -v "$C" >/dev/null 2>&1 || return 0
   $C -w -t filter -N $IPT_GROUP_MQ 2>/dev/null || return 0
@@ -1894,27 +1888,25 @@ firewall_ok() {
   [ "$IPV6_ENABLED" = "0" ] || _firewall_family_ok ip6tables
 }
 
-# ── параллельный подбор стратегий: имена и уборка ─────────────────────────────
-# Подбор (bin/nfqws2-ctl) поднимает приватные экземпляры на своих очередях и
-# ставит свои цепи перед цепями службы. Уборка живёт здесь, а не в ctl: после
-# SIGKILL trap подбора не отрабатывает, а остановка службы обязана вернуть
-# чистое состояние, и повторять имена цепей и файлов слотов в двух местах
-# нельзя.
+# ── Parallel strategy bench: naming & cleanup ────────────────────────────
+# Benchmark runs private instances with dedicated queues and rules before
+# service chains. Cleanup is placed here to guarantee a clean state on stop
+# even if bench was interrupted with SIGKILL.
 BENCH_CHAIN_OUT="nfqws_bench_out"
 BENCH_CHAIN_IN="nfqws_bench_in"
 BENCH_SLOTS_MAX=4
 
-bench_slot_stop() { # <i> — экземпляр и его файлы; правила снимает раунд
+bench_slot_stop() { # <i> — stop instance and clean files
   local i="$1" pid w=0
-  # отдельной строкой: в `local i="$1" pidf="…$i…"` шел разворачивает $i до
-  # присваивания, и путь уходил бы к слоту вызывающего, а не к аргументу
+  # Separate line: in `local i="$1" pidf="...$i..."` the shell expands $i before
+  # assignment, pointing to the caller's slot instead of the argument.
   local pidf="$STATE_DIR/bench_slot.$i.pid"
   if [ -f "$pidf" ]; then
     pid=$(cat "$pidf" 2>/dev/null)
     case "$pid" in
       ''|0|*[!0-9]*) ;;
       *)
-        # PID мог достаться чужому процессу — убиваем только свой
+        # Protect against PID reuse: kill only our own instance
         if kill -0 "$pid" 2>/dev/null && pid_is_ours "$pid"; then
           kill -TERM "$pid" 2>/dev/null
           while [ "$w" -lt 10 ]; do
@@ -1946,7 +1938,7 @@ bench_chains_down() {
   return 0
 }
 
-bench_purge() { # всё, что мог оставить подбор: экземпляры слотов и их цепи
+bench_purge() { # Purge leftover slot instances and iptables chains
   local i=0
   while [ "$i" -lt "$BENCH_SLOTS_MAX" ]; do
     bench_slot_stop "$i"
@@ -1955,7 +1947,7 @@ bench_purge() { # всё, что мог оставить подбор: экзе�
   bench_chains_down
 }
 
-# 0, если после подбора осталось хоть что-то: цепь в mangle или pidfile слота.
+# Return 0 if benchmark left chains or pidfiles behind
 bench_leftovers() {
   local i=0
   iptables -w -t mangle -S "$BENCH_CHAIN_OUT" >/dev/null 2>&1 && return 0
@@ -2446,16 +2438,13 @@ merge_user_keys() { # <generated config> <settings source config>  -> stdout
 # Current SSID, rc 1 if not on Wi-Fi. cmd wifi needs Android 11; dumpsys is the fallback.
 current_ssid() {
   local out s
-  out=$(cmd wifi status </dev/null 2>/dev/null)   # без stdin: cmd иначе может ждать ввода
+  out=$(cmd wifi status </dev/null 2>/dev/null)   # no stdin: cmd can block waiting for input
   case "$out" in
     *"Wifi is "*)
-      # cmd wifi отвечает — ему и верим: нет «connected to» значит не подключено.
-      # Раньше тут откатывались к dumpsys wifi, а в нём лежит история недавних
-      # состояний: сразу после ухода из дома первой находилась старая запись о
-      # домашней сети, и пауза оставалась на мобильном интернете.
+      # If cmd wifi responds, trust it directly to avoid stale dumpsys wifi history.
       s=$(printf '%s\n' "$out" | sed -n 's/^Wifi is connected to "\(.*\)"[[:space:]]*$/\1/p' | head -n1) ;;
     *)
-      # старые Android без cmd wifi status
+      # Fallback for older Android versions without cmd wifi status
       s=$(dumpsys wifi 2>/dev/null | grep -m1 'mWifiInfo SSID: .*Supplicant state: COMPLETED' \
           | sed -e 's/.*mWifiInfo SSID: //' -e 's/, BSSID:.*//' -e 's/^"\(.*\)"$/\1/') ;;
   esac
@@ -2539,14 +2528,12 @@ active_sim_slot() {
   return 1
 }
 
-# ── Умный режим ──────────────────────────────────────────────────────────
-# Стратегия с оркестратором smart (lua/zapret-smart.lua) учится, какой вариант
-# обхода работает для сайта, и запоминает это для каждой сети отдельно. Модуль
-# говорит ей, в какой сети телефон, и есть ли сеть вообще.
+# ── Smart mode ───────────────────────────────────────────────────────────
+# Strategy using zapret-smart.lua learns which bypass variant works per site
+# and stores history per network.
 smart_active() { case "$NFQWS_BASE_ARGS" in *zapret-smart.lua*) return 0 ;; esac; return 1; }
 
-# id и подпись сети: Wi‑Fi — по SSID, мобильная — по коду оператора. Нет
-# маршрута наружу — сети нет (offline): отказы тогда не считаются
+# Network ID & label: Wi-Fi by SSID, mobile by operator code. Offline if no route.
 smart_net_id() {
   local dev ssid op name
   dev=$(ip route get 1.1.1.1 2>/dev/null | awk '{for (i = 1; i < NF; i++) if ($i == "dev") { print $(i + 1); exit }}')
@@ -2582,11 +2569,10 @@ smart_net_update() {
   local line id label
   line=$(smart_net_id); id=${line%%	*}; label=${line#*	}
   [ "$id" = "$(cat "$SMART_NET_FILE" 2>/dev/null)" ] || printf '%s\n' "$id" > "$SMART_NET_FILE"
-  # нет связи — это не сеть: профиля у неё нет, выученное остаётся за
-  # последней настоящей (SMART_NET_LAST — её показывает экран умного режима)
+  # Offline has no profile; preserve SMART_NET_LAST for WebUI.
   [ "$id" = offline ] && return 0
   [ "$id" = "$(cat "$SMART_NET_LAST" 2>/dev/null)" ] || printf '%s\n' "$id" > "$SMART_NET_LAST"
-  # подпись сети для WebUI — один раз
+  # Cache network label for WebUI once
   grep -q "^$id	" "$SMART_DIR/nets.tsv" 2>/dev/null || printf '%s\t%s\n' "$id" "$label" >> "$SMART_DIR/nets.tsv"
   return 0
 }

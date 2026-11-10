@@ -1,6 +1,6 @@
 -- z2k-fooling-ext.lua
 --
--- Extended fooling functions for anti-ТСПУ TTL handling. Plugged into the
+-- Extended fooling functions for anti-TSPU TTL handling. Plugged into the
 -- upstream apply_fooling extension point via `fool=<name>` strategy arg.
 --
 -- Loaded via --lua-init=@... AFTER zapret-lib.lua (so apply_fooling exists)
@@ -12,7 +12,7 @@
 --
 -- Rationale
 -- ---------
--- ТСПУ and similar stateful DPI systems detect fake packets by comparing
+-- TSPU and similar stateful DPI systems detect fake packets by comparing
 -- their TTL against the expected client egress TTL (usually 64 on Linux).
 -- A hardcoded `ip_ttl=8` fake looks suspicious from 50+ hops away — DPI
 -- ignores the fake, keeps inspecting the real flow, and the bypass fails.

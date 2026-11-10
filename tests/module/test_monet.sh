@@ -1,6 +1,6 @@
 #!/bin/sh
-# Цвета системы для темы WebUI (nfqws2-ctl monet-system): роли Material You у
-# Android через cmd overlay lookup, стиль и сид из theme_customization, кэш.
+# System Monet colors for WebUI (nfqws2-ctl monet-system): Material You roles
+# extracted via cmd overlay lookup, style/seed from theme_customization, and cache.
 
 HERE=$(cd "$(dirname "$0")" && pwd)
 TESTS_DIR=$(cd "$HERE/.." && pwd)
@@ -14,8 +14,8 @@ cat > "$MOCKBIN/settings" <<'X'
 [ "$1 $2 $3" = "get secure theme_customization_overlay_packages" ] && printf '%s\n' "${MOCK_THEME:-null}"
 exit 0
 X
-# cmd overlay lookup: цвет — по имени ресурса; *_fixed и тёмные — свои, а
-# error_container_light «нет» (Android до 14 — ни одного)
+# cmd overlay lookup: resolve by resource name; custom *_fixed and dark tones;
+# error_container_light missing on Android < 14
 cat > "$MOCKBIN/cmd" <<'X'
 #!/bin/sh
 echo "$*" >> "$MOCK_DIR/cmd.log"

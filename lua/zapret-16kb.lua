@@ -1,16 +1,16 @@
 --[[
 ZAPRET 16KB BLOCK BYPASS
 
-Специальные функции для обхода "16 КБ" блокировки на Cloudflare/Ростелеком.
-Идея: засыпать ТСПУ фейками с белым SNI, чтобы он думал что соединение "белое".
+Specialized routines to bypass "16 KB" blocks on Cloudflare/Rostelecom.
+Strategy: flood TSPU with white-SNI fakes so it classifies the flow as whitelisted.
 
-Использование:
+Usage:
 --lua-init=@zapret-lib.lua --lua-init=@zapret-antidpi.lua --lua-init=@zapret-16kb.lua
 --lua-desync=flood_white:blob=bin_max:count=10:badsum:pos=1,midsld
 
 ]]
 
--- Отправить один фейк с указанными опциями
+-- Send a single fake with the specified options
 local function send_one_fake(desync, payload, opts)
     local dis = deepcopy(desync.dis)
     dis.payload = payload
@@ -23,7 +23,7 @@ local function send_one_fake(desync, payload, opts)
     return rawsend_dissect(dis, opts)
 end
 
--- Создать payload с белым SNI
+-- Create payload with white SNI
 local function make_white_payload(desync)
     local white = blob(desync, desync.arg.blob or desync.arg.white_blob)
     if not white then
@@ -36,16 +36,16 @@ local function make_white_payload(desync)
 end
 
 --[[
-flood_white - засыпать ТСПУ белыми фейками перед реальным пакетом
+flood_white - flood TSPU with whitelisted fakes before the real packet
 
-Аргументы:
-- blob - TLS ClientHello с белым SNI (например bin_max с max.ru)
-- tls_mod - модификация SNI (например sni=hp.com)
-- count - количество фейков (по умолчанию 10)
-- pos - позиции разреза для реального пакета (по умолчанию 1,midsld)
-- badsum, ip_ttl, tcp_md5 и другие fooling параметры
+Arguments:
+- blob - TLS ClientHello with whitelisted SNI (e.g. bin_max with max.ru)
+- tls_mod - SNI modification (e.g. sni=hp.com)
+- count - fake packet count (default 10)
+- pos - split positions for the real packet (default 1,midsld)
+- badsum, ip_ttl, tcp_md5 and other fooling parameters
 
-Пример:
+Example:
 --lua-desync=flood_white:blob=bin_max:count=15:badsum:pos=1,midsld
 ]]
 function flood_white(ctx, desync)
@@ -67,13 +67,13 @@ function flood_white(ctx, desync)
         return
     end
 
-    -- Создаём белый payload
+    -- Create whitelisted payload
     local white = make_white_payload(desync)
     local count = tonumber(desync.arg.count) or 10
 
     DLOG("flood_white: sending "..count.." white fakes")
 
-    -- Флудим белыми фейками
+    -- Flood with white fakes
     for i = 1, count do
         local dis = deepcopy(desync.dis)
         dis.payload = white
@@ -84,7 +84,7 @@ function flood_white(ctx, desync)
         rawsend_dissect(dis, {repeats = 1})
     end
 
-    -- Теперь отправляем реальный пакет через multisplit
+    -- Send real packet via multisplit
     local data = desync.reasm_data or desync.dis.payload
     local spos = desync.arg.pos or "1,midsld"
 
@@ -119,18 +119,18 @@ function flood_white(ctx, desync)
 end
 
 --[[
-ttl_ladder - отправить фейки с возрастающим TTL
+ttl_ladder - send fakes with increasing TTL
 
-Идея: ТСПУ может быть на разных хопах. Отправляем фейки с TTL от min до max,
-чтобы хотя бы один дошёл до ТСПУ но не до сервера.
+Idea: TSPU can reside on different hops. Send fakes with TTL from min to max,
+so at least one reaches TSPU without hitting the server.
 
-Аргументы:
-- blob - TLS ClientHello с белым SNI
-- ttl_min - минимальный TTL (по умолчанию 3)
-- ttl_max - максимальный TTL (по умолчанию 12)
-- pos - позиции разреза для реального пакета
+Arguments:
+- blob - TLS ClientHello with whitelisted SNI
+- ttl_min - minimum TTL (default 3)
+- ttl_max - maximum TTL (default 12)
+- pos - split positions for the real packet
 
-Пример:
+Example:
 --lua-desync=ttl_ladder:blob=bin_max:ttl_min=4:ttl_max=10:pos=1,midsld
 ]]
 function ttl_ladder(ctx, desync)
@@ -158,7 +158,7 @@ function ttl_ladder(ctx, desync)
 
     DLOG("ttl_ladder: sending fakes with TTL "..ttl_min.."-"..ttl_max)
 
-    -- Отправляем фейки с разными TTL
+    -- Send fakes with variable TTL
     for ttl = ttl_min, ttl_max do
         local dis = deepcopy(desync.dis)
         dis.payload = white
@@ -170,7 +170,7 @@ function ttl_ladder(ctx, desync)
         rawsend_dissect(dis, {repeats = 1})
     end
 
-    -- Отправляем реальный пакет
+    -- Send real packet
     local data = desync.reasm_data or desync.dis.payload
     local spos = desync.arg.pos or "1,midsld"
     local pos = resolve_multi_pos(data, desync.l7payload, spos)
@@ -194,19 +194,19 @@ function ttl_ladder(ctx, desync)
 end
 
 --[[
-white_sandwich - "сэндвич" из белых фейков вокруг реального пакета
+white_sandwich - wrap real packet segments in whitelisted fakes
 
-Идея: отправить белые фейки ДО и ПОСЛЕ каждого сегмента реального пакета.
-ТСПУ видит: белый-белый-реальный-белый-белый и может запутаться.
+Idea: send whitelisted fakes BEFORE and AFTER each segment of the real packet.
+TSPU sees white-white-real-white-white pattern.
 
-Аргументы:
-- blob - TLS ClientHello с белым SNI
-- before - фейков до сегмента (по умолчанию 3)
-- after - фейков после сегмента (по умолчанию 3)
-- pos - позиции разреза
-- badsum, ip_ttl и другие fooling
+Arguments:
+- blob - TLS ClientHello with whitelisted SNI
+- before - fakes before segment (default 3)
+- after - fakes after segment (default 3)
+- pos - split positions
+- badsum, ip_ttl and other fooling parameters
 
-Пример:
+Example:
 --lua-desync=white_sandwich:blob=bin_max:before=5:after=2:badsum:pos=1,midsld
 ]]
 function white_sandwich(ctx, desync)
@@ -239,7 +239,7 @@ function white_sandwich(ctx, desync)
 
     DLOG("white_sandwich: before="..before..", after="..after)
 
-    -- Функция отправки фейков
+    -- Send fakes helper
     local function send_fakes(count, label)
         for i = 1, count do
             local dis = deepcopy(desync.dis)
@@ -258,10 +258,10 @@ function white_sandwich(ctx, desync)
             local pos_end = i < #pos and pos[i+1] - 1 or #data
             local part = string.sub(data, pos_start, pos_end)
 
-            -- Фейки ДО сегмента
+            -- Fakes BEFORE segment
             send_fakes(before, "before")
 
-            -- Реальный сегмент
+            -- Real segment
             if b_debug then
                 DLOG("white_sandwich: real segment "..(i+1))
             end
@@ -269,7 +269,7 @@ function white_sandwich(ctx, desync)
                 return VERDICT_PASS
             end
 
-            -- Фейки ПОСЛЕ сегмента
+            -- Fakes AFTER segment
             send_fakes(after, "after")
         end
         replay_drop_set(desync)
@@ -283,18 +283,18 @@ function white_sandwich(ctx, desync)
 end
 
 --[[
-seqovl_white - sequence overlap где overlap-часть содержит белый SNI
+seqovl_white - sequence overlap containing whitelisted SNI
 
-Идея: при seqovl первая часть пакета отправляется дважды - оригинал и с overlap.
-Если overlap содержит белый SNI, ТСПУ может принять его за белое соединение.
+Idea: with seqovl the first packet slice is sent twice (original and overlap).
+If overlap contains whitelisted SNI, TSPU may treat flow as allowed.
 
-Аргументы:
-- blob - TLS ClientHello с белым SNI (берём первые N байт)
-- ovl_size - размер overlap (по умолчанию 200)
-- pos - позиции разреза
-- badsum и другие fooling для overlap-пакета
+Arguments:
+- blob - TLS ClientHello with whitelisted SNI (takes first N bytes)
+- ovl_size - overlap size (default 200)
+- pos - split positions
+- badsum and other fooling parameters for the overlap packet
 
-Пример:
+Example:
 --lua-desync=seqovl_white:blob=bin_max:ovl_size=150:pos=1,midsld
 ]]
 function seqovl_white(ctx, desync)
@@ -320,16 +320,16 @@ function seqovl_white(ctx, desync)
     local ovl_size = tonumber(desync.arg.ovl_size) or 200
     local data = desync.reasm_data or desync.dis.payload
 
-    -- Берём первые ovl_size байт белого payload
+    -- Take first ovl_size bytes of whitelisted payload
     local white_prefix = string.sub(white, 1, ovl_size)
 
     DLOG("seqovl_white: overlap size="..ovl_size)
 
-    -- Отправляем overlap-пакет с белым содержимым
+    -- Send overlap packet with whitelisted content
     local dis_ovl = deepcopy(desync.dis)
     dis_ovl.payload = white_prefix
     if dis_ovl.tcp and desync.dis.tcp then
-        dis_ovl.tcp.th_seq = u32add(desync.dis.tcp.th_seq, -ovl_size)  -- Смещаем seq назад
+        dis_ovl.tcp.th_seq = u32add(desync.dis.tcp.th_seq, -ovl_size)  -- Shift sequence back
     end
     apply_fooling(desync, dis_ovl)
 
@@ -338,7 +338,7 @@ function seqovl_white(ctx, desync)
     end
     rawsend_dissect(dis_ovl, {repeats = 1})
 
-    -- Теперь отправляем реальный пакет с разрезом
+    -- Send real packet with split
     local spos = desync.arg.pos or "1,midsld"
     local pos = resolve_multi_pos(data, desync.l7payload, spos)
     delete_pos_1(pos)
@@ -365,5 +365,6 @@ function seqovl_white(ctx, desync)
     end
 end
 
--- Регистрация функций для использования через --lua-desync
+-- Register functions for --lua-desync
+DLOG("zapret-16kb.lua loaded: flood_white, ttl_ladder, white_sandwich, seqovl_white")
 DLOG("zapret-16kb.lua loaded: flood_white, ttl_ladder, white_sandwich, seqovl_white")

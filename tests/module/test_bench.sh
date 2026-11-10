@@ -19,9 +19,8 @@ sandbox_init
 load_common
 conf_reset
 printf 'WATCHDOG=0\n' >> "$CONFFILE"
-# Живой конфиг с нестандартным NFQWS_EXTRA_ARGS: merge_user_keys переносит только
-# стандартные $MODE_* ссылки, поэтому значение самой стратегии (см. sed ниже)
-# доходит до подбора как есть — многострочным.
+# Live config with custom NFQWS_EXTRA_ARGS: merge_user_keys preserves only
+# standard $MODE_* references, so multiline value passes to benchmark as-is.
 awk '/^NFQWS_EXTRA_ARGS=/ { print "NFQWS_EXTRA_ARGS=\"--hostlist=$LISTS_DIR/user.list\""; next } { print }' \
   "$CONFFILE" > "$CONFFILE.t" && mv "$CONFFILE.t" "$CONFFILE"
 # the helper functions run in this shell too, and they read the same globals the
@@ -35,9 +34,8 @@ for f in "$MODDIR/strategies/"*.conf; do
 done
 printf 'www.youtube.com\nx.com\n' > "$LISTS_DIR/probe_bench.list"
 
-# Стратегия с многострочным NFQWS_EXTRA_ARGS: правка в WebUI даёт такие routinely,
-# и подбор обязан измерять её, а не превращать живой nfqws2.conf в файл, который
-# не читается из-за висящей кавычки.
+# Strategy with multiline NFQWS_EXTRA_ARGS from WebUI: benchmark must measure
+# it properly without breaking quotes in nfqws2.conf.
 sed -i 's#^NFQWS_EXTRA_ARGS=.*#NFQWS_EXTRA_ARGS="$MODE_LIST\n                 --dpi-desync=split2"#' "$MODDIR/strategies/exp.conf"
 
 cat > "$MOCKBIN/curl" <<'X'
@@ -141,7 +139,7 @@ assert_eq "2" "$(bench_slot_count 400000)" "400 MB free: two slots after the 256
 assert_eq "4" "$(bench_slot_count 4000000)" "plenty of memory is capped at four"
 
 mkdir -p "$MOCK_DIR/sys/net/ipv4" "$MOCK_DIR/net"
-# таб, как в настоящем /proc/sys, а не пробел
+# Tab as in real /proc/sys, not space
 printf '32768\t60999\n' > "$MOCK_DIR/sys/net/ipv4/ip_local_port_range"
 PROC_SYS_ROOT="$MOCK_DIR/sys"; PROC_NET_ROOT="$MOCK_DIR/net"
 assert_eq "61000" "$(bench_port_base 2)" "the range starts above the kernel's ephemeral ports"
@@ -177,7 +175,7 @@ bench_chains_down
 assert_eq "" "$(find "$MOCK_IPT_STORE" -name 'nfqws_bench_*' -print 2>/dev/null)" "and the v4 chains are removed again"
 unset MOCK_IP6_FAIL
 
-# ── подстановка режима ────────────────────────────────────────────────────────
+# ── mode substitution ─────────────────────────────────────────────────────────
 section "bench: MODE_ALL substitution keeps the config readable"
 
 printf 'MODE_LIST="--hostlist=a.list"\nNFQWS_EXTRA_ARGS="$MODE_LIST\n                 --dpi-desync=split2"\nTCP_PORTS=443\n' > "$SANDBOX/ml.conf"
@@ -192,14 +190,13 @@ assert_rc 0 "$?" "the result sources cleanly — the old sed left an unmatched q
 
 printf 'A=1\nNFQWS_EXTRA_ARGS="$MODE_AUTO"\nB=2\n' > "$SANDBOX/one.conf"
 bench_set_mode_all "$SANDBOX/one.conf" "$SANDBOX/one.out"
-# одинарные кавычки: $MODE_ALL должен записать сам конфиг, а не раскрывать
-# переменную тестовой оболочки
+# Single quotes: $MODE_ALL written literally into config rather than expanded by shell
 expected_one='A=1
 NFQWS_EXTRA_ARGS="$MODE_ALL"
 B=2'
 assert_eq "$expected_one" "$(cat "$SANDBOX/one.out")" "a single-line value is replaced in place"
 
-# ── как выбираются перепроверяемые ────────────────────────────────────────────
+# ── selection of candidates for re-check ──────────────────────────────────────
 section "bench: leaders to re-verify and the final choice among them"
 
 BENCH_STATS="$SANDBOX/stats.unit.tmp"
@@ -359,13 +356,11 @@ bench_parallel_possible curl "$MOCKBIN/curl" >/dev/null 2>&1
 assert_rc 1 "$?" "and the parallel path is refused for it"
 assert_eq "" "$(find "$MOCK_IPT_STORE" -name 'nfqws_bench_*' -print 2>/dev/null)" "no bench chains were created"
 
-# ── съехавший переход ─────────────────────────────────────────────────────────
+# ── displaced jump rule ───────────────────────────────────────────────────────
 section "bench: a round whose jump was displaced is re-recorded, not trusted"
 
-# Служба переприменяет правила посреди раунда (смена сети, watchdog) — её jump
-# встаёт перед нашим, и пробы меряют живую службу, а не стратегию слота.
-# Разбор ведётся в самом ctl (probe_attempt живёт там), поэтому гоняем настоящий
-# подбор, но с одной стратегией и одной хост-строкой.
+# Service re-applies firewall rules mid-round (network change, watchdog) — its jump
+# precedes bench jump, biasing measurements. probe_attempt in ctl verifies rule ordering.
 for f in alt exp; do rm -f "$MODDIR/strategies/$f.conf"; done
 printf 'x.com\n' > "$LISTS_DIR/probe_bench.list"
 cat > "$MOCKBIN/curl" <<'X'

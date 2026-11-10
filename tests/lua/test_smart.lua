@@ -1,16 +1,15 @@
--- Тест оркестратора умного режима (lua/zapret-smart.lua). Запускается внутри
--- самого nfqws2: --intercept=0 --lua-init=@zapret-lib.lua ... @test_smart.lua.
--- Пакеты — поддельные таблицы desync, часы — подменные, каталог — из
--- SMART_TEST_HOME, таблица TCP-соединений — свой файл вместо /proc/net/tcp.
+-- Tests for the smart mode orchestrator (lua/zapret-smart.lua). Runs inside
+-- nfqws2 or standalone LuaJIT. Uses mocked desync tables, simulated clock,
+-- SMART_TEST_HOME directory, and mock TCP connection table instead of /proc/net/tcp.
 
 local HOME = SMART_TEST_HOME
 local clock = 1000000
 os.time = function() return clock end
--- фильтры диапазонов и отсечки здесь не проверяем; таймер наблюдателя зовём сами
+-- range filters and cutoffs not tested here; watcher timer invoked manually
 pos_check_range = function() return true end
 cutoff_shim_check = function() return false end
 timer_set = nil
--- адрес сервера у всех поддельных соединений — один (как в tcpline), если не задан
+-- mock server address (matches tcpline) if unspecified
 host_ip = function(d) return d.track.ip or "104.244.42.1" end
 SMART.proc = { HOME .. "/tcp" }
 
@@ -27,7 +26,7 @@ local function readall(p) local f = io.open(p, "r"); if not f then return nil en
 local called = {}
 function tf(ctx, desync) called[#called + 1] = desync.arg.strategy or "always"; return VERDICT_PASS end
 
-local N = 4 -- варианты 1..4, 4 — «без обхода»
+local N = 4 -- strategies 1..4, 4 is pass-through
 local function plan()
 	local p = {}
 	for s = 1, N do
@@ -43,7 +42,7 @@ local function conn(host)
 	return { hostname = host, lua_state = {}, port = port,
 		pos = { direct = { pcounter = 1, tcp = { rseq = 1, pos = 100, uppos_prev = 0 } }, reverse = {} } }
 end
--- один пакет соединения через smart; вернёт вариант, что применился
+-- process single packet via smart orchestrator; returns active strategy index
 local function packet(track, opts)
 	opts = opts or {}
 	called = {}
@@ -66,9 +65,9 @@ local function failconn(host, slot) local c = conn(host); local s = packet(c, { 
 local function okconn(host, slot) local c = conn(host); local s = packet(c, { slot = slot }); packet(c, { incoming = true, seq = 18000, slot = slot }); return s, c end
 local function rec(host, slot) return SMART.db[(slot or "tls") .. "|" .. host] end
 local function later(s) clock = clock + (s or 20) end
--- несколько неудачных соединений подряд, по одному раз в 20 секунд
+-- simulate multiple consecutive failed connections spaced 20s apart
 local function fails(host, k, slot) for i = 1, k or 3 do later(); failconn(host, slot) end end
--- строка /proc/net/tcp: соединение с локальным портом lp, застрявшее (переотправки) или нет
+-- format /proc/net/tcp line: connection on local port lp, stuck (retrans) or established
 local function tcpline(lp, stuck, uid)
 	return string.format("   1: 0200000A:%04X 012AF468:01BB 01 00000000:00000000 %s %08X  %d 0 0 1 0000000000000000 20 4 30 10 -1",
 		lp, stuck and "01:00000040" or "00:00000000", stuck and 5 or 0, uid or 10123)
@@ -114,7 +113,7 @@ for _, h in ipairs({ "c.example", "d.example", "e.example" }) do
 	later(); okconn(h)
 end
 for _, h in ipairs({ "c.example", "d.example", "e.example", "b.example" }) do later(); okconn(h) end
--- у варианта 1 тоже удачи (a, g), но и ошибки у c, d, e, b
+-- variant 1 has successes (a, g), but also errors on c, d, e, b
 check(okconn("new.example") == nb, "a brand new site starts on the network's best")
 
 section("the no-bypass variant is never the best and is tried last")
@@ -130,7 +129,7 @@ check(rec("r.example").cur ~= N, "a failing site does not jump to no-bypass firs
 section("a site that fails everywhere keeps trying, but slowly and without loops")
 later(400)
 local h = "flaky.example"
-okconn(h)   -- однажды он открылся: значит, дело в DPI, и перебор нужен
+okconn(h)   -- opened once: DPI block suspected, searching needed
 local seenv, switches, last = {}, 0, nil
 for i = 1, 24 do
 	okconn("alive" .. (i % 5) .. ".example")
@@ -148,7 +147,7 @@ check(clock - rec(h).sw < 65, "and it never freezes: errors still move it on")
 
 section("a site that opened once but fails on almost every variant pauses the search")
 later(400)
--- набор из 12 вариантов (как базовый TLS): правило — от восьми
+-- 12-variant plan (like base TLS): rule requires >= 8
 local function plan12()
 	local p = {}
 	for v = 1, 12 do p[#p + 1] = { func = "tf", func_instance = "tf_" .. v, arg = { strategy = tostring(v) }, payload_filter = "all", range = {} } end
@@ -467,7 +466,7 @@ tcptable({})
 section("frozen after the first answer: the next request on the connection is resent with no reply")
 later(400); os.remove(HOME .. "/state/smart_kill")
 local fz = "frozen.example"
--- короткий ответ API (1,4 КБ): сервер ответил, его пакеты ещё видны
+-- short API response (1.4 KB): server replied, packets still visible
 local function apiconn(h)
 	local c = conn(h); packet(c); packet(c, { incoming = true, seq = 1, len = 1400 }); return c
 end
@@ -487,13 +486,13 @@ packet(fc2, { seq = 101, len = 325 }); packet(fc2, { seq = 101, len = 325 }); pa
 packet(fc2, { incoming = true, seq = 1401, len = 200 })
 packet(fc2, { seq = 101, len = 325 })
 check((rec(fz).err[fv] or 0) == 1, "a reply from the server between resends: not frozen")
--- как у видео на мобильной сети: потери, повторы разных сегментов, сервер подтверждает
+-- like cellular video streaming: packet loss, retransmits of different segments, server ACKs
 later(20)
 local fc3 = apiconn(fz)
 packet(fc3, { seq = 101, len = 64 }); packet(fc3, { seq = 165, len = 1024 }); packet(fc3, { seq = 1189, len = 546 })
 packet(fc3, { seq = 1189, len = 546 }); packet(fc3, { seq = 101, len = 64 }); packet(fc3, { seq = 1189, len = 546 })
 check((rec(fz).err[fv] or 0) == 1, "resends of different segments are ordinary losses, not a freeze")
--- большой ответ: дальше 19 КБ пакеты сервера не видны, обнулить счёт нечем
+-- large response: beyond 19 KB server packets invisible, cannot reset counters
 later(20)
 local fc4 = conn(fz); packet(fc4); packet(fc4, { incoming = true, seq = 18000, len = 1400 })
 local e4 = rec(fz).err[fv] or 0
@@ -516,7 +515,7 @@ tcptable({})
 
 section("tuning: a variant that worked and broke is first tried with another parameter")
 later(400)
--- набор с настоящими именами функций: подстраиваются только их параметры
+-- test plan with actual function names: only parameters tuned
 local got = {}
 local function rec_args(name) return function(ctx, desync) got[#got + 1] = name .. ":" .. (desync.arg.blob or "") .. ":" .. (desync.arg.repeats or "") .. ":" .. (desync.arg.tls_mod or "") .. ":" .. (desync.arg.pos or ""); return VERDICT_PASS end end
 local real_fake, real_ms = fake, multisplit
@@ -546,8 +545,7 @@ if got[1] ~= "fake:tls_google:2:rnd,dupsid,sni=www.google.com:" then diff = diff
 if got[2] ~= "multisplit::::1,midsld" then diff = diff + 1 end
 check(#got >= 2 and diff == 1, "the tuned variant runs the same blocks with one value changed (" .. table.concat(got, " | ") .. ")")
 check((rec(mh, "mt").ok[mid] or 0) == 1, "its success is its own")
--- проба отладочного замера на сайте с подстроенным вариантом: он и работает,
--- а не «без обхода» (номер подстройки больше числа вариантов профиля)
+-- test probe on tuned strategy: uses tuned variant, not pass-through
 writefile(HOME .. "/state/smart_bench", "1 1\n"); writefile(HOME .. "/state/smart_bench.0", mh .. " - " .. clock .. "\n")
 later(6); got = {}; mok(mh)
 check(#got >= 2, "a benchmark name probe on a tuned variant runs that variant, not without bypass (" .. #got .. " blocks)")
@@ -561,13 +559,13 @@ SMART.mut.mt = nil
 writefile(HOME .. "/state/smart_net", here .. "\n"); later(6); okconn("a.example")
 check(SMART.mut.mt and SMART.mut.mt[mid] and SMART.mut.mt[mid].base == 1 and #SMART.mut.mt[mid].ch == 1, "and loaded back with it")
 check(rec(mh, "mt").cur == mid, "the site is still on it")
--- другой сайт, у которого вариант 1 тоже сломался, может взять уже удачную подстройку
+-- another site breaking on variant 1 adopts proven tuning
 local mh2 = "tune2.example"
 for i = 1, 3 do later(); mok(mh2) end
-SMART.mutt.mt = clock + 3600 -- новых подстроек не делать: есть удачная
+SMART.mutt.mt = clock + 3600 -- no new tunings: proven one exists
 for i = 1, 5 do later(); mfail(mh2) end
 check(rec(mh2, "mt").cur == mid, "another site whose variant broke picks up the tuning that already helped")
--- неудачная и никем не используемая подстройка через час удаляется
+-- unused and failed tuning pruned after 1 hour
 SMART.mut.mt[999] = { base = 2, ch = { { i = 1, k = "repeats", val = "8" } }, t = clock }
 later(3700); okconn("a.example"); SMART.dirty = true; later(30); okconn("a.example")
 check(SMART.mut.mt[999] == nil and SMART.mut.mt[mid] ~= nil, "a tuning that helped nobody is removed after an hour, a good one stays")
@@ -623,7 +621,7 @@ do
 	sp(c1, { incoming = true, seq = 30000 })
 	check(SMART_STAT.ok == 2, "a decided connection is not counted again")
 	later(30); local c5 = conn("e.example"); sp(c5); sp(c5, { incoming = true, seq = 18000 })
-	later(30); sp(conn("f.example"))   -- сохраняется не чаще раза в 20 с, на следующем пакете
+	later(30); sp(conn("f.example"))   -- saved at most once per 20s, on next packet
 	local sf = readall(HOME .. "/state/strat_stat") or ""
 	check(sf:find("^alt2\t3\t2\t") ~= nil, "and saved per strategy (" .. sf:gsub("\n", " ") .. ")")
 end
@@ -632,13 +630,13 @@ section("the extended pool joins the search only when enabled")
 do
 	local function run(h)
 		local seen = {}
-		-- сайт хоть раз открылся — ошибки дальше не принимаются за «не DPI»
+		-- site opened at least once — subsequent failures not treated as "non-DPI"
 		local c0 = conn(h); packet(c0, { slot = "pool", base = 2, pass = 9 }); packet(c0, { incoming = true, seq = 18000, slot = "pool", base = 2, pass = 9 })
 		for i = 1, 10 do
 			later(); local c = conn(h); local v = packet(c, { slot = "pool", base = 2, pass = 9 })
 			seen[v or 0] = true
 			for k = 1, 3 do packet(c, { retrans = true, slot = "pool", base = 2, pass = 9 }) end
-			okconn("anchor.example")   -- связь есть: ошибки — не от сети
+			okconn("anchor.example")   -- connectivity ok: errors are not network drops
 		end
 		return seen
 	end
@@ -648,7 +646,7 @@ do
 	local s2 = run("pool2.example")
 	check(s2[3] or s2[4], "on: variants past the base set are tried too")
 	os.remove(HOME .. "/state/smart_pool"); later(6)
-	-- набор — список номеров: варианта 2 в нём нет, хотя он «внутри» диапазона
+	-- set of numbers: variant 2 excluded even though within range
 	local seen = {}
 	local c0 = conn("pool3.example"); packet(c0, { slot = "pool3", base = "1,3-4", pass = 9 }); packet(c0, { incoming = true, seq = 18000, slot = "pool3", base = "1,3-4", pass = 9 })
 	for i = 1, 10 do
@@ -663,7 +661,7 @@ end
 
 section("debug benchmark: the variant is forced and nothing is learned")
 do
-	-- замер оборвался: файлы остались — сайт на обычном обучении
+	-- benchmark aborted: files remain — site on standard learning
 	writefile(HOME .. "/state/smart_bench", "2 12345\n")
 	writefile(HOME .. "/state/smart_bench.1", "bench.example 0\n")
 	later(6)
@@ -699,9 +697,9 @@ section("slots are separate")
 check(okconn("b.example", "quic") == 1, "the same site in another slot starts fresh")
 
 section("a variant that just worked on the same servers is tried first by a site that never opened")
--- SoundCloud на CloudFront: API (graph.soundcloud.com) открывался на варианте,
--- а картинки и музыка (i1/al.sndcdn.com) на тех же адресах (одна /24) — свой
--- сайт без единой удачи, и перебор до этого варианта так и не дошёл
+-- SoundCloud on CloudFront: API (graph.soundcloud.com) opened on a variant,
+-- while media (i1/al.sndcdn.com) on same /24 IPs has no successes yet
+-- and hadn't searched to that variant yet
 local function ipconn(h, ip) local c = conn(h); c.ip = ip; return c end
 local function ipok(h, ip) local c = ipconn(h, ip); local v = packet(c, { slot = "cdn" }); packet(c, { incoming = true, seq = 18000, slot = "cdn" }); return v end
 local function ipfail(h, ip) local c = ipconn(h, ip); local v = packet(c, { slot = "cdn" }); for i = 1, 3 do packet(c, { retrans = true, slot = "cdn" }) end; return v end
@@ -713,10 +711,8 @@ later(); check(ipok(api, "18.165.122.48") == 3, "and opens on it")
 later(); check(ipfail(media, "18.165.122.19") == 1, "a new site on the same servers (/24) starts as any new site: the start does not change")
 later(); ipfail(media, "18.165.122.19")
 check(rec(media, "cdn").cur == 3, "but it never opened, and after two errors it goes to the variant that works on its servers (3): " .. rec(media, "cdn").cur)
--- сайт, что ещё ни разу не открылся, на смене варианта — тоже к нему, а не
--- к следующему по номеру
--- в сети лучшие — 1 и 2 (на других серверах они открывают всё), а на
--- серверах SoundCloud работает только 3
+-- newly failing site switches to that proven variant on same /24
+-- rather than strictly next in sequence
 for k = 1, 40 do
 	local h = "net-" .. k .. ".example"
 	later(1); packet(ipconn(h, "99.0." .. k .. ".1"), { slot = "cdn" }); rec(h, "cdn").cur = (k % 2) + 1
@@ -731,7 +727,7 @@ check(imgv == 1 or imgv == 2, "a site on other servers starts on the network's b
 later(); ipok(api, "10.1.1.9")
 later(); ipfail(img, "10.1.1.5")
 check(rec(img, "cdn").cur == 3, "after its second error it goes to the variant that just worked on its servers (3), not by the network's statistics: " .. rec(img, "cdn").cur)
--- сайт, что сам уже работал, выбирает по своей истории, как прежде
+-- site with existing successes sticks to its own history
 local own = "own-like.example"
 later(); ipok(own, "10.2.2.1"); later(); ipok(own, "10.2.2.1")
 local ownv = rec(own, "cdn").cur
@@ -740,17 +736,17 @@ later(); ipok(api, "10.2.2.7")
 check(rec(own, "cdn").cur == ownv, "a neighbour's success does not move it")
 
 section("hostfakesplit_alt: the parts go in the altorder=1 order of zapret 1")
--- начало, фейковое имя (с порчей), конец, настоящее имя; порча — только у фейка
+-- prefix, fake SNI (with fooling), suffix, real SNI; fooling only on fake
 do
 	local sent, keep = {}, { rawsend_payload_segmented, resolve_range, rawsend_opts, rawsend_opts_base, reconstruct_opts,
 		direction_check, payload_check, replay_first, replay_drop_set, direction_cutoff_opposite, genhost }
 	rawsend_payload_segmented = function(d, part, off, opts) sent[#sent + 1] = { part = part, off = off, fool = opts.fooling }; return true end
-	resolve_range = function() return { 5, 9 } end            -- имя — байты 5..9 (с 1)
+	resolve_range = function() return { 5, 9 } end            -- SNI: bytes 5..9 (1-based)
 	rawsend_opts = function() return {} end; rawsend_opts_base = function() return {} end; reconstruct_opts = function() return {} end
 	direction_check = function() return true end; payload_check = function() return true end
 	replay_first = function() return true end; replay_drop_set = function() end; direction_cutoff_opposite = function() end
 	genhost = function(n, h) return string.rep("f", n) end
-	local data = "AAAAhosthBBBB"                           -- 4 байта, имя «hosth», 4 байта
+	local data = "AAAAhosthBBBB"                           -- 4 bytes prefix, 5 bytes hosth, 4 bytes suffix
 	local v = hostfakesplit_alt(nil, { dis = { tcp = {}, payload = data }, arg = { host = "www.google.com", tcp_ts = "-600000" }, l7payload = "tls_client_hello" })
 	local order = {}
 	for _, x in ipairs(sent) do order[#order + 1] = x.part .. "@" .. x.off end

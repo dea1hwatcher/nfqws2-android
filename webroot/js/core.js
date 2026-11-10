@@ -158,8 +158,7 @@ const store = {
   set(k, v){ try { localStorage.setItem(k, v); } catch(e) {} },
   del(k){ try { localStorage.removeItem(k); } catch(e) {} }
 };
-/* Страницы прокручиваются в #scroller, а не в окне (см. base.css: корень
-   неподвижен, чтобы WebView не растягивал шапку и навигацию) */
+/* Pages scroll inside #scroller, not window (root is fixed for keyboard stability) */
 const scroller = document.getElementById('scroller');
 const scrollPos = () => scroller.scrollTop;
 const scrollToY = y => { scroller.scrollTop = y; };
@@ -360,9 +359,7 @@ async function detectSpawn(){
   spawnOK = r.code === 3 && r.out === 'nfq_a\n\nnfq_b';
 }
 const ctlCmd = a => (LANG === 'en' ? 'NFQWS_LANG=en ' : '') + 'sh ' + q(CTL) + ' ' + a.map(q).join(' ');
-/* Длинный аргумент (base64 архива или большого списка) одной командой не
-   пройдёт: предел ядра на длину аргумента ~128 КБ. Такой уходит частями
-   командой upload, а в саму команду идёт ссылка @up:<метка>. */
+/* Split long payloads (>100 KB) into chunks via ctl upload to avoid kernel E2BIG */
 const UPLOAD_CHUNK = 48000;
 async function uploadArgs(a){
   const out = [];
@@ -408,9 +405,7 @@ $('prompt-action').onclick = () => {
   if(a && a.fn) a.fn();
 };
 
-/* Системные жесты Android: полоса навигации снизу и узкие полосы
-   слева/справа («назад»). Касание оттуда — жест системы, а не нажатие на
-   то, что под пальцем. Нижняя зона — не меньше системного отступа снизу. */
+/* Ignore gestures inside system navigation and back-gesture edge zones */
 let insetProbe = null;
 function inGestureZone(x, y){
   if(!insetProbe){
@@ -422,11 +417,7 @@ function inGestureZone(x, y){
   return y > innerHeight - Math.max(32, inset + 8) || x < 24 || x > innerWidth - 24;
 }
 
-/* ── Долгое нажатие (500ms): контекстное меню или выбор ──────────────────
-   root слушает, sel выбирает элемент (без sel — сам root). Click, который
-   приходит после срабатывания, гасится на уровне документа — до onclick
-   элемента и до переключения radio в label (и до подложки открытого меню). Касание у края экрана — жест
-   системы Android, его не считаем; свернули WebView или увели экран — отмена. */
+/* ── Long press (500ms): context menu or selection. Cancel on 10px drag ── */
 let longGuard = null;
 document.addEventListener('click', e => {
   const g = longGuard;
@@ -478,8 +469,7 @@ async function withBusy(a, ms){
   try { return await ctlx(a, ms); } finally { busy(false); }
 }
 
-/* «Поделиться» файлом модуля: файлом (file:// на настоящий путь — root-
-   проводник вроде MT Manager откроет его на месте) или текстом (в чат). */
+/* Share module file via file:// (root manager) or text (clipboard/chat) */
 const CONFFILE_PATH = '/data/adb/nfqws2/nfqws2.conf';
 function shareFileMenu(anchor, path){
   openMenu(anchor, [
@@ -621,8 +611,7 @@ function renderNavBar(page){
   document.body.classList.toggle('nav-hidden', !!PAGE_META[page].child);
 }
 
-/* Прокрутка экранов: уходя, экран запоминает её; вперёд (в дочерний экран)
-   открываем с начала, а назад и по вкладкам — там, где пользователь был. */
+/* Screen scroll state: reset to top on push, restore previous scroll on pop */
 const pageScroll = {};
 function showPage(page, mode, slide){
   if(transitionCleanup) transitionCleanup();
@@ -659,11 +648,7 @@ function showPage(page, mode, slide){
   else cleanup();
 }
 
-/* ── Вкладки листаются по горизонтали, как в Telegram ─────────────────────
-   Порядок — как в нижней панели. Уходящая страница закрепляется fixed на
-   своём месте и уезжает в сторону, новая — в потоке, со своей прокруткой,
-   въезжает с другой стороны. dx — откуда начать (палец уже сдвинул пару
-   страниц), v — скорость отпускания: от неё зависит длительность доводки. */
+/* ── Horizontal tab paging with velocity catch-up ───────────────────────── */
 const TOP_PAGES = ['control', 'lists', 'logs', 'config'];
 const SLIDE_EASE = 'cubic-bezier(.2, .8, .2, 1)';
 function pageBox(el){
@@ -701,12 +686,7 @@ function slidePages(from, to, opt){
   a2.onfinish = cleanup;
 }
 
-/* Свайп влево-вправо по странице. Вертикальная прокрутка главнее: на
-   .content стоит touch-action: pan-y, и браузер сам забирает жест, который
-   начался вертикально (тогда приходит pointercancel). Горизонталь
-   захватывается при естественном движении пальца вбок, не конфликтуя с
-   вертикальной прокруткой и системными жестами. Поле в фокусе, ползунки
-   и внутренние горизонтальные списки свайп не трогает. */
+/* Horizontal swipe with vertical pan-y priority */
 const swipe = {st: 0}, pageInited = new Set(['control']);
 function swipeBlocked(t){
   if(!t || !t.closest || !t.closest('#content, #nav-bar, #app-bar') || t.closest('.no-swipe')) return true;
@@ -817,7 +797,7 @@ document.addEventListener('touchmove', e => { if(swipe.st === 2 && e.cancelable)
 document.addEventListener('pointerup', e => swipeRelease(e, false));
 document.addEventListener('pointercancel', e => swipeRelease(e, true));
 
-/* Данные экрана грузятся после того, как анимация пошла */
+/* Load page data once transition animation begins */
 function afterTransition(fn){
   if(typeof isAnimationsDisabled === 'function' && isAnimationsDisabled()){ fn(); return; }
   requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(fn, spawnOK ? 0 : 320)));
@@ -854,7 +834,7 @@ function goBack(){
   navigate(PAGE_META[currentPage].parent || lastTop);
 }
 
-/* Нажатие на вкладку засчитывается по pointerup */
+/* Commit tab selection on pointerup */
 function bindNavTap(b, go){
   let down = null, handled = 0;
   b.addEventListener('pointerdown', e => { down = {id: e.pointerId, x: e.clientX, y: e.clientY}; });
@@ -875,7 +855,7 @@ function bindNavTap(b, go){
 }
 document.querySelectorAll('.nav-dest').forEach(b => bindNavTap(b, () => navigate(b.dataset.page)));
 
-/* ── Быстрые действия: долгое нажатие на вкладку ───────────────────────── */
+/* ── Quick actions: tab long-press ─────────────────────────────────────── */
 function goThen(page, fn){
   if(currentPage === page){ fn(); return; }
   navigate(page);
@@ -938,7 +918,7 @@ function toggleDevMode(){
   });
 });
 
-/* ── Растяжение при упоре в край, как в Android 12+ ─────────────────────── */
+/* ── Android 12+ stretch overscroll effect ──────────────────────────────── */
 const stretch = {el: null, pull: 0, y: 0};
 function stretchApply(){
   const el = stretch.el, p = stretch.pull;
@@ -1060,7 +1040,7 @@ document.addEventListener('touchcancel', stretchRelease, {passive: true});
 /* elevation on scroll: surface → surface-container */
 scroller.addEventListener('scroll', () => $('app-bar').classList.toggle('scrolled', scrollPos() > 8), {passive: true});
 
-/* ── Modal bottom sheets: один scrim на все листы ──────────────────────── */
+/* ── Modal bottom sheets: single shared scrim ───────────────────────────── */
 let openSheetId = null, sheetReturnFocus = null;
 function setBackgroundInert(on){
   if(!('inert' in HTMLElement.prototype)) return;
@@ -1096,7 +1076,7 @@ function closeSheet(){
 }
 function openMonetModal(){ drawThemeUI(); openSheet('monet-modal'); }
 
-/* ── «Назад»: сначала оверлеи, потом дочерний экран, потом домой, потом выход ── */
+/* ── Back handler: overlays -> child page -> home -> exit ───────────────── */
 function handleBack(allowExit){
   if(openMenuEntry){ closeMenu(); return true; }
   if($('dialog-wrap').classList.contains('open')){ dialogResolve(false); return true; }
@@ -1116,7 +1096,7 @@ window.onBackKeyPressed = function(){
 };
 document.addEventListener('keydown', e => { if(e.key === 'Escape') handleBack(false); });
 
-/* ── Жест «Назад» через историю WebView ────────────────────────────────── */
+/* ── WebView history popstate back navigation ───────────────────────────── */
 let histDepth = (history.state && history.state.nfq) || 0, histPending = false, syncTimer = 0;
 function uiLayers(){
   let n = pageDepth(currentPage) + (PAGE_META[currentPage].child ? (lastTop !== 'control' ? 1 : 0) : (currentPage !== 'control' ? 1 : 0));
@@ -1180,7 +1160,7 @@ document.addEventListener('focusout', () => setTimeout(updateKeyboard, 60));
 (window.visualViewport || window).addEventListener('resize', updateKeyboard);
 addEventListener('orientationchange', () => { vpBase = 0; setTimeout(updateKeyboard, 300); });
 
-/* ── Bottom sheet: смахивание вниз за drag handle ───────────────────────── */
+/* ── Bottom sheet: swipe down via drag handle ───────────────────────────── */
 function sheetScrimFollow(sheet, dy){
   const sc = $('sheet-scrim');
   if(!sc) return;
@@ -1223,7 +1203,7 @@ function initSheetDrag(sheet){
 }
 document.querySelectorAll('.sheet').forEach(initSheetDrag);
 
-/* ── Лист со списком: смахивание вниз с любого места ───────────────────── */
+/* ── List sheet: pull-down dismiss from top ─────────────────────────────── */
 function initSheetSwipe(sheet){
   const list = sheet.querySelector('.sheet-scroll');
   if(!list) return;

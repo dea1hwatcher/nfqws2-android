@@ -177,19 +177,15 @@ local function acquire_lock(path)
     local lock_time = tonumber(content)
     local now = now_t()
     if not lock_time then
-      -- Пустой или нечисловой lockfile. Замок создаётся и заполняется ДВУМЯ
-      -- операциями (io.open ниже, затем lf:write), и процесс, убитый между
-      -- ними — а OOM здесь штатное явление — оставляет файл нулевой длины.
-      -- Раньше tonumber("") давал nil, условие протухания было ложным, и мы
-      -- уходили в "держит другой писатель". Навсегда: файл лежит на /opt и
-      -- переживает перезагрузку, то есть персист умирал молча и необратимо.
-      -- Незаполненный замок владельца не имеет — забираем.
+      -- Empty or non-numeric lockfile. Lock creation is two steps (io.open then lf:write);
+      -- an OOM kill between them leaves a 0-byte file. Previously tonumber("") was nil,
+      -- stale check was false, and lock was stuck forever on persistent storage.
+      -- An unpopulated lock has no owner — reclaim it.
       os.remove(lockfile)
     elseif lock_time > now + 10 then
-      -- Метка из будущего: часы уехали вперёд и потом вернулись (на Keenetic
-      -- после power-loss это обычное дело — NTP подтягивает время уже после
-      -- старта). По разнице такой замок не протухнет никогда, поэтому судим
-      -- по несуразности самой метки, а не по возрасту.
+      -- Future timestamp: clock drifted forward then back (common after power loss
+      -- before NTP sync). Difference would never expire, so detect
+      -- by checking if timestamp is in the future.
       os.remove(lockfile)
     elseif (now - lock_time) > 10 then
       os.remove(lockfile)        -- stale (>10s) → steal
@@ -277,9 +273,8 @@ local function write_state()
   for askey, hosts in pairs(merged) do
     for hostn, rec in pairs(hosts) do
       if rec and rec.strategy then
-        -- Шестая колонка приписана в хвост намеренно: парсер читает поля по
-        -- позиции, поэтому старый файл без неё читается как прежде, а старая
-        -- версия кода на новом файле просто не увидит лишнее поле.
+    -- Sixth column appended at tail: positional parser preserves backwards compatibility
+    -- with old files, while older code simply ignores the extra column.
         f:write(tostring(askey), "\t", tostring(hostn), "\t",
                 tostring(rec.strategy), "\t", tostring(rec.ts or 0), "\t",
                 tostring(rec.mode or "auto"), "\t",
@@ -355,11 +350,9 @@ local function get_record_for_desync(desync, do_seed)
     local rec = state[askey] and state[askey][hostn]
     if rec and rec.strategy then
       hrec.nstrategy = rec.strategy
-      -- Подобранное имя переживает перезапуск: иначе после каждого рестарта
-      -- человек снова платил бы полным перебором за уже найденное.
-      -- Имя в файле — уже доказанное (см. запись), поэтому и восстанавливаем его
-      -- как доказанное: одна неудачная попытка после рестарта не должна
-      -- отправлять человека проходить перебор заново.
+      -- Restored strategy survives restart so user doesn't pay discovery cost again.
+      -- State in file is already verified; one failure after boot should not trigger
+      -- full re-probing cycle.
       if rec.sni then hrec.z2k_sni = rec.sni; hrec.z2k_sni_ok = true end
     end
   end
@@ -384,17 +377,9 @@ local function persist_if_changed(askey, hostn, hrec)
   local n = tonumber(hrec.nstrategy)
   if not n or n < 1 then return false end
   local prev = state[askey] and state[askey][hostn] and state[askey][hostn].strategy or nil
-  -- Подобранное имя из белого списка. Хранится рядом с номером плеча, а не
-  -- вместо него: имя и разрез — разные оси, разрез продолжает ротироваться.
-  -- В файл уезжает только ДОКАЗАВШЕЕ себя имя — то, с которым хост ответил.
-  -- Имена-кандидаты живут в памяти: после перезапуска памяти нет, и записанный
-  -- кандидат означал бы «начни с середины списка», а записанный неудачник —
-  -- «начни с заведомо плохого». Замер 30.08.2026 показал второе.
-  local sni = hrec.z2k_sni_ok and hrec.z2k_sni or nil
-  local prev_sni = state[askey] and state[askey][hostn] and state[askey][hostn].sni or nil
-  -- Пропускаем, только если не изменилось НИ ОДНО из двух. Проверять один
-  -- номер плеча нельзя: у обхода 16 КБ плечо как раз стоит на месте, а меняется
-  -- имя — с прежним условием шестая колонка не записалась бы никогда.
+    -- Whitelist domain state stored alongside strategy shoulder index.
+    -- Persist only proven names where host responded.
+    -- Skip write only if neither property changed.
   if prev == n and prev_sni == sni then return false end
   -- Preserve any operator-set mode (frozen) across an engine-driven save: a row
   -- the operator froze must keep mode="frozen" on disk even if some code path
@@ -435,11 +420,9 @@ end
 
 -- A real success signal on an INCOMING packet. TLS ServerHello = handshake
 -- reached the server. HTTP reply must be classified "positive" by
--- z2k_classify_http_reply (с 2026-08-26 живёт в z2k-alert.lua, который в
--- --lua-init стоит РАНЬШЕ этого файла — см. S99zapret2.new); neutral 4xx/5xx и
--- cross-SLD редиректы без маркера пинить НЕ должны.
--- Мягкий откат, если классификатор не загрузился: обновление раскладывает
--- файлы по одному, и в этом окне рядом может лежать ещё старая пара.
+  -- z2k_classify_http_reply (in z2k-alert.lua, ordered before this file in --lua-init);
+  -- neutral 4xx/5xx and cross-SLD redirects without markers must not pin strategy.
+  -- Soft fallback if classifier is not loaded.
 local function has_positive_incoming_response(desync)
   if not desync or desync.outgoing then return false end
   local p = desync.l7payload
@@ -491,20 +474,9 @@ local function set_live_nstrategy(askey, hostn, n)
       arec.nstrategy = n
       -- A manual reset to the same number is still a new attempt generation.
       arec.generation = nil
-      -- Вместе со стратегией обнуляем накопленные неудачи хоста.
-      --
-      -- Момент, когда человек жмёт «×» или выбирает стратегию руками, — это
-      -- почти всегда момент СРАЗУ ПОСЛЕ того, как он увидел, что сайт отвалился.
-      -- То есть счётчик уже 2 из 3 в шестидесятисекундном окне. Без сброса
-      -- первая же неудача на только что выбранной стратегии добивает порог, и
-      -- ротатор уезжает с неё — человек уверен, что закрепил выбор, а выбор
-      -- сменился сам. Неудачи, накопленные ДО вмешательства, к новой стратегии
-      -- отношения не имеют.
-      --
-      -- Зовём штатную функцию движка, а не чистим поля руками: она и есть
-      -- предусмотренная для этого точка (zapret-auto.lua, вызывается внешней
-      -- логикой при смене состояния не через детектор). На старом движке,
-      -- где её нет, гейт оставляет поведение прежним.
+  -- Reset accumulated host failures when user manually selects strategy or dismisses.
+  -- Avoid immediate threshold trip from failures accumulated prior to intervention.
+  -- Calls engine built-in function (zapret-auto.lua).
       if type(automate_failure_counter_reset) == "function" then
         pcall(automate_failure_counter_reset, arec)
       end
@@ -534,7 +506,7 @@ local function reconcile_external_edits(force)
 
   -- (1) External DELETE — present at our last write, gone from disk now → the
   --     operator removed it (×) → reset its live rotation to strategy 1 and drop
-  --     our mirror, so the next packet re-persists it at 1 ("скинуть на 1ю").
+    --     our mirror, so the next packet re-persists it at 1 ("reset to 1st").
   for askey, hosts in pairs(last_written) do
     for hostn in pairs(hosts) do
       if not (disk[askey] and disk[askey][hostn]) then

@@ -873,9 +873,8 @@ function copyTestReport(){
   copyText(rep, t('Отчёт скопирован в буфер обмена'), t('Не удалось скопировать: выделите текст вручную'));
 }
 
-/* ══ Проверка одного домена ══════════════════════════════════════════════
-   domain-check отвечает строками MODE / LIST / IP / R (попытки) / done; итог
-   складываем здесь: исключён ли домен, попадает ли под обход, открывается ли. */
+/* ══ Single domain test ══════════════════════════════════════════════════
+   Parses domain-check MODE / LIST / IP / R / done output. */
 const DC_ROLE = {
   host: 'список обхода', auto: 'автообучение', exclude: 'исключения',
   ipset: 'IP-список обхода', 'ipset-exclude': 'IP-исключения', idle: 'не подключён к текущей стратегии'
@@ -937,7 +936,7 @@ function dcRender(q, st, done){
     else sub = t('Не открылся: {0}', [...new Set(st.tries.map(x => t(PROBE_REASON[x.v] || PROBE_REASON.other)))].join(', '));
     rows.push(dcRow('test', t('Доступность через обход'), sub, n && !done ? '' : (n ? (ok.length === n ? 'ok' : ok.length ? 'warn' : 'bad') : '')));
   } else if(done) rows.push(dcRow('test', t('Доступность через обход'), t('Нет curl или wget — открыть сайт с устройства нечем')));
-  // второй запрос по тому же соединению: так ходят приложения и браузер
+  // Second request over same keep-alive connection (browser/app behavior)
   if(st.keep === 'ok') rows.push(dcRow('refresh', t('Повторный запрос'), t('Проходит по тому же соединению'), 'ok'));
   else if(st.keep === 'stall') rows.push(dcRow('refresh', t('Повторный запрос'),
     t('Зависает: первый запрос отвечает, следующий по тому же соединению — нет. Соединение замораживается после первого обмена — приложения покажут ошибку со второго запроса'), 'bad'));
@@ -966,7 +965,7 @@ function dcRow(ic, title, sub, status){
 async function dcAddUser(q){
   const r = await withBusy(['add-domain', q]);
   if(r.code){ toast(errText(r, 'Не удалось добавить')); return; }
-  // ответ ctl — по-русски («Добавлено: x»); в интерфейсе — своя строка
+  // ctl response is localized; UI formats its own string
   toast(t('Добавлено: {0}', (r.out || '').trim().split(': ').pop() || q));
   runDomainCheck();
 }
@@ -1061,9 +1060,7 @@ async function dcAddSelectedHosts(){
   dcPageHosts.forEach(it => { if(selected.includes(it.host)) it.checked = false; });
   renderPageHostsList($('dc-q') ? $('dc-q').value.trim() : '', true);
 }
-/* Открыть список, где нашёлся домен, сразу с поиском этой записи. Списков
-   несколько — выбор из меню. Ждём именно тот редактор, который открыли: если
-   открыть не удалось и пользователь открыл другой список, поиск туда не лезет. */
+/* Open list matching the domain and jump to entry */
 let dcLast = null;
 function dcPickList(anchor){
   const lists = dcLast ? dcLast.lists : [];

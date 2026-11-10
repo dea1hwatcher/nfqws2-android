@@ -10,7 +10,7 @@ function fmtUptime(sec){
   const p = n => String(n).padStart(2, '0');
   return p(h) + ':' + p(m) + ':' + p(s);
 }
-let uptAnchor = null;   // {ms: время работы, t: performance.now() в тот момент}
+let uptAnchor = null;   // {ms: uptime_ms, t: performance.now() anchor}
 function uptElapsedMs(){ return uptAnchor.ms + (performance.now() - uptAnchor.t); }
 function stopUptTimer(){
   if(uptTimer){ clearTimeout(uptTimer); uptTimer = null; }

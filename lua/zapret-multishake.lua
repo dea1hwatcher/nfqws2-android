@@ -2,32 +2,32 @@
 
 NFQWS2 MULTISHAKE - Advanced Stealth Fakesplit Variants
 
-Менее агрессивные и более скрытные варианты hostfakesplit.
+Stealthier, less aggressive variants of hostfakesplit.
 
 Usage:
 --lua-init=@zapret-lib.lua --lua-init=@zapret-antidpi.lua --lua-init=@zapret-multishake.lua
 
-ВАЖНО: Используй те же fooling параметры что работают у тебя!
-Если работает: hostfakesplit:host=vimeo.com:tcp_ts=-1000:tcp_md5:repeats=4
-То используй:  hostfakesplit_stealth:host=vimeo.com:tcp_ts=-1000:tcp_md5:repeats=2:mode=soft
+IMPORTANT: Use the same fooling parameters that work on your network.
+If this works: hostfakesplit:host=vimeo.com:tcp_ts=-1000:tcp_md5:repeats=4
+Then use:      hostfakesplit_stealth:host=vimeo.com:tcp_ts=-1000:tcp_md5:repeats=2:mode=soft
 
-ФУНКЦИИ:
+FUNCTIONS:
 
-hostfakesplit_stealth - менее агрессивный hostfakesplit
-  mode=soft     - только 1 фейк вместо 2
-  mode=blend    - фейк похож на настоящий домен (меняем часть букв)
-  mode=minimal  - фейк только для длинных SNI
-  mode=random   - случайно 0-2 фейка
+hostfakesplit_stealth - stealthier hostfakesplit
+  mode=soft     - 1 fake instead of 2
+  mode=blend    - fake resembles real domain (mutates subset of letters)
+  mode=minimal  - fake only for long SNIs
+  mode=random   - randomized 0-2 fakes
 
-hostfakesplit_chaos - хаотичный порядок сегментов
+hostfakesplit_chaos - randomized segment order
 
-hostfakesplit_multi - несколько разных фейковых доменов
+hostfakesplit_multi - multiple distinct fake domains
   hosts=google.com,vimeo.com,amazon.com
 
-hostfakesplit_gradual - фейк и реал разбиты на части и чередуются
+hostfakesplit_gradual - interleaved fake and real slices
   parts=3
 
-hostfakesplit_decoy - дополнительные мусорные пакеты
+hostfakesplit_decoy - supplemental decoy packets
   decoys=2
   decoy_size=50
 
@@ -65,23 +65,23 @@ do
 end
 
 -- ============================================================================
--- HOSTFAKESPLIT_STEALTH - менее агрессивный hostfakesplit
+-- HOSTFAKESPLIT_STEALTH - stealthier hostfakesplit
 -- ============================================================================
 
 --[[
-hostfakesplit_stealth - скрытная версия hostfakesplit
+hostfakesplit_stealth - stealth version of hostfakesplit
 
-Отличия от обычного hostfakesplit:
-- mode=soft: только 1 фейк вместо 2, меньше repeats
-- mode=blend: фейк похож на настоящий домен (подменяем только часть букв)
-- mode=minimal: фейк отправляется только если SNI длинный
-- mode=random: случайно выбирает сколько фейков отправить (0-2)
+Differences from standard hostfakesplit:
+- mode=soft: 1 fake instead of 2, fewer repeats
+- mode=blend: fake resembles real domain (mutates subset of chars)
+- mode=minimal: fake sent only if SNI is long
+- mode=random: randomly chooses fake count (0-2)
 
 standard args : direction, payload, fooling, ip_id, rawsend, reconstruct
-arg : host=<str> - шаблон фейкового хоста
-arg : midhost=<posmarker> - разбить SNI
-arg : mode=soft|blend|minimal|random - режим скрытности
-arg : min_sni=N - для mode=minimal, минимальная длина SNI (по умолчанию 15)
+arg : host=<str> - fake host template
+arg : midhost=<posmarker> - split SNI
+arg : mode=soft|blend|minimal|random - stealth mode
+arg : min_sni=N - for mode=minimal, minimum SNI length (default 15)
 arg : nodrop
 ]]
 function hostfakesplit_stealth(ctx, desync)
@@ -105,7 +105,7 @@ function hostfakesplit_stealth(ctx, desync)
                 local sni_len = pos[2] - pos[1] + 1
                 local real_sni = string.sub(data, pos[1], pos[2])
 
-                -- режим minimal - пропускаем короткие SNI
+                -- minimal mode: skip short SNIs
                 if mode == "minimal" then
                     local min_sni = tonumber(desync.arg.min_sni) or 15
                     if sni_len < min_sni then
@@ -114,36 +114,36 @@ function hostfakesplit_stealth(ctx, desync)
                     end
                 end
 
-                -- определяем сколько фейков отправлять
+                -- determine fake count
                 local send_fake1, send_fake2 = true, true
                 if mode == "soft" then
                     send_fake1 = true
-                    send_fake2 = false  -- только 1 фейк
+                    send_fake2 = false  -- only 1 fake
                 elseif mode == "random" then
                     local rnd = math.random(100)
                     if rnd < 25 then
-                        send_fake1, send_fake2 = false, false  -- 25% - без фейков
+                        send_fake1, send_fake2 = false, false  -- 25% no fakes
                     elseif rnd < 60 then
-                        send_fake1, send_fake2 = true, false   -- 35% - 1 фейк
+                        send_fake1, send_fake2 = true, false   -- 35% 1 fake
                     else
-                        send_fake1, send_fake2 = true, true    -- 40% - 2 фейка
+                        send_fake1, send_fake2 = true, true    -- 40% 2 fakes
                     end
                     DLOG("hostfakesplit_stealth: random mode, fake1="..tostring(send_fake1).." fake2="..tostring(send_fake2))
                 end
 
-                -- ручное отключение фейков
+                -- manual fake disabling
                 if desync.arg.nofake1 then send_fake1 = false end
                 if desync.arg.nofake2 then send_fake2 = false end
 
-                -- генерируем фейковый хост
+                -- generate fake host
                 local fakehost
                 if mode == "blend" then
-                    -- подменяем только часть букв в настоящем SNI
+                    -- mutate subset of characters in real SNI
                     fakehost = ""
                     for i = 1, sni_len do
                         local c = string.sub(real_sni, i, i)
                         if c ~= "." and math.random(100) < 40 then
-                            -- 40% шанс заменить букву
+                            -- 40% chance to replace character
                             fakehost = fakehost .. string.char(math.random(97, 122))
                         else
                             fakehost = fakehost .. c
@@ -158,18 +158,18 @@ function hostfakesplit_stealth(ctx, desync)
                 local opts_orig = {rawsend = rawsend_opts_base(desync), reconstruct = {}, ipfrag = {}, ipid = desync.arg, fooling = {tcp_ts_up = desync.arg.tcp_ts_up}}
                 local opts_fake = {rawsend = rawsend_opts(desync), reconstruct = reconstruct_opts(desync), ipfrag = {}, ipid = desync.arg, fooling = desync.arg}
 
-                -- часть до хоста
+                -- prefix before host
                 part = string.sub(data, 1, pos[1] - 1)
                 if b_debug then DLOG("hostfakesplit_stealth: sending before_host 0-"..(pos[1]-2).." len="..#part) end
                 if not rawsend_payload_segmented(desync, part, 0, opts_orig) then return VERDICT_PASS end
 
-                -- фейк 1
+                -- fake 1
                 if send_fake1 then
                     if b_debug then DLOG("hostfakesplit_stealth: sending fake1 "..(pos[1]-1).."-"..(pos[2]-1)) end
                     if not rawsend_payload_segmented(desync, fakehost, pos[1] - 1, opts_fake) then return VERDICT_PASS end
                 end
 
-                -- настоящий хост (с возможным разбиением)
+                -- real host (with optional split)
                 local midhost
                 if desync.arg.midhost then
                     midhost = resolve_pos(data, desync.l7payload, desync.arg.midhost)
@@ -192,13 +192,13 @@ function hostfakesplit_stealth(ctx, desync)
                     if not rawsend_payload_segmented(desync, part, pos[1] - 1, opts_orig) then return VERDICT_PASS end
                 end
 
-                -- фейк 2
+                -- fake 2
                 if send_fake2 then
                     if b_debug then DLOG("hostfakesplit_stealth: sending fake2 "..(pos[1]-1).."-"..(pos[2]-1)) end
                     if not rawsend_payload_segmented(desync, fakehost, pos[1] - 1, opts_fake) then return VERDICT_PASS end
                 end
 
-                -- остаток
+                -- suffix after host
                 part = string.sub(data, pos[2] + 1)
                 if b_debug then DLOG("hostfakesplit_stealth: sending after_host "..pos[2].."-"..(#data-1)) end
                 if not rawsend_payload_segmented(desync, part, pos[2], opts_orig) then return VERDICT_PASS end
@@ -219,20 +219,20 @@ end
 
 
 -- ============================================================================
--- HOSTFAKESPLIT_CHAOS - хаотичный порядок сегментов с фейками
+-- HOSTFAKESPLIT_CHAOS - randomized segment delivery order with fakes
 -- ============================================================================
 
 --[[
-hostfakesplit_chaos - hostfakesplit с перемешанным порядком отправки
+hostfakesplit_chaos - hostfakesplit with shuffled packet delivery order
 
-Вместо фиксированного порядка (before -> fake1 -> real -> fake2 -> after)
-отправляет сегменты в хаотичном порядке, сохраняя правильные seq numbers.
+Sends segments in randomized order while preserving valid TCP sequence numbers,
+instead of fixed (before -> fake1 -> real -> fake2 -> after) sequencing.
 
 standard args : direction, payload, fooling, ip_id, rawsend, reconstruct
-arg : host=<str> - шаблон фейкового хоста
-arg : midhost=<posmarker> - разбить SNI
-arg : order=<str> - порядок: числа 1,2,3,4,5 (1=before, 2=fake1, 3=real, 4=fake2, 5=after)
-                    по умолчанию: случайный
+arg : host=<str> - fake host template
+arg : midhost=<posmarker> - split SNI
+arg : order=<str> - explicit indices 1..5 (1=before, 2=fake1, 3=real, 4=fake2, 5=after)
+                    default: random
 arg : nofake1, nofake2
 arg : nodrop
 ]]
@@ -259,7 +259,7 @@ function hostfakesplit_chaos(ctx, desync)
                 local opts_orig = {rawsend = rawsend_opts_base(desync), reconstruct = {}, ipfrag = {}, ipid = desync.arg, fooling = {tcp_ts_up = desync.arg.tcp_ts_up}}
                 local opts_fake = {rawsend = rawsend_opts(desync), reconstruct = reconstruct_opts(desync), ipfrag = {}, ipid = desync.arg, fooling = desync.arg}
 
-                -- подготавливаем все сегменты
+                -- prepare all segments
                 local segments = {}
 
                 -- 1: before_host
@@ -307,7 +307,7 @@ function hostfakesplit_chaos(ctx, desync)
                     enabled = true
                 }
 
-                -- определяем порядок отправки
+                -- determine delivery order
                 local order
                 if desync.arg.order then
                     order = {}
@@ -315,7 +315,7 @@ function hostfakesplit_chaos(ctx, desync)
                         table.insert(order, tonumber(num))
                     end
                 else
-                    -- случайный порядок
+                    -- random order
                     order = {1, 2, 3, 4, 5}
                     for i = 5, 2, -1 do
                         local j = math.random(i)
@@ -325,7 +325,7 @@ function hostfakesplit_chaos(ctx, desync)
 
                 if b_debug then DLOG("hostfakesplit_chaos: order="..table.concat(order, ",")) end
 
-                -- отправляем в заданном порядке
+                -- send in designated order
                 for _, idx in ipairs(order) do
                     local seg = segments[idx]
                     if seg and seg.enabled and #seg.data > 0 then
@@ -352,17 +352,17 @@ end
 
 
 -- ============================================================================
--- HOSTFAKESPLIT_MULTI - множественные фейки с разными доменами
+-- HOSTFAKESPLIT_MULTI - multiple fakes with different domains
 -- ============================================================================
 
 --[[
-hostfakesplit_multi - отправка нескольких разных фейковых SNI
+hostfakesplit_multi - send multiple different fake SNIs
 
-Вместо одного фейка отправляет несколько с разными доменами,
-чтобы запутать DPI больше.
+Sends several fakes across different domains instead of a single fake host
+to induce DPI classification failure.
 
 standard args : direction, payload, fooling, ip_id, rawsend, reconstruct
-arg : hosts=<str> - список доменов через запятую: google.com,vimeo.com,amazon.com
+arg : hosts=<str> - comma-separated domain list: google.com,vimeo.com,amazon.com
 arg : midhost=<posmarker>
 arg : nodrop
 ]]
@@ -381,7 +381,7 @@ function hostfakesplit_multi(ctx, desync)
 
                 local sni_len = pos[2] - pos[1] + 1
 
-                -- парсим список хостов
+                -- parse host list
                 local hosts = {}
                 local hosts_str = desync.arg.hosts or "google.com,vimeo.com,amazon.com"
                 for host in string.gmatch(hosts_str, "([^,]+)") do
@@ -398,14 +398,14 @@ function hostfakesplit_multi(ctx, desync)
                 if b_debug then DLOG("hostfakesplit_multi: sending before_host") end
                 if not rawsend_payload_segmented(desync, part, 0, opts_orig) then return VERDICT_PASS end
 
-                -- фейки ДО настоящего SNI
+                -- fakes BEFORE real SNI
                 for i, host in ipairs(hosts) do
                     local fakehost = genhost(sni_len, host)
                     if b_debug then DLOG("hostfakesplit_multi: sending fake"..i.." ("..host..")") end
                     if not rawsend_payload_segmented(desync, fakehost, pos[1] - 1, opts_fake) then return VERDICT_PASS end
                 end
 
-                -- настоящий host
+                -- real host
                 local midhost
                 if desync.arg.midhost then
                     midhost = resolve_pos(data, desync.l7payload, desync.arg.midhost)
@@ -444,20 +444,20 @@ end
 
 
 -- ============================================================================
--- HOSTFAKESPLIT_GRADUAL - постепенная отправка с разбиением фейка
+-- HOSTFAKESPLIT_GRADUAL - phased delivery with split fake
 -- ============================================================================
 
 --[[
-hostfakesplit_gradual - фейк тоже разбивается на части
+hostfakesplit_gradual - splits fake host into slices
 
-Вместо отправки целого фейка, разбиваем его на мелкие части
-и перемешиваем с частями настоящего SNI.
+Instead of sending the fake whole, splits it into small slices
+and interleaves them with slices of the real SNI.
 
-Паттерн: fake_part1 -> real_part1 -> fake_part2 -> real_part2 -> ...
+Pattern: fake_part1 -> real_part1 -> fake_part2 -> real_part2 -> ...
 
 standard args : direction, payload, fooling, ip_id, rawsend, reconstruct
 arg : host=<str>
-arg : parts=N - на сколько частей разбить (по умолчанию 3)
+arg : parts=N - number of slices (default 3)
 arg : nodrop
 ]]
 function hostfakesplit_gradual(ctx, desync)
@@ -486,7 +486,7 @@ function hostfakesplit_gradual(ctx, desync)
                 if b_debug then DLOG("hostfakesplit_gradual: sending before_host") end
                 if not rawsend_payload_segmented(desync, part, 0, opts_orig) then return VERDICT_PASS end
 
-                -- разбиваем SNI на части и чередуем fake/real
+                -- split SNI into slices and alternate fake/real
                 local part_size = math.ceil(sni_len / num_parts)
                 for i = 1, num_parts do
                     local start_idx = (i - 1) * part_size + 1
@@ -497,11 +497,11 @@ function hostfakesplit_gradual(ctx, desync)
                     local real_part = string.sub(real_sni, start_idx, end_idx)
                     local offset = pos[1] - 1 + start_idx - 1
 
-                    -- сначала фейк
+                    -- fake slice first
                     if b_debug then DLOG("hostfakesplit_gradual: sending fake part "..i.." offset="..offset) end
                     if not rawsend_payload_segmented(desync, fake_part, offset, opts_fake) then return VERDICT_PASS end
 
-                    -- потом настоящий
+                    -- real slice second
                     if b_debug then DLOG("hostfakesplit_gradual: sending real part "..i.." offset="..offset) end
                     if not rawsend_payload_segmented(desync, real_part, offset, opts_orig) then return VERDICT_PASS end
                 end
@@ -527,19 +527,19 @@ end
 
 
 -- ============================================================================
--- HOSTFAKESPLIT_DECOY - отправка decoy пакетов вокруг
+-- HOSTFAKESPLIT_DECOY - send decoy packets around payload
 -- ============================================================================
 
 --[[
-hostfakesplit_decoy - добавляет "мусорные" пакеты для отвлечения
+hostfakesplit_decoy - injects decoy junk packets
 
-Кроме фейкового SNI, отправляет дополнительные пакеты-приманки
-с разными данными чтобы засорить буфер DPI.
+Sends additional decoy packets with randomized contents alongside fake SNI
+to saturate DPI state and reassembly buffers.
 
 standard args : direction, payload, fooling, ip_id, rawsend, reconstruct
 arg : host=<str>
-arg : decoys=N - сколько decoy пакетов (по умолчанию 2)
-arg : decoy_size=N - размер каждого decoy (по умолчанию 50)
+arg : decoys=N - number of decoy packets (default 2)
+arg : decoy_size=N - size of each decoy in bytes (default 50)
 arg : midhost=<posmarker>
 arg : nodrop
 ]]
@@ -564,7 +564,7 @@ function hostfakesplit_decoy(ctx, desync)
                 local opts_orig = {rawsend = rawsend_opts_base(desync), reconstruct = {}, ipfrag = {}, ipid = desync.arg, fooling = {tcp_ts_up = desync.arg.tcp_ts_up}}
                 local opts_fake = {rawsend = rawsend_opts(desync), reconstruct = reconstruct_opts(desync), ipfrag = {}, ipid = desync.arg, fooling = desync.arg}
 
-                -- генерируем decoy данные (случайные байты)
+                -- generate decoy data (random bytes)
                 local function gen_decoy(size)
                     local s = ""
                     for i = 1, size do
@@ -575,7 +575,7 @@ function hostfakesplit_decoy(ctx, desync)
 
                 local part
 
-                -- decoys ДО
+                -- decoys BEFORE
                 for i = 1, num_decoys do
                     local decoy = gen_decoy(decoy_size)
                     local offset = math.random(0, pos[1] - 2)
@@ -620,7 +620,7 @@ function hostfakesplit_decoy(ctx, desync)
                 part = string.sub(data, pos[2] + 1)
                 if not rawsend_payload_segmented(desync, part, pos[2], opts_orig) then return VERDICT_PASS end
 
-                -- decoys ПОСЛЕ
+                -- decoys AFTER
                 for i = 1, num_decoys do
                     local decoy = gen_decoy(decoy_size)
                     local offset = pos[2] + math.random(1, 50)
@@ -647,18 +647,18 @@ end
 -- ALIASES / SHORTCUTS
 -- ============================================================================
 
--- snifakesplit = hostfakesplit (они идентичны, host/endhost работают для TLS тоже)
+-- snifakesplit = hostfakesplit (identical: host/endhost markers work for TLS as well)
 function snifakesplit(ctx, desync)
     return hostfakesplit(ctx, desync)
 end
 
--- hostfakesplit_soft - быстрый доступ к soft режиму
+-- hostfakesplit_soft - shortcut to soft mode
 function hostfakesplit_soft(ctx, desync)
     desync.arg.mode = "soft"
     return hostfakesplit_stealth(ctx, desync)
 end
 
--- hostfakesplit_blend - быстрый доступ к blend режиму
+-- hostfakesplit_blend - shortcut to blend mode
 function hostfakesplit_blend(ctx, desync)
     desync.arg.mode = "blend"
     return hostfakesplit_stealth(ctx, desync)

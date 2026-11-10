@@ -1,7 +1,6 @@
 #!/bin/sh
-# Умный режим: сеть для оркестратора, состояние, сброс, обучение (bin/nfqws2-ctl,
-# lib/common.sh). Логика самого оркестратора — tests/lua/test_smart.lua: он
-# идёт внутри nfqws2 и запускается здесь, если есть настоящий бинарник
+# Smart mode: network detection, state persist, reset, training (bin/nfqws2-ctl,
+# lib/common.sh). Orchestrator core logic tested in tests/lua/test_smart.lua.
 # (NFQWS2_TEST_BIN).
 
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -34,7 +33,7 @@ export MOCK_DEV MOCK_WIFI MOCK_OPERATOR MOCK_OPERATOR_NAME MOCK_DATA_SUB MOCK_SI
 section "the smart strategy is recognised"
 smart_active; assert_rc 0 $? "smart.conf loads the smart orchestrator"
 
-# конфиг прежней раскладки умного режима пересобирается сам, с настройками пользователя
+# Legacy smart mode config layout auto-migrated preserving user settings
 grep -v '^SMART_CONF_VER=' "$MODDIR/strategies/smart.conf" | sed 's/slot=tls_16:/slot=tls:/; s/^LOG_LEVEL=.*/LOG_LEVEL=2/' > "$CONFFILE"
 load_conf >/dev/null 2>&1
 assert_contains "$(cat "$CONFFILE")" "slot=tls_16:" "an old smart config is rebuilt from the module's smart.conf"
@@ -123,7 +122,7 @@ assert_contains "$ctl_out" '"google":[{"n":1,"name":"hardcorp74: Google","ok":5,
 assert_contains "$ctl_out" '{"host":"x.com","slot":"tls","n":8,"name":"hardcorp74 #1","ok":2,"err":3}' "a site with more errors than successes on its variant is a problem"
 assert_contains "$ctl_out" '{"host":"new.example","slot":"tls","n":1,"name":"MartinBacker #1","ok":0,"err":1}' "so is one that never worked"
 assert_not_contains "$ctl_out" '"host":"youtube.com"' "a working one is not"
-# профили со своими наборами (tls_cf, tls_16…) и подстройки
+# Custom slot profiles (tls_cf, tls_16...) and tuned variants
 printf '#m\ttls_16\t101\t7\t1.repeats=6;4.host=ozon.ru\t1000\ntls_16\tsoundcloud.com\t101\t7:2.0,101:6.0\t7:1.0\t\t1\te\ntls_cf\tcf.example\t6\t6:2.0\t\t\t1\te\n' >> "$SMART_DIR/mobile-25001.tsv"
 ctl smart-status
 printf '%s' "$ctl_out" > "$SANDBOX/st.json"
@@ -183,8 +182,8 @@ assert_contains "$w" "$(printf 'tls_16\tsoundcloud.com\t102\t7:2.0,102:6.0\t7:1.
 assert_contains "$w" "$(printf 'tls_16\tmine.example\t101')" "the local tuning keeps its number"
 assert_not_contains "$w" "0:4999999999" "«not DPI» of the other network is not carried over"
 
-# Импорт из сборки со старым форматом (#v2/#v3) мигрируется, а не затирается:
-# колонки те же, но «не DPI»-метки (cool 0:*) того формата недостоверны
+# Legacy format import (#v2/#v3) migrated rather than overwritten;
+# cool 0:* non-DPI flags pruned as unreliable
 printf '#v3 header\ntls\tv3site.example\t1\t2:4.5\t\t0:4999999999\t1\te\n' > "$SANDBOX/old-v3.tsv"
 before=$(grep -c . "$SMART_DIR/wifi-1.tsv")
 ctl smart-import-b64 "$(base64 < "$SANDBOX/old-v3.tsv" | tr -d '\n')"
@@ -263,8 +262,7 @@ assert_contains "$(cat "$MOCK_IPT_STORE/ip6tables/filter/nfqws_smartkill" 2>/dev
 assert_not_contains "$(cat "$MOCK_IPT_STORE/iptables/filter/nfqws_smartkill" 2>/dev/null)" "notaport" "garbage lines are skipped"
 assert_not_contains "$(cat "$SERVICE_LOG")" "stuck" "the service log is not flooded with cut connections (they are in the smart mode log)"
 svc stop
-# наблюдатели сети этого запуска песочнице больше не нужны: иначе netwatch с
-# заглушкой ip крутился бы в фоне и мешал соседним наборам тестов
+# Clean background network watcher so mock netwatch does not leak between suites
 for p in "$WD_PIDFILE" "$WN_PIDFILE"; do [ -f "$p" ] && kill "$(cat "$p")" 2>/dev/null; done
 assert_no_file "$SK_PIDFILE" "stopping the service stops the helper"
 assert_no_file "$MOCK_IPT_STORE/iptables/filter/nfqws_smartkill" "and removes its chain"
@@ -321,18 +319,18 @@ kill "$bench_pid" 2>/dev/null
 rm -f "$CONFDIR/state/nfqws2.pid"
 
 section "every Google variant has a name and every name a variant"
-# Zapret-Manager 5.040 (StrYoutube Yv34, Yv35) — варианты 45, 46 слота google
+# Zapret-Manager 5.040 (StrYoutube Yv34, Yv35) — variants 45, 46 in google slot
 gv=$(awk '/^SMART_GOOGLE="/{f=1} f{ while (match($0, /strategy=[0-9]+/)) { print substr($0, RSTART + 9, RLENGTH - 9); $0 = substr($0, RSTART + RLENGTH) } } f && /"$/ && !/^SMART_GOOGLE="/{f=0}' "$REPO_DIR/strategies/smart.conf" | sort -un | tr '\n' ' ')
 gn=$(sed -n 's/^#@google \([0-9]*\) .*/\1/p' "$REPO_DIR/strategies/smart.conf" | sort -un | tr '\n' ' ')
 assert_eq "$gv" "$gn" "the variants of the google slot and their names match"
 assert_contains "$(grep '^#@google 4[56] ' "$REPO_DIR/strategies/smart.conf")" "Manager: Yv35" "Yv34 and Yv35 of Zapret-Manager are in"
 assert_contains "$(grep 'strategy=45' "$REPO_DIR/strategies/smart.conf")" "hostfakesplit:host=google.com:tcp_flags_unset=ack:badsum:repeats=3" "Yv34: datanoack is tcp_flags_unset=ack in zapret2"
-# замер 07.11.2026 на МТС: Yv34 — 15 из 15, Yv35 — 3 из 5
+# Field test 2026-11-07 on MTS: Yv34 — 15/15, Yv35 — 3/5
 assert_contains "$(grep 'slot=google' "$REPO_DIR/strategies/smart.conf")" ",43-45:" "Yv34 and googlevideo #1, #2 (15 of 15 in the benchmark) are in the base set"
 assert_not_contains "$(grep 'slot=google' "$REPO_DIR/strategies/smart.conf")" "46" "Yv35 (3 of 5) waits in the extended pool"
 assert_eq "" "$(grep -o 'slot=tls[a-z_0-9]*:pass=14:base=[0-9,-]*' "$REPO_DIR/strategies/smart.conf" | grep -v 'base=1,4-6,8,')" "hardcorp74 #1 (95%, the most checks) is in the base set of every TLS slot"
-# eduncey #4: fooling=ts из zapret 1 — порча и фейкового ClientHello, а не только
-# hostfakesplit; без неё фейк доходил до сервера — 16 сбросов из 16
+# eduncey #4: fooling=ts mutates fake ClientHello rather than only hostfakesplit;
+# without it fake reaches server causing RST
 assert_contains "$(grep 'strategy=35' "$REPO_DIR/strategies/smart.conf" | grep 'fake:blob=tls_clienthello')" "tcp_ts=-600000" "eduncey #4: the fake ClientHello is fooled too"
 
 if [ -x "${NFQWS2_TEST_BIN:-}" ]; then
@@ -343,8 +341,7 @@ if [ -x "${NFQWS2_TEST_BIN:-}" ]; then
   assert_contains "$out" "PASS" "tests/lua/test_smart.lua passes"
   printf '%s\n' "$out" | grep -E '^   FAIL' || true
 elif command -v luajit >/dev/null 2>&1; then
-  # без nfqws2 — в обычном LuaJIT: то немногое, что nfqws2 даёт скриптам
-  # (битовые операции, журнал, часы), — в tests/lua/luajit-prelude.lua
+  # Standalone LuaJIT fallback: provides runtime engine stubs via tests/lua/luajit-prelude.lua
   section "the orchestrator itself (LuaJIT, no nfqws2 binary)"
   H="$SANDBOX/smarthome"; mkdir -p "$H/state" "$H/smart" "$H/logs"
   out=$(cd "$REPO_DIR/lua" && luajit -e "dofile('$TESTS_DIR/lua/luajit-prelude.lua')" -e "SMART_TEST_HOME='$H'" \

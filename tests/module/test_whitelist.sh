@@ -1,6 +1,6 @@
 #!/bin/sh
-# Белые списки мобильного оператора: проверка сети (wl_probe), пауза обхода с
-# причиной @wl, ручной запуск поверх неё, переключатель WL_PAUSE.
+# Carrier whitelist handling: network probe (wl_probe), bypass pause (@wl),
+# manual bypass override, WL_PAUSE toggle.
 
 HERE=$(cd "$(dirname "$0")" && pwd)
 TESTS_DIR=$(cd "$HERE/.." && pwd)
@@ -10,7 +10,7 @@ REPO_DIR=$(cd "$TESTS_DIR/.." && pwd)
 sandbox_init
 load_common
 
-# curl: «время соединения» по хосту — зарубежные отвечают только при MOCK_WL=normal
+# curl connect_time by host — international hosts reply only under MOCK_WL=normal
 cat > "$MOCKBIN/curl" <<'X'
 #!/bin/sh
 for a; do u="$a"; done
