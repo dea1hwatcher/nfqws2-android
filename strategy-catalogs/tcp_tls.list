@@ -988,3 +988,7 @@
 --lua-desync=fake:blob=tls_google:repeats=6:tcp_seq=2:tcp_ack=-66000:tcp_ts_up
 --lua-desync=fake:blob=tls_google:repeats=6:ip_id=zero:tcp_seq=2:tcp_ack=-66000:tcp_ts_up
 --lua-desync=fake:blob=stun_fake:repeats=6:tcp_ts=-600000:tcp_ts_up --lua-desync=fake:blob=tls_max:repeats=6:tcp_ts=-600000:tcp_ts_up
+--lua-desync=fake:blob=tls_clienthello_awswaf_com:tcp_ts=-600000:repeats=8 --lua-desync=multisplit:pos=1:seqovl=1100:seqovl_pattern=tls_clienthello_awswaf_com
+--lua-desync=fake:blob=tls_clienthello_steam_chat_com:tcp_ts=-600000:repeats=8 --lua-desync=multisplit:pos=1:seqovl=1100:seqovl_pattern=tls_clienthello_steam_chat_com
+--lua-desync=fake:blob=tls_clienthello_steamstatic_com:tcp_ts=-600000:repeats=8 --lua-desync=multisplit:pos=1:seqovl=1100:seqovl_pattern=tls_clienthello_steamstatic_com
+--lua-desync=fake:blob=tls_clienthello_teamspeak_com:tcp_ts=-600000:repeats=8 --lua-desync=multisplit:pos=1:seqovl=1100:seqovl_pattern=tls_clienthello_teamspeak_com

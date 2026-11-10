@@ -460,6 +460,7 @@ assert_match "$ctl_out" "^(ok|warn|fail|info)	" "doctor emits tab-separated seve
 assert_contains "$ctl_out" "NFQUEUE" "doctor checks the NFQUEUE target"
 assert_contains "$ctl_out" "limiter" "doctor reports the limiter in use"
 assert_contains "$ctl_out" "RAM" "doctor reports memory consumption"
+assert_contains "$ctl_out" "$(printf 'ok\tvpn\t')" "doctor reports VPN status"
 assert_contains "$ctl_out" "$(printf 'info\tstealth\t')" "doctor reports stealth row"
 assert_contains "$ctl_out" "$(printf 'info\tnat_fix\t')" "NAT counters are diagnostic, not proof of traffic handling"
 

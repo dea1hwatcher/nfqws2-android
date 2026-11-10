@@ -641,12 +641,12 @@ function analyzeProbeResults(webRes, tcp16Res, dnsRes){
   } else if(tcp16Detected > 0){
     if(alertCount > 0 || rstCount > 0){
       strategy = 'fake_tls_auto_alt2';
-      altStrategies = ['universal_v12', 'alt4_mod'];
+      altStrategies = ['universal_v13', 'universal_v12', 'alt4_mod'];
       summaryTitle = t('Обнаружены TCP 16-20KB и фильтрация TLS');
       reason = t('DPI разрывает сессии после 16-20 КБ данных и блокирует ClientHello. Рекомендуется стратегия со сплитом пакетов и маскировкой перекрытиями (multisplit + seqovl / Universal V12).');
     } else {
       strategy = 'alt4_mod';
-      altStrategies = ['universal_v12', 'fake_tls_auto_alt2'];
+      altStrategies = ['universal_v13', 'universal_v12', 'fake_tls_auto_alt2'];
       summaryTitle = t('Обнаружен фильтр TCP 16-20KB');
       reason = t('Соединения к зарубежным CDN (Cloudflare/Hetzner) обрываются после 16-20 КБ данных. Рекомендуется сегментация TCP пакетов и наложение 4pda (Universal V12).');
     }

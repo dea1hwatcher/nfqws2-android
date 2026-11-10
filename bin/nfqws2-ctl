@@ -525,6 +525,11 @@ cmd_doctor() {
   else
     row warn conntrack "$(M 'нет nf_conntrack sysctl' 'no nf_conntrack sysctl')"
   fi
+  if vpn_active; then
+    row warn vpn "$(M 'активен VPN-интерфейс — трафик может уходить мимо nfqws2' 'active VPN interface — traffic may bypass nfqws2')"
+  else
+    row ok vpn "$(M 'сторонних VPN-интерфейсов нет' 'no third-party VPN interfaces')"
+  fi
   local priv_dns
   priv_dns=$(settings get global private_dns_mode 2>/dev/null)
   case "$priv_dns" in
