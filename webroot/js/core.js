@@ -807,6 +807,9 @@ function navigate(page, slide){
     if(!PAGE_META[page].child) scroller.scrollTo({top: 0, behavior: (typeof isAnimationsDisabled === 'function' && isAnimationsDisabled()) ? 'auto' : 'smooth'});
     return;
   }
+  if(currentPage === 'test' && typeof stopTest === 'function' && typeof testRunning !== 'undefined' && testRunning){
+    stopTest();
+  }
   closeMenu();
   const d0 = pageDepth(currentPage), d1 = pageDepth(page);
   const ti0 = TOP_PAGES.indexOf(currentPage), ti1 = TOP_PAGES.indexOf(page);

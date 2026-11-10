@@ -1,3 +1,6 @@
+-- nfqws2 custom desync functions
+-- Consolidates active desync strategies, TLS/HTTP modifiers, and Discord voice optimizations
+
 -- AGGRESSIVE HTTP BYPASS for stubborn DPI (like porno365)
 -- Combines multiple techniques: fake flood + disorder + host splitting
 -- standard args : direction, payload, fooling, ip_id, rawsend, reconstruct
@@ -177,33 +180,6 @@ function http_aggressive(ctx, desync)
 	end
 end
 
--- HTTP SYNDATA - Send HTTP request in SYN packet (most aggressive)
--- This bypasses DPI that only inspects data after handshake
--- standard args : fooling, rawsend, reconstruct, ipfrag
--- arg : blob=<blob> - HTTP request template (optional, will use current payload if available)
-function http_syndata(ctx, desync)
-	if desync.dis.tcp then
-		if bitand(desync.dis.tcp.th_flags, TH_SYN + TH_ACK)==TH_SYN then
-			local dis = deepcopy(desync.dis)
-
-			-- Try to get HTTP request from conntrack or use template
-			local http_req = desync.arg.blob and blob(desync, desync.arg.blob) or
-				"GET / HTTP/1.1\r\nHost: example.com\r\nConnection: close\r\n\r\n"
-
-			dis.payload = http_req
-			apply_fooling(desync, dis)
-
-			if b_debug then DLOG("http_syndata: sending SYN with HTTP payload len="..#http_req) end
-			if rawsend_dissect_ipfrag(dis, desync_opts(desync)) then
-				return VERDICT_DROP
-			end
-		else
-			instance_cutoff(ctx)
-		end
-	else
-		instance_cutoff(ctx)
-	end
-end
 
 -- HTTP with multiple disorder splits at critical positions
 -- standard args : direction, payload, fooling, ip_id, rawsend, reconstruct
@@ -301,47 +277,6 @@ function http_multidisorder(ctx, desync)
 	end
 end
 
--- Enhanced methodeol: prepends padding before request
-function http_methodeol_v2(ctx, desync)
-    if not desync.dis.tcp then
-        instance_cutoff_shim(ctx, desync)
-        return
-    end
-    direction_cutoff_opposite(ctx, desync)
-    if desync.l7payload=="http_req" and direction_check(desync) then
-        local hdis = http_dissect_req(desync.dis.payload)
-        local ua = hdis.headers["user-agent"]
-        if ua then
-            -- Add blank lines and whitespace
-            local garbage = "\r\n \r\n\t\r\n"
-            desync.dis.payload = garbage .. string.sub(desync.dis.payload,1,ua.pos_end-2) .. (string.sub(desync.dis.payload,ua.pos_end+1) or "")
-            DLOG("http_methodeol_v2: applied with extra garbage")
-            return VERDICT_MODIFY
-        end
-    end
-end
-
--- Methodeol + Host header case alteration
-function http_methodeol_hostcase(ctx, desync)
-    if not desync.dis.tcp then
-        instance_cutoff_shim(ctx, desync)
-        return
-    end
-    direction_cutoff_opposite(ctx, desync)
-    if desync.l7payload=="http_req" and direction_check(desync) then
-        local payload = desync.dis.payload
-
-        -- Change Host: to HoSt:
-        payload = string.gsub(payload, "\r\nHost:", "\r\nHoSt:")
-
-        -- Prepend padding before request
-        payload = "\r\n" .. payload
-
-        desync.dis.payload = payload
-        DLOG("http_methodeol_hostcase: applied")
-        return VERDICT_MODIFY
-    end
-end
 
 -- AGGRESSIVE TLS BYPASS for stubborn DPI (like browserleaks.com)
 -- Combines multiple techniques: fake flood + SNI split + disorder + seqovl
@@ -542,6 +477,7 @@ function tls_aggressive(ctx, desync)
 	end
 end
 
+
 -- TLS with extreme multi-split at SNI and surrounding areas
 -- Splits TLS Client Hello into many small pieces around SNI
 -- standard args : direction, payload, fooling, ip_id, rawsend, reconstruct
@@ -606,6 +542,7 @@ function tls_multisplit_sni(ctx, desync)
 		end
 	end
 end
+
 
 -- TLS Fake flood + standard multidisorder
 -- Sends many fakes before applying standard multidisorder
@@ -708,6 +645,7 @@ function tls_fake_flood(ctx, desync)
 	end
 end
 
+
 -- ============================================================================
 -- SOFT/GENTLE TLS STRATEGIES - less aggressive, won't break sites
 -- ============================================================================
@@ -756,6 +694,7 @@ function tls_fake_simple(ctx, desync)
 		end
 	end
 end
+
 
 -- Gentle split - only 2 parts, no disorder
 -- Splits at midsld position only
@@ -813,6 +752,7 @@ function tls_split_gentle(ctx, desync)
 		end
 	end
 end
+
 
 -- Fake + gentle split combo
 -- Send fakes then split at one position
@@ -892,6 +832,7 @@ function tls_fake_split(ctx, desync)
 		end
 	end
 end
+
 
 -- Disorder with only 3 parts (gentle)
 -- Less fragmentation = works with more servers
@@ -973,6 +914,7 @@ function tls_disorder_gentle(ctx, desync)
 		end
 	end
 end
+
 
 -- ============================================================================
 -- MGTS HTTP BYPASS STRATEGIES: optimized for MGTS DPI
@@ -1068,6 +1010,7 @@ function http_seqovl_host(ctx, desync)
 	end
 end
 
+
 -- HTTP with IP fragmentation
 -- Fragment IP packets to evade DPI without fragment reassembly
 -- standard args : direction, payload, rawsend
@@ -1108,6 +1051,7 @@ function http_ipfrag(ctx, desync)
 		end
 	end
 end
+
 
 -- HTTP Host case modification
 -- Alter case in "Host:" header for case-sensitive DPI parsers
@@ -1154,58 +1098,6 @@ function http_hostmod(ctx, desync)
 	end
 end
 
--- HTTP with absolute URL
--- Absolute URI request: GET http://host/path HTTP/1.1
--- Bypasses DPI parsing only the Host header.
--- NOTE: Not used by presets. Iterating hdis.headers uses numeric keys
--- (header.name is absent, matching fails); length changes desync seq numbers.
--- standard args : direction, payload
--- arg : fake_host=<str> - fake Host header value (default google.com)
-function http_absolute_url(ctx, desync)
-	if not desync.dis.tcp then
-		instance_cutoff(ctx)
-		return
-	end
-	direction_cutoff_opposite(ctx, desync)
-
-	if desync.l7payload=="http_req" and direction_check(desync) then
-		local hdis = http_dissect_req(desync.dis.payload)
-		local host_idx = hdis and array_field_search(hdis.headers, "header_low", "host")
-		if not host_idx then
-			DLOG("http_absolute_url: cannot parse HTTP")
-			return
-		end
-
-		local real_host = string.sub(desync.dis.payload, hdis.headers[host_idx].pos_value_start, hdis.headers[host_idx].pos_end)
-		local fake_host = desync.arg.fake_host or "google.com"
-		local path = hdis.path or "/"
-
-		-- Build request with absolute URI
-		-- GET http://real_host/path HTTP/1.1\r\nHost: fake_host\r\n...
-		local abs_url = "http://" .. real_host .. path
-		local new_request = hdis.method .. " " .. abs_url .. " " .. hdis.version .. "\r\n"
-
-		-- Populate headers with fake Host
-		for name, header in pairs(hdis.headers) do
-			if name == "host" then
-				new_request = new_request .. "Host: " .. fake_host .. "\r\n"
-			else
-				local header_value = string.sub(desync.dis.payload, header.pos_value_start, header.pos_end)
-				new_request = new_request .. header.name .. ": " .. header_value .. "\r\n"
-			end
-		end
-		new_request = new_request .. "\r\n"
-
-		-- Append body if present
-		if hdis.body_start and hdis.body_start <= #desync.dis.payload then
-			new_request = new_request .. string.sub(desync.dis.payload, hdis.body_start)
-		end
-
-		desync.dis.payload = new_request
-		DLOG("http_absolute_url: rewrote to absolute URL, Host header now '"..fake_host.."'")
-		return VERDICT_MODIFY
-	end
-end
 
 -- HTTP Triple seqovl attack
 -- Send 3 versions of Host value with identical seq number:
@@ -1294,6 +1186,7 @@ function http_triple_seqovl(ctx, desync)
 		end
 	end
 end
+
 
 -- HTTP Disorder + seqovl combo for MGTS
 -- Combine disorder with seqovl targeted at Host header
@@ -1386,6 +1279,7 @@ function http_mgts_combo(ctx, desync)
 	end
 end
 
+
 -- Combined: Fake + gentle disorder
 -- Best of both: fakes confuse DPI, gentle disorder doesn't break server
 -- standard args : direction, payload, fooling, ip_id, rawsend, reconstruct
@@ -1458,6 +1352,7 @@ function tls_fake_disorder_gentle(ctx, desync)
 		end
 	end
 end
+
 
 --[[
     multisplit_tls - multisplit with dynamic TLS pattern generation
@@ -1535,7 +1430,6 @@ local function is_valid_tls_client_hello(data)
 
     return true
 end
-
 function multisplit_tls(ctx, desync)
     -- TCP only
     if not desync.dis.tcp then
@@ -1765,165 +1659,6 @@ function multisplit_tls(ctx, desync)
     end
 end
 
--- ============================================================================
--- HTTP evasion strategies for DPI
--- ============================================================================
-
--- HTTP Garbage Prefix: prepends junk before request
--- Corrupts DPI stream parser looking only at initial bytes
--- standard args : direction, payload
--- arg : mode=<str> - "crlf", "spaces", "tabs", "mixed", "nulls" (default mixed)
--- arg : amount=N - garbage prefix size in bytes (default 50)
-function http_garbage_prefix(ctx, desync)
-    if not desync.dis.tcp then
-        instance_cutoff_shim(ctx, desync)
-        return
-    end
-    direction_cutoff_opposite(ctx, desync)
-
-    if desync.l7payload=="http_req" and direction_check(desync) then
-        local mode = desync.arg.mode or "mixed"
-        local amount = tonumber(desync.arg.amount) or 50
-        local garbage = ""
-
-        if mode == "crlf" then
-            -- Consecutive \r\n sequences
-            garbage = string.rep("\r\n", math.floor(amount / 2))
-        elseif mode == "spaces" then
-            -- Spaces with \r\n
-            garbage = string.rep(" \r\n", math.floor(amount / 3))
-        elseif mode == "tabs" then
-            -- Tabs with \r\n
-            garbage = string.rep("\t\r\n", math.floor(amount / 3))
-        elseif mode == "mixed" then
-            -- Mixed whitespace and \r\n
-            for i = 1, math.floor(amount / 4) do
-                local r = i % 4
-                if r == 0 then garbage = garbage .. "\r\n"
-                elseif r == 1 then garbage = garbage .. " \r\n"
-                elseif r == 2 then garbage = garbage .. "\t\r\n"
-                else garbage = garbage .. "  \r\n"
-                end
-            end
-        elseif mode == "headers" then
-            -- Invalid fake header lines at start
-            garbage = "X-Fake: garbage\r\n" ..
-                      "X-Ignore: me\r\n" ..
-                      string.rep("\r\n", 5)
-        end
-
-        desync.dis.payload = garbage .. desync.dis.payload
-        DLOG("http_garbage_prefix: added "..#garbage.." bytes of '"..mode.."' garbage")
-        return VERDICT_MODIFY
-    end
-end
-
--- HTTP Pipeline Fake: sends fake request ahead of real request
--- DPI caches destination domain from initial request
--- standard args : direction, payload, rawsend
--- arg : fake_host=<str> - fake request host (default www.google.com)
-function http_pipeline_fake(ctx, desync)
-    if not desync.dis.tcp then
-        instance_cutoff(ctx)
-        return
-    end
-    direction_cutoff_opposite(ctx, desync)
-
-    local data = desync.reasm_data or desync.dis.payload
-    if #data>0 and desync.l7payload=="http_req" and direction_check(desync) then
-        if replay_first(desync) then
-            local fake_host = desync.arg.fake_host or "www.google.com"
-
-            -- Generate minimal fake HTTP request
-            local fake_request = "GET / HTTP/1.1\r\n" ..
-                                "Host: " .. fake_host .. "\r\n" ..
-                                "Connection: keep-alive\r\n" ..
-                                "\r\n"
-
-            local opts = {
-                rawsend = rawsend_opts_base(desync),
-                reconstruct = {},
-                ipfrag = {},
-                fooling = {}
-            }
-
-            -- Transmit FAKE request first
-            if b_debug then DLOG("http_pipeline_fake: sending FAKE request to "..fake_host) end
-            if not rawsend_payload_segmented(desync, fake_request, 0, opts) then
-                return VERDICT_PASS
-            end
-
-            -- Transmit REAL request with offset = fake request length
-            if b_debug then DLOG("http_pipeline_fake: sending REAL request") end
-            if not rawsend_payload_segmented(desync, data, #fake_request, opts) then
-                return VERDICT_PASS
-            end
-
-            replay_drop_set(desync)
-            return VERDICT_DROP
-        end
-
-        if replay_drop(desync) then
-            return VERDICT_DROP
-        end
-    end
-end
-
--- HTTP Header Shuffle: reorders headers and prepends fake Host
--- Injects fake Host before real Host, targeting first-match DPI parsers
--- standard args : direction, payload
--- arg : fake_host=<str>
--- arg : add_x_host - also add X-Host header containing real host
-function http_header_shuffle(ctx, desync)
-    if not desync.dis.tcp then
-        instance_cutoff_shim(ctx, desync)
-        return
-    end
-    direction_cutoff_opposite(ctx, desync)
-
-    if desync.l7payload=="http_req" and direction_check(desync) then
-        local hdis = http_dissect_req(desync.dis.payload)
-        local host_idx = hdis and array_field_search(hdis.headers, "header_low", "host")
-        if not host_idx then
-            DLOG("http_header_shuffle: no Host header")
-            return
-        end
-
-        local host_pos = hdis.headers[host_idx]
-        local real_host = string.sub(desync.dis.payload, host_pos.pos_value_start, host_pos.pos_end)
-        local fake_host = desync.arg.fake_host or "www.google.com"
-
-        -- Locate end of request line (GET / HTTP/1.1)
-        local first_line_end = string.find(desync.dis.payload, "\r\n", 1, true)
-        if not first_line_end then
-            DLOG("http_header_shuffle: cannot find end of first line")
-            return
-        end
-
-        -- Assemble modified request:
-        -- 1. Request line (GET / HTTP/1.1)
-        -- 2. FAKE Host header
-        -- 3. Remaining headers (including real Host)
-        local new_payload = string.sub(desync.dis.payload, 1, first_line_end + 1) ..  -- including \r\n
-                           "Host: " .. fake_host .. "\r\n" ..  -- Fake Host FIRST
-                           string.sub(desync.dis.payload, first_line_end + 2)  -- remainder
-
-        -- Optionally insert X-Host with real host
-        if desync.arg.add_x_host then
-            -- Insert before real Host
-            local real_host_pos = string.find(new_payload, "\r\nHost: "..real_host, 1, true)
-            if real_host_pos then
-                new_payload = string.sub(new_payload, 1, real_host_pos + 1) ..
-                             "X-Real-Host: " .. real_host .. "\r\n" ..
-                             string.sub(new_payload, real_host_pos + 2)
-            end
-        end
-
-        desync.dis.payload = new_payload
-        DLOG("http_header_shuffle: added fake Host '"..fake_host.."' before real '"..real_host.."'")
-        return VERDICT_MODIFY
-    end
-end
 
 -- HTTP Method Obfuscation
 -- Evades DPI parsing standard GET/POST methods only
@@ -1964,56 +1699,6 @@ function http_method_obfuscate(ctx, desync)
     end
 end
 
--- HTTP Absolute URI
--- Formats request as GET http://real-host.com/ HTTP/1.1
--- Sets Host header to fake value
--- standard args : direction, payload
--- arg : fake_host=<str>
-function http_absolute_uri_v2(ctx, desync)
-    if not desync.dis.tcp then
-        instance_cutoff_shim(ctx, desync)
-        return
-    end
-    direction_cutoff_opposite(ctx, desync)
-
-    if desync.l7payload=="http_req" and direction_check(desync) then
-        local hdis = http_dissect_req(desync.dis.payload)
-        local host_idx = hdis and array_field_search(hdis.headers, "header_low", "host")
-        if not host_idx then
-            DLOG("http_absolute_uri_v2: cannot parse")
-            return
-        end
-
-        local host_pos = hdis.headers[host_idx]
-        local real_host = string.sub(desync.dis.payload, host_pos.pos_value_start, host_pos.pos_end)
-        local fake_host = desync.arg.fake_host or "www.google.com"
-
-        -- Locate URI start after method
-        local method_end = string.find(desync.dis.payload, " ", 1, true)
-        local path_end = string.find(desync.dis.payload, " HTTP/", 1, true)
-
-        if method_end and path_end and path_end > method_end then
-            local method = string.sub(desync.dis.payload, 1, method_end - 1)
-            local path = string.sub(desync.dis.payload, method_end + 1, path_end - 1)
-
-            -- Construct absolute URI
-            local abs_uri = "http://" .. real_host .. path
-
-            -- Format request with absolute URI and fake Host
-            local new_payload = method .. " " .. abs_uri ..
-                               string.sub(desync.dis.payload, path_end)
-
-            -- Substitute Host with fake host
-            new_payload = string.gsub(new_payload,
-                                     "\r\nHost: " .. real_host,
-                                     "\r\nHost: " .. fake_host)
-
-            desync.dis.payload = new_payload
-            DLOG("http_absolute_uri_v2: uri="..abs_uri.." fake_host="..fake_host)
-            return VERDICT_MODIFY
-        end
-    end
-end
 
 -- HTTP Split At Host Byte
 -- Splits Host value into byte-sized segments with transmission delay
@@ -2090,56 +1775,6 @@ function http_host_bytesplit(ctx, desync)
     end
 end
 
--- HTTP Fake Continuation
--- Previews keep-alive continuation to mislead DPI state
--- standard args : direction, payload, rawsend
--- arg : fake_host=<str>
-function http_fake_continuation(ctx, desync)
-    if not desync.dis.tcp then
-        instance_cutoff(ctx)
-        return
-    end
-    direction_cutoff_opposite(ctx, desync)
-
-    local data = desync.reasm_data or desync.dis.payload
-    if #data>0 and desync.l7payload=="http_req" and direction_check(desync) then
-        if replay_first(desync) then
-            local fake_host = desync.arg.fake_host or "www.google.com"
-
-            local opts = {
-                rawsend = rawsend_opts_base(desync),
-                reconstruct = {},
-                ipfrag = {},
-                fooling = {}
-            }
-
-            -- Send fake response segment (mimics prior keep-alive state)
-            local fake_response = "HTTP/1.1 200 OK\r\n" ..
-                                 "Content-Length: 0\r\n" ..
-                                 "Connection: keep-alive\r\n" ..
-                                 "\r\n"
-
-            -- First send fake response
-            if b_debug then DLOG("http_fake_continuation: sending fake response") end
-            if not rawsend_payload_segmented(desync, fake_response, 0, opts) then
-                return VERDICT_PASS
-            end
-
-            -- Then send real request
-            if b_debug then DLOG("http_fake_continuation: sending real request") end
-            if not rawsend_payload_segmented(desync, data, #fake_response, opts) then
-                return VERDICT_PASS
-            end
-
-            replay_drop_set(desync)
-            return VERDICT_DROP
-        end
-
-        if replay_drop(desync) then
-            return VERDICT_DROP
-        end
-    end
-end
 
 -- HTTP Version Downgrade
 -- Downgrades HTTP version for DPI lacking legacy support
@@ -2156,19 +1791,9 @@ function http_version_downgrade(ctx, desync)
         local version = desync.arg.version or "1.0"
         local payload = desync.dis.payload
 
-        if version == "1.0" then
+        if version == "1.0" or version == "0.9" then
+            -- HTTP/1.0 preserves exact 8-byte length, maintaining TCP sequence numbers
             payload = string.gsub(payload, "HTTP/1.1", "HTTP/1.0")
-            -- Strip Host header for HTTP/1.0
-            -- payload = string.gsub(payload, "\r\nHost: [^\r\n]+", "")
-        elseif version == "0.9" then
-            -- HTTP/0.9: simple "GET /path" without version or headers
-            local path_start = string.find(payload, " ", 1, true)
-            local path_end = string.find(payload, " HTTP/", 1, true)
-            if path_start and path_end then
-                local method = string.sub(payload, 1, path_start - 1)
-                local path = string.sub(payload, path_start + 1, path_end - 1)
-                payload = method .. " " .. path .. "\r\n"
-            end
         end
 
         desync.dis.payload = payload
@@ -2177,390 +1802,6 @@ function http_version_downgrade(ctx, desync)
     end
 end
 
--- HTTP Pipeline Fake v2: fake request discarded, real request delivered
--- Fake request sent with bad checksum or low TTL; server drops it
--- DPI inspects fake host, server receives real request
--- standard args : direction, payload, rawsend, fooling
--- arg : fake_host=<str> - fake request host (default www.google.com)
--- arg : ttl=N - TTL for fake packet (default 1)
--- arg : badsum - use invalid TCP checksum for fake packet (recommended)
-function http_pipeline_fake_v2(ctx, desync)
-    if not desync.dis.tcp then
-        instance_cutoff(ctx)
-        return
-    end
-    direction_cutoff_opposite(ctx, desync)
-
-    local data = desync.reasm_data or desync.dis.payload
-    if #data>0 and desync.l7payload=="http_req" and direction_check(desync) then
-        if replay_first(desync) then
-            local fake_host = desync.arg.fake_host or "www.google.com"
-            local fake_ttl = tonumber(desync.arg.ttl) or 1
-
-            -- Build fake HTTP request
-            local fake_request = "GET / HTTP/1.1\r\n" ..
-                                "Host: " .. fake_host .. "\r\n" ..
-                                "Connection: keep-alive\r\n" ..
-                                "\r\n"
-
-            -- Configure FAKE packet (badsum/low TTL: dropped before server)
-            local opts_fake = {
-                rawsend = rawsend_opts(desync),
-                reconstruct = reconstruct_opts(desync),
-                ipfrag = {},
-                fooling = {
-                    badsum = desync.arg.badsum or true,  -- invalid checksum
-                }
-            }
-
-            -- Configure REAL packet
-            local opts_real = {
-                rawsend = rawsend_opts_base(desync),
-                reconstruct = {},
-                ipfrag = {},
-                fooling = {}
-            }
-
-            -- Send FAKE request (badsum: dropped by server, parsed by DPI)
-            local fake_dis = deepcopy(desync.dis)
-            fake_dis.payload = fake_request
-
-            -- Set low TTL
-            if fake_dis.ip then
-                fake_dis.ip.ip_ttl = fake_ttl
-            end
-            if fake_dis.ip6 then
-                fake_dis.ip6.ip6_hlim = fake_ttl
-            end
-
-            if b_debug then DLOG("http_pipeline_fake_v2: sending FAKE (TTL="..fake_ttl..", badsum) to "..fake_host) end
-            rawsend_dissect(fake_dis, opts_fake.rawsend)
-
-            -- Send REAL request to server
-            if b_debug then DLOG("http_pipeline_fake_v2: sending REAL request") end
-            if not rawsend_payload_segmented(desync, data, 0, opts_real) then
-                return VERDICT_PASS
-            end
-
-            replay_drop_set(desync)
-            return VERDICT_DROP
-        end
-
-        if replay_drop(desync) then
-            return VERDICT_DROP
-        end
-    end
-end
-
--- HTTP Fake Header Inject: injects fake X-Host header
--- Server ignores X-Host; DPI parser inspects it
--- standard args : direction, payload
--- arg : fake_host=<str>
-function http_fake_xhost(ctx, desync)
-    if not desync.dis.tcp then
-        instance_cutoff_shim(ctx, desync)
-        return
-    end
-    direction_cutoff_opposite(ctx, desync)
-
-    if desync.l7payload=="http_req" and direction_check(desync) then
-        local fake_host = desync.arg.fake_host or "www.google.com"
-        local payload = desync.dis.payload
-
-        -- Locate end of request line
-        local first_line_end = string.find(payload, "\r\n", 1, true)
-        if first_line_end then
-            -- Insert X-Host BEFORE real Host header
-            -- Targets DPI scanning for raw "Host:" string without header parsing
-            local fake_header = "X-Host: " .. fake_host .. "\r\n" ..
-                               "X-Forwarded-Host: " .. fake_host .. "\r\n"
-
-            payload = string.sub(payload, 1, first_line_end + 1) ..
-                     fake_header ..
-                     string.sub(payload, first_line_end + 2)
-
-            desync.dis.payload = payload
-            DLOG("http_fake_xhost: added fake X-Host: "..fake_host)
-            return VERDICT_MODIFY
-        end
-    end
-end
-
--- HTTP with OOB byte: injects TCP out-of-band byte
--- Disrupts DPI parsers handling urgent data incorrectly
--- standard args : direction, payload
-function http_oob_prefix(ctx, desync)
-    if not desync.dis.tcp then
-        instance_cutoff_shim(ctx, desync)
-        return
-    end
-    direction_cutoff_opposite(ctx, desync)
-
-    if desync.l7payload=="http_req" and direction_check(desync) then
-        -- Prepend garbage byte: servers ignore leading bytes
-        -- before GET/POST methods
-        desync.dis.payload = "\n" .. desync.dis.payload
-        DLOG("http_oob_prefix: added \\n prefix")
-        return VERDICT_MODIFY
-    end
-end
-
-
--- Insert blank X-header inside header block
--- Safe header tolerated by nginx/Apache
-function http_inject_safe_header(ctx, desync)
-    if not desync.dis.tcp then
-        instance_cutoff_shim(ctx, desync)
-        return
-    end
-    direction_cutoff_opposite(ctx, desync)
-
-    if desync.l7payload=="http_req" and direction_check(desync) then
-        local payload = desync.dis.payload
-
-        -- Locate offset before Host:
-        local host_pos = string.find(payload, "\r\nHost:", 1, true)
-        if host_pos then
-            -- Insert padding header before Host
-            payload = string.sub(payload, 1, host_pos + 1) ..
-                     "X-Padding: " .. string.rep("x", 50) .. "\r\n" ..
-                     string.sub(payload, host_pos + 2)
-            desync.dis.payload = payload
-            DLOG("http_inject_safe_header: added X-Padding header")
-            return VERDICT_MODIFY
-        end
-    end
-end
-
--- ============================================================================
--- METHODEOL PREFIX VARIANTS: prepends bytes before request
--- ============================================================================
--- WARNING: Prepending or inserting into payload increases byte length
--- in TCP stream without shifting socket sequence numbers.
--- Causes persistent connections to desync. Use seqovl/disorder instead.
-
--- Variant 1: Leading \r\n only (without User-Agent truncation)
--- HTTP servers ignore leading \r\n before GET
-function http_methodeol_safe(ctx, desync)
-    if not desync.dis.tcp then
-        instance_cutoff_shim(ctx, desync)
-        return
-    end
-    direction_cutoff_opposite(ctx, desync)
-
-    if desync.l7payload=="http_req" and direction_check(desync) then
-        -- Prepend \r\n, preserve original headers
-        desync.dis.payload = "\r\n" .. desync.dis.payload
-        DLOG("http_methodeol_safe: added \\r\\n prefix")
-        return VERDICT_MODIFY
-    end
-end
-
--- Variant 2: Leading space before GET
--- Formatted as " GET / HTTP/1.1"
-function http_space_prefix(ctx, desync)
-    if not desync.dis.tcp then
-        instance_cutoff_shim(ctx, desync)
-        return
-    end
-    direction_cutoff_opposite(ctx, desync)
-
-    if desync.l7payload=="http_req" and direction_check(desync) then
-        desync.dis.payload = " " .. desync.dis.payload
-        DLOG("http_space_prefix: added space prefix")
-        return VERDICT_MODIFY
-    end
-end
-
--- Variant 3: Unix \n newline instead of \r\n
-function http_lf_prefix(ctx, desync)
-    if not desync.dis.tcp then
-        instance_cutoff_shim(ctx, desync)
-        return
-    end
-    direction_cutoff_opposite(ctx, desync)
-
-    if desync.l7payload=="http_req" and direction_check(desync) then
-        desync.dis.payload = "\n" .. desync.dis.payload
-        DLOG("http_lf_prefix: added \\n prefix")
-        return VERDICT_MODIFY
-    end
-end
-
--- Variant 4: Leading tab before GET
-function http_tab_prefix(ctx, desync)
-    if not desync.dis.tcp then
-        instance_cutoff_shim(ctx, desync)
-        return
-    end
-    direction_cutoff_opposite(ctx, desync)
-
-    if desync.l7payload=="http_req" and direction_check(desync) then
-        desync.dis.payload = "\t" .. desync.dis.payload
-        DLOG("http_tab_prefix: added tab prefix")
-        return VERDICT_MODIFY
-    end
-end
-
--- Variant 5: Safe X-Padding header
--- X-Padding header is ignored by server but confuses DPI parsing
-function http_xpadding(ctx, desync)
-    if not desync.dis.tcp then
-        instance_cutoff_shim(ctx, desync)
-        return
-    end
-    direction_cutoff_opposite(ctx, desync)
-
-    if desync.l7payload=="http_req" and direction_check(desync) then
-        local payload = desync.dis.payload
-
-        -- Locate end of request line (GET / HTTP/1.1\r\n)
-        local first_line_end = string.find(payload, "\r\n", 1, true)
-        if first_line_end then
-            -- Insert X-header following request line
-            local padding = string.rep("x", 100)  -- 100 padding characters
-            payload = string.sub(payload, 1, first_line_end + 1) ..
-                     "X-Pad: " .. padding .. "\r\n" ..
-                     string.sub(payload, first_line_end + 2)
-            desync.dis.payload = payload
-            DLOG("http_xpadding: added X-Pad header with 100 bytes")
-            return VERDICT_MODIFY
-        end
-    end
-end
-
--- Variant 6: Multiple \r\n sequences
--- arg : count=N - number of \r\n sequences (default 3)
-function http_multi_crlf(ctx, desync)
-    if not desync.dis.tcp then
-        instance_cutoff_shim(ctx, desync)
-        return
-    end
-    direction_cutoff_opposite(ctx, desync)
-
-    if desync.l7payload=="http_req" and direction_check(desync) then
-        local count = tonumber(desync.arg.count) or 3
-        local prefix = string.rep("\r\n", count)
-        desync.dis.payload = prefix .. desync.dis.payload
-        DLOG("http_multi_crlf: added "..count.." x \\r\\n prefix")
-        return VERDICT_MODIFY
-    end
-end
-
--- Variant 7: Combined \r\n and spaces
-function http_mixed_prefix(ctx, desync)
-    if not desync.dis.tcp then
-        instance_cutoff_shim(ctx, desync)
-        return
-    end
-    direction_cutoff_opposite(ctx, desync)
-
-    if desync.l7payload=="http_req" and direction_check(desync) then
-        -- Sequence of \r\n followed by spaces and tab
-        desync.dis.payload = "\r\n \t" .. desync.dis.payload
-        DLOG("http_mixed_prefix: added mixed whitespace prefix")
-        return VERDICT_MODIFY
-    end
-end
-
--- HTTP combo bypass v2: corrected tcp_seq tracking
-function http_combo_bypass(ctx, desync)
-    if not desync.dis.tcp then
-        instance_cutoff(ctx)
-        return
-    end
-    direction_cutoff_opposite(ctx, desync)
-
-    local data = desync.reasm_data or desync.dis.payload
-    if #data>0 and desync.l7payload=="http_req" and direction_check(desync) then
-        if replay_first(desync) then
-            local fake_host = desync.arg.fake_host or "www.iana.org"
-            local repeats = tonumber(desync.arg.repeats) or 15
-            local prefix = desync.arg.prefix or "\r\n"
-            local hostcase = desync.arg.hostcase or "HoSt"
-
-            -- 1. SEND FAKE PACKETS
-            local fake_http = "GET / HTTP/1.1\r\nHost: " .. fake_host ..
-                             "\r\nUser-Agent: Mozilla/5.0\r\nAccept: */*\r\n" ..
-                             "Connection: keep-alive\r\n\r\n"
-
-            local opts_fake = {
-                rawsend = rawsend_opts(desync),
-                reconstruct = reconstruct_opts(desync),
-                ipfrag = {},
-                fooling = { badsum = true }
-            }
-            opts_fake.rawsend.repeats = repeats
-
-            local fake_dis = deepcopy(desync.dis)
-            fake_dis.payload = fake_http
-            if fake_dis.ip then fake_dis.ip.ip_ttl = 2 end
-            if fake_dis.ip6 then fake_dis.ip6.ip6_hlim = 2 end
-
-            DLOG("http_combo_bypass: sending "..repeats.." fake packets")
-            rawsend_dissect(fake_dis, opts_fake.rawsend)
-
-            -- 2. MODIFY PAYLOAD
-            local modified = data
-
-            if prefix and #prefix > 0 then
-                modified = prefix .. modified
-            end
-
-            if hostcase then
-                modified = string.gsub(modified, "Host:", hostcase..":", 1)
-            end
-
-            -- 3. SEND AS SINGLE PACKET (no split)
-            local opts_real = {
-                rawsend = rawsend_opts_base(desync),
-                reconstruct = {},
-                ipfrag = {},
-                fooling = {}
-            }
-
-            local real_dis = deepcopy(desync.dis)
-            real_dis.payload = modified
-
-            DLOG("http_combo_bypass: sending modified request, len="..#modified)
-            rawsend_dissect(real_dis, opts_real.rawsend)
-
-            replay_drop_set(desync)
-            return VERDICT_DROP
-        end
-
-        if replay_drop(desync) then
-            return VERDICT_DROP
-        end
-    end
-end
-
--- Simplified variant: \r\n prefix + hostcase without split
--- For servers intolerant of TCP segmentation
-function http_simple_bypass(ctx, desync)
-    if not desync.dis.tcp then
-        instance_cutoff_shim(ctx, desync)
-        return
-    end
-    direction_cutoff_opposite(ctx, desync)
-
-    if desync.l7payload=="http_req" and direction_check(desync) then
-        local prefix = desync.arg.prefix or "\r\n"
-        local hostcase = desync.arg.hostcase or "HoSt"
-
-        local payload = desync.dis.payload
-
-        -- Prepend \r\n
-        payload = prefix .. payload
-
-        -- Change Host: to HoSt:
-        payload = string.gsub(payload, "Host:", hostcase..":", 1)
-
-        desync.dis.payload = payload
-        DLOG("http_simple_bypass: prefix + hostcase applied")
-        return VERDICT_MODIFY
-    end
-end
 
 -- ============================================================================
 -- DISCORD BYPASS STRATEGIES: Experimental DPI evasion techniques
@@ -3269,627 +2510,8 @@ function discord_ultimate_combo(ctx, desync)
     return VERDICT_DROP
 end
 
--- ==================== ZEPHYRON / ZAPRET-GUI MODERN EXTENSIONS ====================
 
--- arg : seqovl=N . decrease seq of the first segment by N bytes, fill with pattern
--- arg : seqovl_pattern=<blob> . override pattern
--- arg : blob=<blob> - use this data instead of desync.dis.payload
--- arg : optional - skip if blob is absent. use zero pattern if seqovl_pattern blob is absent
--- arg : nodrop - do not drop current dissect
-function multisplitdisorder(ctx, desync)
-	if not desync.dis.tcp then
-		if not desync.dis.icmp then instance_cutoff_shim(ctx, desync) end
-		return
-	end
-	direction_cutoff_opposite(ctx, desync)
-	if desync.arg.optional and desync.arg.blob and not blob_exist(desync, desync.arg.blob) then
-		DLOG("multisplitdisorder: blob '"..desync.arg.blob.."' not found. skipped")
-		return
-	end
-	local data = blob_or_def(desync, desync.arg.blob) or desync.reasm_data or desync.dis.payload
-	if #data>0 and direction_check(desync) and payload_check(desync) then
-		if replay_first(desync) then
-			local spos = desync.arg.pos or "2"
-			local mode = desync.arg.mode or "interlace"
-			if b_debug then DLOG("multisplitdisorder["..mode.."]: split pos: "..spos) end
-			local pos = resolve_multi_pos(data, desync.l7payload, spos)
-			if b_debug then DLOG("multisplitdisorder["..mode.."]: resolved split pos: "..table.concat(zero_based_pos(pos)," ")) end
-			delete_pos_1(pos)
-			if #pos>0 then
-				-- build send order depending on mode
-				local order = {}
-				if mode == "interlace" then
-					-- alternate picking from the end and from the start
-					-- for segments 0,1,2,3,4 produces: 4,0,3,1,2
-					local lo, hi = 0, #pos
-					local pick_hi = true
-					while lo <= hi do
-						if pick_hi then
-							table.insert(order, hi)
-							hi = hi - 1
-						else
-							table.insert(order, lo)
-							lo = lo + 1
-						end
-						pick_hi = not pick_hi
-					end
-				elseif mode == "random" then
-					for i = 0, #pos do table.insert(order, i) end
-					-- Fisher-Yates shuffle
-					for k = #order, 2, -1 do
-						local j = math.random(1, k)
-						order[k], order[j] = order[j], order[k]
-					end
-				elseif mode == "disorder" then
-					for i = #pos, 0, -1 do table.insert(order, i) end
-				else
-					-- "split" or anything else — forward
-					for i = 0, #pos do table.insert(order, i) end
-				end
-
-				if b_debug then
-					local os = {}
-					for _, v in ipairs(order) do table.insert(os, tostring(v)) end
-					DLOG("multisplitdisorder["..mode.."]: send order: "..table.concat(os, ","))
-				end
-
-				-- send segments in computed order
-				for _, i in ipairs(order) do
-					local pos_start = pos[i] or 1
-					local pos_end = i < #pos and pos[i+1] - 1 or #data
-					local part = string.sub(data, pos_start, pos_end)
-					local seqovl = 0
-					-- seqovl on the first data segment regardless of send position
-					if i == 0 and desync.arg.seqovl and tonumber(desync.arg.seqovl) > 0 then
-						seqovl = tonumber(desync.arg.seqovl)
-						local pat = "\x00"
-						if desync.arg.seqovl_pattern then
-							if desync.arg.optional and not blob_exist(desync, desync.arg.seqovl_pattern) then
-								DLOG("multisplitdisorder: blob '"..desync.arg.seqovl_pattern.."' not found. using zero pattern")
-							else
-								pat = blob(desync, desync.arg.seqovl_pattern)
-							end
-						end
-						part = pattern(pat, 1, seqovl) .. part
-					end
-					if b_debug then DLOG("multisplitdisorder["..mode.."]: sending seg "..(i+1).." "..(pos_start-1).."-"..(pos_end-1).." len="..#part.." seqovl="..seqovl.." : "..hexdump_dlog(part)) end
-					if not rawsend_payload_segmented(desync, part, pos_start - 1 - seqovl) then
-						return VERDICT_PASS
-					end
-				end
-				replay_drop_set(desync)
-				return desync.arg.nodrop and VERDICT_PASS or VERDICT_DROP
-			else
-				DLOG("multisplitdisorder["..mode.."]: no valid split positions")
-			end
-		else
-			DLOG("multisplitdisorder: not acting on further replay pieces")
-		end
-		if replay_drop(desync) then
-			return desync.arg.nodrop and VERDICT_PASS or VERDICT_DROP
-		end
-	end
-end
-
--- decoy_hello — sends fake TLS ClientHello with whitelisted SNI (e.g. ya.ru)
--- and low TTL to poison DPI connection classification.
--- Packets die en route but DPI sees them first and caches "ya.ru" for this flow.
---
--- standard args : direction, payload, fooling, ip_id, rawsend, reconstruct, ipfrag
--- arg : blob=<blob> - captured TLS ClientHello dump. if absent, clones current outgoing payload as base
--- arg : tls_mod=<list> - modify decoy SNI: sni=ya.ru, rndsni, rnd, dupsid, padencap
--- arg : repeats=N - how many decoy copies to blast. default 3
--- arg : optional - skip if blob is absent
-function decoy_hello(ctx, desync)
-	if not desync.dis.tcp then
-		if not desync.dis.icmp then instance_cutoff_shim(ctx, desync) end
-		return
-	end
-	direction_cutoff_opposite(ctx, desync)
-	if direction_check(desync) and payload_check(desync) then
-		if replay_first(desync) then
-			-- build decoy payload: either pre-captured blob or clone of current packet
-			local decoy
-			if desync.arg.blob then
-				if desync.arg.optional and not blob_exist(desync, desync.arg.blob) then
-					DLOG("decoy_hello: blob '"..desync.arg.blob.."' not found. skipped")
-					return
-				end
-				decoy = blob(desync, desync.arg.blob)
-			else
-				decoy = desync.reasm_data or desync.dis.payload
-			end
-			if not decoy or #decoy == 0 then
-				DLOG("decoy_hello: empty decoy payload")
-				return
-			end
-			-- swap SNI or apply other tls mods
-			if desync.arg.tls_mod then
-				decoy = tls_mod_shim(desync, decoy, desync.arg.tls_mod, desync.reasm_data or desync.dis.payload)
-			end
-			local repeats = tonumber(desync.arg.repeats) or 3
-			local options = desync_opts(desync)
-			for r = 1, repeats do
-				local dis = deepcopy(desync.dis)
-				dis.payload = decoy
-				apply_fooling(desync, dis)
-				apply_ip_id(desync, dis, nil, "none")
-				if b_debug then DLOG("decoy_hello: ["..r.."/"..repeats.."] len="..#decoy.." : "..hexdump_dlog(string.sub(decoy, 1, 80))) end
-				if not rawsend_dissect_ipfrag(dis, options) then
-					DLOG("decoy_hello: rawsend failed on copy "..r)
-					return
-				end
-			end
-			DLOG("decoy_hello: blasted "..repeats.." decoy(s)")
-		else
-			DLOG("decoy_hello: not acting on further replay pieces")
-		end
-	end
-end
-
--- rst_desync — send fake RST(s) with low TTL to clear DPI state, then pass real data uninspected.
--- DPI sees RST → removes connection from tracking → real data flies through unmonitored.
--- Server never sees the RST (low TTL kills it en route).
---
--- standard args : direction, payload, fooling, ip_id, rawsend, reconstruct, ipfrag
--- arg : repeats=N - how many RSTs to send. default 3
--- arg : ack - send RST+ACK instead of plain RST
--- arg : shift=N - add N to th_seq of the RST so DPI accepts it within window but server may not. default 0
-function rst_desync(ctx, desync)
-	if not desync.dis.tcp then
-		if not desync.dis.icmp then instance_cutoff_shim(ctx, desync) end
-		return
-	end
-	direction_cutoff_opposite(ctx, desync)
-	if direction_check(desync) and payload_check(desync) then
-		if replay_first(desync) then
-			local repeats = tonumber(desync.arg.repeats) or 3
-			local shift = tonumber(desync.arg.shift) or 0
-			local options = desync_opts(desync)
-			for r = 1, repeats do
-				local dis = deepcopy(desync.dis)
-				dis.payload = ""
-				dis.tcp.th_flags = TH_RST + (desync.arg.ack and TH_ACK or 0)
-				if shift ~= 0 then
-					dis.tcp.th_seq = u32add(dis.tcp.th_seq, shift)
-				end
-				apply_fooling(desync, dis)
-				apply_ip_id(desync, dis, nil, "none")
-				if b_debug then DLOG("rst_desync: sending fake RST " .. r .. "/" .. repeats .. " seq_shift=" .. shift) end
-				if not rawsend_dissect_ipfrag(dis, options) then return end
-			end
-			DLOG("rst_desync: sent " .. repeats .. " fake RST(s), real data passes through")
-		else
-			DLOG("rst_desync: not acting on further replay pieces")
-		end
-	end
-end
-
-
--- desync_combo — all-in-one: fake RST to kill DPI state + decoy ClientHello + TLS record split + TCP segment disorder.
--- Each step attacks a different DPI layer:
---   1) RST → clears DPI connection tracking
---   2) decoy → poisons SNI classification with whitelisted domain
---   3) tlsrec → splits TLS record so DPI can't read handshake
---   4) disorder → sends TCP segments out of order
---
--- standard args : direction, payload, fooling, ip_id, rawsend, reconstruct, ipfrag
--- arg : blob=<blob> - decoy TLS ClientHello (e.g. ya.ru capture). if absent, clones current with tls_mod
--- arg : tls_mod=<list> - modify decoy SNI (e.g. sni=ya.ru)
--- arg : decoy_repeats=N - how many decoy copies. default 3
--- arg : rst_repeats=N - how many fake RSTs. default 2. set to 0 to skip RST phase
--- arg : pos=<posmarker list> - split positions for TCP disorder. default "host,endhost"
--- arg : tlsrec_pos=<posmarker> - TLS record split position. default "host". set "none" to skip
--- arg : optional - skip if blob absent
--- arg : nodrop - do not drop original
-function desync_combo(ctx, desync)
-	if not desync.dis.tcp then
-		if not desync.dis.icmp then instance_cutoff_shim(ctx, desync) end
-		return
-	end
-	direction_cutoff_opposite(ctx, desync)
-	if direction_check(desync) and payload_check(desync) then
-		if replay_first(desync) then
-			local data = desync.reasm_data or desync.dis.payload
-			if #data == 0 then return end
-			local options = desync_opts(desync)
-
-			------- PHASE 1: fake RST to kill DPI state -------
-			local rst_n = tonumber(desync.arg.rst_repeats)
-			if rst_n == nil then rst_n = 2 end
-			if rst_n > 0 then
-				for r = 1, rst_n do
-					local dis = deepcopy(desync.dis)
-					dis.payload = ""
-					dis.tcp.th_flags = TH_RST + TH_ACK
-					apply_fooling(desync, dis)
-					apply_ip_id(desync, dis, nil, "none")
-					if b_debug then DLOG("desync_combo: RST " .. r .. "/" .. rst_n) end
-					rawsend_dissect_ipfrag(dis, options)
-				end
-				DLOG("desync_combo: phase 1 done — " .. rst_n .. " fake RSTs sent")
-			end
-
-			------- PHASE 2: decoy ClientHello -------
-			local decoy_n = tonumber(desync.arg.decoy_repeats) or 3
-			local decoy
-			if desync.arg.blob then
-				if desync.arg.optional and not blob_exist(desync, desync.arg.blob) then
-					DLOG("desync_combo: blob '" .. desync.arg.blob .. "' not found, skipping decoy")
-					decoy = nil
-				else
-					decoy = blob(desync, desync.arg.blob)
-				end
-			else
-				decoy = data
-			end
-			if decoy and #decoy > 0 then
-				if desync.arg.tls_mod then
-					decoy = tls_mod_shim(desync, decoy, desync.arg.tls_mod, data)
-				end
-				for r = 1, decoy_n do
-					local dis = deepcopy(desync.dis)
-					dis.payload = decoy
-					apply_fooling(desync, dis)
-					apply_ip_id(desync, dis, nil, "none")
-					if b_debug then DLOG("desync_combo: decoy " .. r .. "/" .. decoy_n) end
-					rawsend_dissect_ipfrag(dis, options)
-				end
-				DLOG("desync_combo: phase 2 done — " .. decoy_n .. " decoys sent")
-			end
-
-			------- PHASE 3: TLS record split -------
-			local tlsrec_spos = desync.arg.tlsrec_pos or "host"
-			if tlsrec_spos ~= "none" and #data >= 6 and string.byte(data, 1) == 0x16 then
-				local tpos = resolve_pos(data, desync.l7payload, tlsrec_spos)
-				if tpos and tpos > 5 and tpos < #data then
-					local rec_type = string.sub(data, 1, 1)
-					local rec_ver  = string.sub(data, 2, 3)
-					local c1 = string.sub(data, 6, tpos - 1)
-					local c2 = string.sub(data, tpos)
-					local function tls_hdr(c)
-						return rec_type .. rec_ver .. string.char(math.floor(#c / 256), #c % 256) .. c
-					end
-					data = tls_hdr(c1) .. tls_hdr(c2)
-					DLOG("desync_combo: phase 3 done — TLS record split at " .. (tpos - 1) .. " into " .. #c1 .. "+" .. #c2)
-				else
-					DLOG("desync_combo: phase 3 skipped — cannot resolve tlsrec pos")
-				end
-			end
-
-			------- PHASE 4: TCP segment disorder -------
-			local spos = desync.arg.pos or "host,endhost"
-			local pos = resolve_multi_pos(data, desync.l7payload, spos)
-			if b_debug then DLOG("desync_combo: phase 4 split pos: " .. table.concat(zero_based_pos(pos), " ")) end
-			delete_pos_1(pos)
-			if #pos > 0 then
-				-- interlace order: last, first, second-to-last, second, ...
-				local order = {}
-				local lo, hi = 0, #pos
-				local pick_hi = true
-				while lo <= hi do
-					if pick_hi then
-						table.insert(order, hi); hi = hi - 1
-					else
-						table.insert(order, lo); lo = lo + 1
-					end
-					pick_hi = not pick_hi
-				end
-				for _, i in ipairs(order) do
-					local ps = pos[i] or 1
-					local pe = i < #pos and pos[i + 1] - 1 or #data
-					local part = string.sub(data, ps, pe)
-					if b_debug then DLOG("desync_combo: seg " .. (i + 1) .. " " .. (ps - 1) .. "-" .. (pe - 1) .. " len=" .. #part) end
-					if not rawsend_payload_segmented(desync, part, ps - 1) then
-						return VERDICT_PASS
-					end
-				end
-				DLOG("desync_combo: phase 4 done — " .. (#pos + 1) .. " segments sent interleaved")
-			else
-				-- no valid split, send as-is
-				if not rawsend_payload_segmented(desync, data, 0) then
-					return VERDICT_PASS
-				end
-			end
-
-			replay_drop_set(desync)
-			return desync.arg.nodrop and VERDICT_PASS or VERDICT_DROP
-		else
-			DLOG("desync_combo: not acting on further replay pieces")
-		end
-		if replay_drop(desync) then
-			return desync.arg.nodrop and VERDICT_PASS or VERDICT_DROP
-		end
-	end
-end
-
--- ============================================================================
--- SUBNET-AWARE DOMAIN EVASION
--- Preset iterates strategies via circular selector.
--- Manages domain and server subnet state tracking,
--- 16 KB stall detection, and fake ClientHello overlap delivery.
---
--- --writable
--- --out-range=-s34228 --in-range=-s29500
--- --lua-desync=circular:key=white_sni:hostkey=white_hostkey:state=white_sni_state.txt:fails=2:time=300:retrans=2:reset:inseq=28000:success_detector=white_success_detector:failure_detector=white_failure_detector
--- --payload=tls_client_hello
--- --lua-desync=white_seqovl:sni=web.max.ru:strategy=1
--- --lua-desync=fake:blob=fake_default_tls:tls_mod=rnd,dupsid,sni=web.max.ru:badsum:strategy=2
--- Subnet strategy rotates on first failure until proven;
--- proven strategy rotates after fail threshold.
--- Winning strategy prioritized for peer domains in subnet.
--- reset flag immediately terminates failing stream.
--- Requires --wf-tcp-in for inbound verification.
--- ============================================================================
-
--- circular hostkey: server subnet prefix
--- arg : mask=N - IPv4 prefix length (default 24)
--- arg : mask6=N - IPv6 prefix length (default 48)
-function subnet_hostkey(desync)
-	local raw = desync.target and (desync.target.ip or desync.target.ip6)
-	if not raw then return nil end
-	local bits = math.floor(#raw==4 and (tonumber(desync.arg.mask) or 24) or (tonumber(desync.arg.mask6) or 48))
-	if bits<0 then bits=0 end
-	if bits>#raw*8 then bits=#raw*8 end
-	local net = {}
-	for i=1,#raw do
-		local keep = bits-(i-1)*8
-		local b = string.byte(raw,i)
-		if keep<=0 then
-			b = 0
-		elseif keep<8 then
-			b = b - b % 2^(8-keep)
-		end
-		net[i] = string.char(b)
-	end
-	return ntop(table.concat(net)).."/"..bits
-end
-
--- circular hostkey: host domain (nld-level) or subnet fallback.
--- Evaluates per host domain to support heterogeneous subnet services.
--- arg : nld=N - domain level (default 2: a.b.site.com => site.com)
--- arg : mask, mask6 - subnet mask lengths
-function white_hostkey(desync)
-	local host = desync.track and desync.track.hostname
-	if host and not desync.track.hostname_is_ip then
-		return dissect_nld(host, tonumber(desync.arg.nld) or 2) or host
-	end
-	return subnet_hostkey(desync)
-end
-
--- Inter-subnet and cross-session evasion state cache.
--- Tracks confirmed bypass strategies that defeated blocks (mem.best).
--- Priority order: last host strategy, subnet strategy, mem.best.
--- Strategy gains sticky trust only after verified success on host.
--- arg : state=<filename> - state file name in writable directory.
-function white_mem(desync, hrec)
-	local askey = (desync.arg.key and #desync.arg.key>0) and desync.arg.key or desync.func_instance
-	if not white_memory then white_memory = {} end
-	local mem = white_memory[askey]
-	if not mem then
-		local dir, name = os.getenv("WRITABLE"), desync.arg.state
-		mem = { keys = {}, best = {}, count = 0, file = name and #name>0 and (dir and dir.."/"..name or name) or nil }
-		white_memory[askey] = mem
-		local ok, text = pcall(readfile, mem.file or "")
-		-- Valid only while strategy count in preset matches
-		if not ok then
-			DLOG("white_mem: no saved memory")
-		elseif tonumber(string.match(text, "^strategies (%d+)\r?\n"))~=hrec.ctstrategy then
-			DLOG("white_mem: '"..mem.file.."' is for another strategy list. ignored")
-		else
-			for key, n in string.gmatch(text, "\n(%S+) (%d+)") do
-				n = tonumber(n)
-				if n>=1 and n<=hrec.ctstrategy then
-					if key=="*" then
-						mem.best[#mem.best+1] = n
-					else
-						mem.keys[key] = n
-						mem.count = mem.count+1
-					end
-				end
-			end
-			DLOG("white_mem: loaded "..mem.count.." records from '"..mem.file.."'")
-		end
-	end
-	return mem
-end
-function white_mem_store(desync, w)
-	local mem = white_mem(desync, w.hrec)
-	local changed = false
-	if w.hrec.white_failed and mem.best[1]~=w.strategy then
-		-- Block defeated: prioritize in mem.best
-		for i=#mem.best,1,-1 do
-			if mem.best[i]==w.strategy then table.remove(mem.best, i) end
-		end
-		table.insert(mem.best, 1, w.strategy)
-		mem.best[6] = nil
-		changed = true
-	end
-	-- Store for host domain and server subnet
-	for i, key in ipairs({ w.key, w.net }) do
-		if mem.keys[key]~=w.strategy then
-			if not mem.keys[key] then
-				-- Cap cache capacity: purge on overflow
-				if mem.count>=3000 then
-					DLOG("white_mem: "..mem.count.." records. starting over")
-					mem.keys = {}
-					mem.count = 0
-				end
-				mem.count = mem.count+1
-			end
-			mem.keys[key] = w.strategy
-			changed = true
-		end
-	end
-	-- Persist to disk on state mutations only
-	if changed and mem.file and not mem.nosave then
-		local t = { "strategies "..w.hrec.ctstrategy }
-		for i, n in ipairs(mem.best) do
-			t[#t+1] = "* "..n
-		end
-		for key, n in pairs(mem.keys) do
-			t[#t+1] = key.." "..n
-		end
-		local ok, err = pcall(writefile, mem.file, table.concat(t,"\n").."\n")
-		if not ok then
-			DLOG_ERR("white_mem: cannot save '"..mem.file.."' : "..tostring(err)..". saving disabled")
-			mem.nosave = true
-		end
-	end
-end
--- Priority order: previous host strategy, subnet strategy, verified winners
-function white_mem_hints(desync, w)
-	local mem = white_mem(desync, w.hrec)
-	local hints = { mem.keys[w.key], mem.keys[w.net] }
-	local t = {}
-	for i=1,2 do
-		if hints[i] then t[#t+1] = hints[i] end
-	end
-	for i, n in ipairs(mem.best) do
-		t[#t+1] = n
-	end
-	return t
-end
-
--- Connection record for white_*_detector.
--- Attached to connection on first payload packet (ClientHello).
--- Locked to connection to prevent multi-stream race corruption.
-function white_conn_state(desync, crec)
-	if not crec.white then crec.white = {} end
-	local w = crec.white
-	if not w.strategy and desync.outgoing and #desync.dis.payload>0 then
-		local hkf = desync.arg.hostkey and _G[desync.arg.hostkey] or standard_hostkey
-		w.hrec = automate_host_record(desync)
-		w.key = hkf(desync)
-		w.net = subnet_hostkey(desync) or w.key
-		if w.hrec and w.key then
-			if not w.hrec.white_seen then
-				-- Unseen host: seed from memory hint
-				w.hrec.white_seen = true
-				local n = white_mem_hints(desync, w)[1]
-				if n and n<=w.hrec.ctstrategy and n~=w.hrec.nstrategy then
-					DLOG("white_detector: '"..w.key.."' starts from remembered strategy "..n)
-					w.hrec.nstrategy = n
-				end
-			end
-			w.strategy = w.hrec.nstrategy
-		else
-			w.hrec = nil
-		end
-	end
-	return w
-end
--- True if stream should not affect strategy scoring:
--- non-TLS or host already transitioned to another strategy
-function white_conn_skip(desync, crec)
-	if crec.nocheck then return true end
-	local w = white_conn_state(desync, crec)
-	local l7 = desync.track and desync.track.l7proto
-	if l7 and l7~="unknown" and l7~="tls" then
-		DLOG("white_detector: '"..l7.."' connection. not counted")
-		crec.nocheck = true
-		return true
-	end
-	if w.strategy and w.strategy~=w.hrec.nstrategy then
-		DLOG("white_detector: connection started with strategy "..w.strategy..", '"..w.key.."' is at "..tostring(w.hrec.nstrategy)..". not counted")
-		crec.nocheck = true
-		return true
-	end
-	return false
-end
--- Record failure. Unproven strategy rotates on single error;
--- proven strategy rotates after fails threshold. Next strategy selected
--- from memory hints before fallback sequence.
-function white_conn_failed(desync, crec)
-	local w = crec.white
-	local hrec = w.hrec
-	if not w.strategy then return true end
-	hrec.white_failed = true
-	local fails = tonumber(desync.arg.fails) or 3
-	local counted = hrec.failure_counter or 0
-	if hrec.failure_time_last and os.time()>(hrec.failure_time_last+(tonumber(desync.arg.time) or 60)) then
-		counted = 0
-	end
-	if hrec.white_ok==hrec.nstrategy and counted+1<fails then return true end
-
-	local ct, cur = hrec.ctstrategy, hrec.nstrategy
-	if not hrec.white_tried then hrec.white_tried = {} end
-	hrec.white_tried[cur] = true
-	local nxt
-	for i, n in ipairs(white_mem_hints(desync, w)) do
-		if n<=ct and not hrec.white_tried[n] then
-			nxt = n
-			break
-		end
-	end
-	if not nxt then
-		for i=1,ct-1 do
-			local n = (cur-1+i)%ct+1
-			if not hrec.white_tried[n] then
-				nxt = n
-				break
-			end
-		end
-	end
-	if not nxt then
-	-- Failure: immediately terminate socket with RST
-		hrec.white_tried = {}
-		nxt = cur%ct+1
-	end
-	DLOG("white_detector: '"..w.key.."' strategy "..cur.." failed. next is "..nxt)
-	hrec.nstrategy = (nxt-2)%ct+1
-	hrec.failure_counter = fails-1
-	hrec.failure_time_last = os.time()
-	return true
-end
-
--- Inbound traffic tracker.
--- Confirms whether server response data reached the host.
-function white_success_detector(desync, crec)
-	if white_conn_skip(desync, crec) then return false end
-	if not standard_success_detector(desync, crec) then return false end
-	local w = crec.white
-	if w.strategy then
-		w.hrec.white_ok = w.strategy
-		w.hrec.white_tried = nil
-		white_mem_store(desync, w)
-	end
-	return true
-end
-
-	-- Server responded: record strategy success
-function white_failure_detector(desync, crec)
-	if white_conn_skip(desync, crec) then return false end
-	if standard_failure_detector(desync, crec) then return white_conn_failed(desync, crec) end
-	if not desync.dis.tcp then return false end
-
-	local hi = tonumber(desync.arg.stall_hi) or 26000
-	if hi<=0 then return false end
-	local w = white_conn_state(desync, crec)
-	if not desync.outgoing then
-		local len = #desync.dis.payload
-		if len>0 then
-			local got = pos_get(desync,'s')+len
-			if not w.in_seq or got>w.in_seq then
-				w.in_seq = got
-				w.in_time = os.time()
-				w.in_psh = bitand(desync.dis.tcp.th_flags, TH_PUSH)~=0
-			end
-		end
-		return false
-	end
-	if w.in_seq and bitand(desync.dis.tcp.th_flags, bitor(TH_FIN,TH_RST))~=0 then
-		local lo = tonumber(desync.arg.stall_lo) or 12000
-		local idle = os.time()-w.in_time
-		if w.in_seq>=lo and w.in_seq<=hi and idle>=(tonumber(desync.arg.stall_time) or 2) and (desync.arg.stall_any or not w.in_psh) then
-			DLOG("white_failure_detector: stalled at s"..w.in_seq.." for "..idle.." sec, then closed by client")
-			return white_conn_failed(desync, crec)
-		end
-	end
-	return false
-end
-
-	-- Server returned RST: instant failure
+-- Server returned RST: instant failure
 -- standard args : direction, fooling, ip_id, rawsend, reconstruct, ipfrag
 		-- Connection reset by server: record failure
 function white_seqovl(ctx, desync)
@@ -3924,456 +2546,6 @@ function white_seqovl(ctx, desync)
 end
 
 
--- ============================================================================
-	-- Threshold reached without error:
-	-- confirmed bypass success
---
--- --wf-tcp-in=443 --in-range=-s29500 --payload=all
--- --lua-desync=shadow_probe
--- --lua-desync=fake:blob=fake_default_tls:badsum:strategy=1 --lua-desync=multisplit:strategy=1
--- --lua-desync=multidisorder:pos=1,midsld:strategy=2
-	-- Connection stalled at ~16 KB: record failure
--- ============================================================================
-
-function shadow_state()
-	if not shadow_st then
-		shadow_st = { flows = {}, hosts = {}, nhosts = 0, active = 0, best = {}, leaky = {}, port = 20000+math.random(0,20000) }
-	end
-	return shadow_st
-end
--- Overlap fake ClientHello delivery.
--- Injects fake ClientHello with seqovl and low TTL.
-function shadow_copy(desync)
-	local c = {}
-	for k,v in pairs(desync) do c[k] = v end
-	c.dis = deepcopy(desync.dis)
-	c.plan, c.replay, c.replay_piece, c.replay_piece_count, c.replay_piece_last = nil, nil, nil, nil, nil
-	if desync.track then
-		local t = {}
-		for k,v in pairs(desync.track) do t[k] = v end
-		t.lua_state = {}
-		c.track = t
-	end
-	return c
-end
-	-- Fake ClientHello segment with low TTL
-function shadow_exec(desync, instances, probe)
-	local verdict = VERDICT_PASS
-	for i, instance in ipairs(instances or {}) do
-		apply_execution_plan(desync, instance)
-		if probe and desync.arg.tls_mod then
-			local mods = {}
-			for mod in string.gmatch(desync.arg.tls_mod, "[^,]+") do
-				if mod~="dupsid" then mods[#mods+1] = mod end
-			end
-			desync.arg.tls_mod = #mods>0 and table.concat(mods, ",") or "none"
-		end
-		verdict = plan_instance_execute_preapplied(desync, verdict, instance)
-	end
-	return verdict
-end
-	-- Real ClientHello segment
-function shadow_markable(data)
-	return #data>=76 and string.byte(data,1)==0x16 and string.byte(data,6)==0x01 and string.byte(data,44)==32
-end
--- AUTOMATED STRATEGY PROBING ORCHESTRATOR
--- Probes alternative strategies in parallel background streams.
-function shadow_mark(copy)
-	local data = copy.reasm_data or copy.dis.payload
-	if not shadow_markable(data) then return nil end
-	local sid = brandom(32)
-	data = string.sub(data,1,44)..sid..string.sub(data,77)
-	if copy.reasm_data then copy.reasm_data = data end
-	copy.dis.payload = string.sub(data, 1, #copy.dis.payload)
-	return sid
-end
--- Probe helper: allocate internal connection state
-function shadow_send_hello(copy, instances, probe)
-	local verdict = bitand(shadow_exec(copy, instances, probe), VERDICT_MASK)
-	if verdict~=VERDICT_DROP then
-		copy.arg = {}
-		rawsend_payload_segmented(copy, verdict~=VERDICT_MODIFY and copy.reasm_data or nil)
-	end
-end
--- Reset probe socket counters
-function shadow_close(host, flow)
-	if flow.state=="done" then return end
-	local st = shadow_state()
-	st.active = st.active-1
-	local dis = deepcopy(host.syn.dis)
-	dis.tcp.th_sport = flow.port
-	dis.tcp.th_seq = flow.nxt
-	dis.tcp.th_ack = 0
-	dis.tcp.th_flags = TH_RST
-	dis.tcp.options = nil
-	dis.payload = nil
-	rawsend_dissect(dis, {ifout = host.syn.ifout})
-	if flow.nxt~=flow.isn+1 then
--- Release probe socket resources
-		dis.tcp.th_seq = flow.isn+1
-		rawsend_dissect(dis, {ifout = host.syn.ifout})
-	end
-	flow.state = "done"
-	flow.t = os.time()
-end
--- Connection tracking table lookup
-function shadow_release(host, k)
-	for i, pend in ipairs(host.pending) do
-		pend.ls.shadow_hold = "released"
--- Check whether connection belongs to probe pool
-		local ok, err = pcall(shadow_send_hello, pend.desync, k and k>0 and host.strat[k] or nil)
-		if not ok then
-			DLOG_ERR("shadow_probe: strategy failed on release : "..tostring(err)..". sending hello as is")
-			pcall(shadow_send_hello, pend.desync, nil)
-		end
-	end
-	host.pending = {}
-end
--- Probe packet builder
-function shadow_decide(st, host, key, k)
-	if host.winner then return end
-	host.winner = k
-	host.probing = false
-	DLOG("shadow_probe: '"..key.."' winner is "..(k>0 and "strategy "..k or "no tampering"))
-	if k>0 then
-		for i=#st.best,1,-1 do
-			if st.best[i]==k then table.remove(st.best, i) end
-		end
-		table.insert(st.best, 1, k)
-		st.best[6] = nil
-	end
-	for i, flow in ipairs(host.flows) do shadow_close(host, flow) end
-	shadow_release(host, k)
-	host.flows, host.hello, host.strat, host.syn, host.confirm = {}, nil, nil, nil, nil
-end
--- Build synthetic SYN packet
-function shadow_open(st, host, key, k)
-	st.port = st.port>=45000 and 20000 or st.port+1
-	local flow = { k = k, host = host, key = key, port = st.port, isn = math.random(1, 0x7FFFFFF0), state = "syn", t = os.time() }
-	flow.nxt = flow.isn+1
-	local dis = deepcopy(host.syn.dis)
-	dis.tcp.th_sport = flow.port
-	dis.tcp.th_seq = flow.isn
-	dis.payload = nil
-	rawsend_dissect(dis, {ifout = host.syn.ifout})
-	st.flows[host.sip..flow.port] = flow
-	st.active = st.active+1
-	host.flows[#host.flows+1] = flow
-	DLOG("shadow_probe: '"..key.."' probe "..(k>0 and "strategy "..k or "no tampering").." from port "..flow.port)
-	return flow
-end
--- Build synthetic ACK packet
-function shadow_wave(st, host, key)
-	local cfg = host.cfg
-	local now = os.time()
-	for key2, flow in pairs(st.flows) do
-		if flow.state=="done" and now-flow.t>10 then st.flows[key2] = nil end
-	end
-	if not cfg.noplain and not host.tried[0] then
--- Construct probe ClientHello
-		host.tried[0] = true
-		host.plain = 0
-		shadow_open(st, host, key, 0)
-		shadow_open(st, host, key, 0)
-		return true
-	end
-		-- Replicate TCP options from template packet
-	if not shadow_markable(host.hello.reasm_data or host.hello.dis.payload) then return false end
-		-- Set TCP window scale and MSS
-	local order = {}
-	for i, k in ipairs(st.best) do order[#order+1] = k end
-	for k=1,host.nstrat do
-		if not st.leaky[k] then order[#order+1] = k end
-	end
-	for k=1,host.nstrat do
-		if st.leaky[k] then order[#order+1] = k end
-	end
-	local n = 0
-	for i, k in ipairs(order) do
-		if n>=cfg.probes then break end
-		if not host.tried[k] and host.strat[k] then
-			host.tried[k] = true
-			n = n+1
-			shadow_open(st, host, key, k)
-		end
-	end
-	return n>0
-end
-	-- Transmit probe packet
-function shadow_tick(name, data)
-	local st = shadow_state()
-	local host = st.hosts[data.key]
-	if not host or host.winner or not host.probing then return end
-	local confirm = host.confirm
-	if confirm then
-		host.confirm = nil
-		if host.flows[1] and host.flows[1].state=="syn" then
-	-- Probe packet transmission failure
-			confirm = nil
-		else
-	-- Wave timeout: probe response timed out
-			DLOG("shadow_probe: '"..data.key.."' strategy "..confirm.." not confirmed alone. rejected")
-		end
-	end
-	-- Probe failed: server never replied to connection handshake
-	local reached = false
-	for i, flow in ipairs(host.flows) do
-		if flow.state~="syn" then
-			reached = true
-		elseif flow.k~=0 then
-			host.tried[flow.k] = nil
-		end
-		shadow_close(host, flow)
-	end
-	if confirm then
-		host.tried[confirm] = true
-		reached = true
-	end
-	host.flows = {}
-	host.nwave = host.nwave+1
-	local more = reached and shadow_wave(st, host, data.key)
-	if not more or host.nwave>host.cfg.waves then
-		-- ClientHello hold timer expired: send as-is
-		shadow_release(host, nil)
-	end
-	if more then
-		timer_set(name, "shadow_tick", host.cfg.wait, true, data)
-	else
-		DLOG("shadow_probe: '"..data.key.."' "..(reached and "nothing worked" or "server did not answer probes in "..host.cfg.wait.." ms")..". retry later")
-		host.probing = false
-		host.tried = {}
-		for k in pairs(host.bad or {}) do host.tried[k] = true end
-		host.retry_at = os.time()+(reached and 300 or 30)
-		host.hello, host.strat, host.syn = nil, nil, nil
-	end
-end
--- Server response to ClientHello or fake packet validation
-function shadow_answer_is_ours(flow, desync)
-	local data = desync.dis.payload
-	if flow.k==0 then
-		-- TLS record: Handshake or Alert. Filter block page
-		local b = string.byte(data,1)
-		return desync.l7payload=="tls_server_hello" or b==0x16 or b==0x15
-	end
-	if not flow.sid or desync.l7payload~="tls_server_hello" or #data<76 then return false end
-	return string.byte(data,44)==32 and string.sub(data,45,76)==flow.sid
-end
--- Inbound probe packet handler
-function shadow_incoming(st, flow, desync)
-	local tcp, host = desync.dis.tcp, flow.host
-	if flow.state=="syn" and bitand(tcp.th_flags, bitor(TH_SYN,TH_ACK))==bitor(TH_SYN,TH_ACK) then
-		local pd = shadow_copy(host.hello)
-		pd.dis.tcp.th_sport = flow.port
-		pd.dis.tcp.th_seq = flow.isn+1
-		pd.dis.tcp.th_ack = u32add(tcp.th_seq, 1)
-		flow.nxt = u32add(flow.isn, 1+#(host.hello.reasm_data or host.hello.dis.payload))
-		flow.state = "sent"
-		flow.sid = shadow_mark(pd)
-		-- Standard handshake flow: empty ACK first
-		local ack = deepcopy(pd.dis)
-		ack.payload = nil
-		ack.tcp.th_flags = TH_ACK
-		rawsend_dissect(ack, {ifout = pd.ifout})
-		shadow_send_hello(pd, flow.k>0 and host.strat[flow.k] or nil, true)
-	elseif flow.state=="sent" then
-		if bitand(tcp.th_flags, TH_RST)~=0 then
-			DLOG("shadow_probe: '"..flow.key.."' probe "..flow.k.." got RST")
-			flow.state = "fail"
-		elseif #desync.dis.payload>0 and not shadow_answer_is_ours(flow, desync) then
-			-- Server replied to fake packet instead of ClientHello: strategy failed
-			DLOG("shadow_probe: '"..flow.key.."' probe "..flow.k.." : answer is not to our hello. strategy rejected")
-			flow.state = "fail"
-			st.leaky[flow.k] = true
-		elseif #desync.dis.payload>0 then
-			-- Server replied with data: ClientHello accepted
-			DLOG("shadow_probe: '"..flow.key.."' probe "..flow.k.." answered")
-			flow.state = "ok"
-			if flow.k==0 then
-				host.plain = (host.plain or 0)+1
-				if host.plain>=2 then shadow_decide(st, host, flow.key, 0) end
-			elseif flow.confirm then
-				shadow_decide(st, host, flow.key, flow.k)
-			elseif not host.confirm then
-				-- Strategy verified in wave. Retest individually
-				-- for confirmed baseline.
-				host.confirm = flow.k
-				for i, f in ipairs(host.flows) do
-					-- Terminate peer probes in wave early
-					if f~=flow and f.state~="fail" then host.tried[f.k] = nil end
-					shadow_close(host, f)
-				end
-				host.flows = {}
-				shadow_open(st, host, flow.key, flow.k).confirm = true
-				timer_set("shadow_"..flow.key, "shadow_tick", host.cfg.wait, true, {key = flow.key})
-			end
-		end
-	end
-	return VERDICT_DROP
-end
-
--- Auto-bench orchestrator. Following instances marked with strategy=N.
--- Synchronizes probing waves, baseline verification, and winner selection.
-function shadow_probe(ctx, desync)
-	orchestrate(ctx, desync)
-	local strat = {}
-	while true do
-		local instance = plan_instance_pop(desync)
-		if not instance then break end
-		local n = tonumber(instance.arg.strategy)
-		if n then
-			if not strat[n] then strat[n] = {} end
-			table.insert(strat[n], instance)
-		end
-	end
-	if not desync.dis.tcp then return end
-	local sip = desync.target and (desync.target.ip or desync.target.ip6)
-	if not sip then return end
-	local st = shadow_state()
-	local tcp = desync.dis.tcp
-	if not desync.outgoing then
-		local flow = st.flows[sip..tcp.th_dport]
-		if flow then return shadow_incoming(st, flow, desync) end
-	end
-	local ls = desync.track and desync.track.lua_state
-	if not ls then return end
-	if desync.outgoing and bitand(tcp.th_flags, bitor(TH_SYN,TH_ACK))==TH_SYN then
-		-- Template for probe streams: mirror SYN options and parameters
-		ls.shadow_syn = { dis = deepcopy(desync.dis), ifout = desync.ifout, t = clock_getfloattime() }
-		return
-	end
-	if desync.outgoing and ls.shadow_hold=="held" and #desync.dis.payload>0 then
-		-- ClientHello held: buffer retransmissions and chunks
-		return VERDICT_DROP
-	end
-
-	local host = ls.shadow_host
-	if desync.outgoing and desync.l7payload=="tls_client_hello" and not host then
-		local hkf = desync.arg.hostkey and _G[desync.arg.hostkey] or white_hostkey
-		local key = hkf(desync)
-		if not key then return end
-		host = st.hosts[key]
-		if not host then
-			if st.nhosts>=5000 then
-				-- Bound table capacity: evict oldest completed entries
-				local keep, n = {}, 0
-				for k2, h in pairs(st.hosts) do
-					if h.probing then
-						keep[k2] = h
-						n = n+1
-					end
-				end
-				st.hosts, st.nhosts = keep, n
-			end
-			host = { tried = {}, pending = {}, flows = {} }
-			st.hosts[key] = host
-			st.nhosts = st.nhosts+1
-		end
-		ls.shadow_host = host
-		local maxflows = tonumber(desync.arg.maxflows) or 32
-		if host.probing and os.time()-host.probe_t>15 then
-			-- Probes timed out: restart evaluation cycle
-			DLOG_ERR("shadow_probe: '"..key.."' probing got stuck. reset")
-			for i, flow in ipairs(host.flows) do flow.state = "done" end
-			host.probing, host.pending, host.flows, host.tried, host.confirm = false, {}, {}, {}, nil
-		end
-		if not host.winner and ls.shadow_syn and (host.probing or os.time()>=(host.retry_at or 0) and st.active<maxflows) then
-			-- Strategy unknown: hold ClientHello for background probes
-			local copy = shadow_copy(desync)
-			table.insert(host.pending, { desync = copy, ls = ls })
-			ls.shadow_hold = "held"
-			if not host.probing then
-				host.probing = true
-				host.probe_t = os.time()
-				host.nstrat = 0
-				for n in pairs(strat) do
-					if n>host.nstrat then host.nstrat = n end
-				end
-				host.nwave = 1
-				host.sip = sip
-				host.hello = copy
-				host.strat = strat
-				host.syn = ls.shadow_syn
-				-- Wait at least 4x connection handshake latency
-				local rtt = math.floor((clock_getfloattime()-ls.shadow_syn.t)*1000)
-				host.cfg = {
-					probes = tonumber(desync.arg.probes) or 4,
-					wait = math.min(3000, math.max(tonumber(desync.arg.wait) or 400, rtt*4)),
-					waves = tonumber(desync.arg.waves) or 3,
-					noplain = desync.arg.noplain
-				}
-				timer_set("shadow_"..key, "shadow_tick", host.cfg.wait, true, {key = key})
-				shadow_wave(st, host, key)
-			end
-			return VERDICT_DROP
-		end
-	end
-	if not host or not host.winner then return end
-	if desync.outgoing and desync.l7payload=="tls_client_hello" and not ls.shadow_w then
-		-- Record strategy verdict assigned to connection
-		ls.shadow_w = host.winner
-	end
-	-- Live connection feedback. Probe tests handshake delivery;
-	-- volume throttling (~16 KB stall) detected via active session telemetry.
-	if ls.shadow_w==host.winner and not ls.shadow_judged then
-		local failed
-		if desync.outgoing then
-			if desync.l7payload=="tls_client_hello" and is_retransmission(desync) then
-				-- ClientHello unacknowledged
-				ls.shadow_retr = (ls.shadow_retr or 0)+1
-				failed = ls.shadow_retr>=(tonumber(desync.arg.retrans) or 2)
-			elseif ls.shadow_in and bitand(tcp.th_flags, bitor(TH_FIN,TH_RST))~=0 then
-				-- Client terminated connection stalled mid-transfer
-				local idle = os.time()-ls.shadow_in_t
-				failed = ls.shadow_in>=(tonumber(desync.arg.stall_lo) or 12000) and ls.shadow_in<=(tonumber(desync.arg.stall_hi) or 26000)
-					and idle>=(tonumber(desync.arg.stall_time) or 2) and not ls.shadow_in_psh
-			end
-		elseif #desync.dis.payload>0 then
-			local got = pos_get(desync,'s')+#desync.dis.payload
-			if not ls.shadow_in or got>ls.shadow_in then
-				ls.shadow_in, ls.shadow_in_t, ls.shadow_in_psh = got, os.time(), bitand(tcp.th_flags, TH_PUSH)~=0
-			end
-			if got>(tonumber(desync.arg.inseq) or 28000) then
-				-- Response received past throttle boundary: verified solution
-				ls.shadow_judged = true
-				host.good = host.winner
-				host.fails = nil
-			end
-		end
-		if failed then
-			ls.shadow_judged = true
-			host.fails = (host.fails or 0)+1
-			-- Proven strategy granted single-failure tolerance
-			if host.good~=host.winner or host.fails>=2 then
-				DLOG("shadow_probe: "..(host.winner>0 and "strategy "..host.winner or "no tampering").." failed on a real connection. will probe again without it")
-				if not host.bad then host.bad = {} end
-				host.bad[host.winner] = true
-				local n = 0
-				for k in pairs(host.bad) do n = n+1 end
-				if n>host.nstrat then
-					-- All strategies failed: restart evaluation cycle
-					host.bad = {}
-				end
-				host.tried = {}
-				for k in pairs(host.bad) do host.tried[k] = true end
-				host.winner, host.good, host.fails = nil, nil, nil
-				return
-			end
-		end
-	end
-	if host.winner==0 then return end
-	return shadow_exec(desync, strat[host.winner])
-end
-
-
--- ============================================================================
--- DIRECT EVASION PRIMITIVES: fake_close, slowsplit, tlsrec
--- Applied directly on first connection without auto-bench overhead.
--- ============================================================================
-
--- Deferred packet delivery helper (slowsplit, tlsrec)
-function slowsplit_timer(name, data)
-	rawsend_dissect_segmented(data.desync, data.desync.dis)
-end
 -- Transmit segmented payload: parts = { { off = offset, data = bytes }, ... }
 -- Transmitted in list sequence with configured delays.
 local function slowsplit_send(desync, base_seq, parts, delay, first, tname)
@@ -4432,6 +2604,7 @@ function fake_close(ctx, desync)
 	end
 end
 
+
 -- slowsplit: splits payload and transmits segments with inter-packet delays.
 -- Evades DPI reassembly buffer limits. Unmodified payload delivered to server.
 --
@@ -4483,6 +2656,7 @@ function slowsplit(ctx, desync)
 		end
 	end
 end
+
 
 -- tlsrec: splits ClientHello into multiple TLS records within stream.
 -- Splits SNI across record boundaries. Server reassembles records automatically.
@@ -4608,6 +2782,7 @@ function tlsrec(ctx, desync)
 	return VERDICT_DROP
 end
 
+
 -- tls_fake_disorder: fake flood + 3-segment multidisorder for TLS ClientHello (Zapret-2-GUI)
 function tls_fake_disorder(ctx, desync)
 	if not desync.dis.tcp then
@@ -4631,12 +2806,14 @@ function tls_fake_disorder(ctx, desync)
 			local opts_fake = { rawsend = rawsend_opts(desync), reconstruct = reconstruct_opts(desync), ipfrag = {}, ipid = desync.arg, fooling = desync.arg }
 			local opts_orig = { rawsend = rawsend_opts_base(desync), reconstruct = {}, ipfrag = {}, ipid = desync.arg, fooling = { tcp_ts_up = desync.arg.tcp_ts_up } }
 
-			for i = 1, num_fakes do
+			if num_fakes > 0 then
 				local dis = deepcopy(desync.dis)
 				dis.payload = fake_payload
 				if dis.ip then dis.ip.ip_ttl = 2 end
 				if dis.ip6 then dis.ip6.ip6_hlim = 2 end
-				rawsend_dissect(dis, opts_fake.rawsend)
+				for i = 1, num_fakes do
+					rawsend_dissect(dis, opts_fake.rawsend, opts_fake.reconstruct)
+				end
 			end
 
 			local pos1 = resolve_pos(data, desync.l7payload, "host")
@@ -4664,6 +2841,7 @@ function tls_fake_disorder(ctx, desync)
 	end
 end
 
+
 -- fake_disorder: universal fake+disorder for arbitrary TCP payload (Zapret-2-GUI)
 function fake_disorder(ctx, desync)
 	if not desync.dis.tcp then
@@ -4687,10 +2865,12 @@ function fake_disorder(ctx, desync)
 			local opts_fake = { rawsend = rawsend_opts(desync), reconstruct = reconstruct_opts(desync), ipfrag = {}, ipid = desync.arg, fooling = desync.arg }
 			local opts_orig = { rawsend = rawsend_opts_base(desync), reconstruct = {}, ipfrag = {}, ipid = desync.arg, fooling = { tcp_ts_up = desync.arg.tcp_ts_up } }
 
-			for i = 1, num_fakes do
+			if num_fakes > 0 then
 				local dis = deepcopy(desync.dis)
 				dis.payload = fake_payload
-				rawsend_dissect(dis, opts_fake.rawsend)
+				for i = 1, num_fakes do
+					rawsend_dissect(dis, opts_fake.rawsend, opts_fake.reconstruct)
+				end
 			end
 
 			local spos1 = desync.arg.pos1 or "host"
@@ -4714,6 +2894,365 @@ function fake_disorder(ctx, desync)
 			replay_drop_set(desync)
 			return desync.arg.nodrop and VERDICT_PASS or VERDICT_DROP
 		end
+		if replay_drop(desync) then
+			return desync.arg.nodrop and VERDICT_PASS or VERDICT_DROP
+		end
+	end
+end
+
+
+
+-- -----------------------------------------------------------------------------
+-- fakemultisplit & fakemultidisorder (Integrated from standalone modules)
+-- -----------------------------------------------------------------------------
+
+-- custom helper for nfqws2
+-- load after zapret-lib.lua and zapret-antidpi.lua:
+--   --lua-init=@/mnt/g/Privacy/zapret2_custom/fakemultisplit.lua
+--
+-- usage example:
+--   --lua-desync=fakemultisplit:fake_blob=fake_default_tls:pos=1,midsld:seqovl=5:seqovl_pattern=0x1603030000
+--
+-- behavior:
+--   real payload is split like multisplit
+--   before each real segment a fake segment of the same sequence range is sent
+--   fake data is taken from fake_blob at the same byte offsets; if it is shorter, the tail is padded with pattern or zero bytes
+
+local function fakemultisplit_fake_part(fake_data, fake_pat, pos_start, part_len)
+	local part = ""
+	if fake_data and pos_start <= #fake_data then
+		part = string.sub(fake_data, pos_start, pos_start + part_len - 1)
+	end
+	if #part < part_len then
+		part = part .. pattern(fake_pat, 1, part_len - #part)
+	end
+	return part
+end
+
+-- nfqws2 custom : "multisplit" with interleaved "fake"
+-- standard args : direction, payload, fooling, ip_id, rawsend, reconstruct
+-- FOOLING AND REPEATS APPLIED ONLY TO FAKES. real parts keep only ip_id and tcp_ts_up, like fakedsplit
+-- arg : pos=<posmarker list> . position marker list. for example : "1,host,midsld+1,-10"
+-- arg : fake_blob=<blob> - fake payload source. slices are taken from matching offsets
+-- arg : pattern=<blob> - padding pattern for fake slices when fake_blob is shorter. default - zero byte
+-- arg : nofakeN - skip N-th fake segment, for example nofake1 or nofake3
+-- arg : seqovl=N . decrease seq number of the first real segment by N and fill N bytes with pattern (default - all zero)
+-- arg : seqovl_pattern=<blob> . override seqovl pattern
+-- arg : blob=<blob> - use this data instead of desync.dis.payload/reasm_data as real payload
+-- arg : optional - skip if blob/fake_blob is absent. use zero pattern if seqovl_pattern or pattern blob is absent
+-- arg : tls_mod=<list> - optional TLS modifications for fake_blob, same format as in fake()
+-- arg : nodrop - do not drop current dissect
+function fakemultisplit(ctx, desync)
+	if not desync.dis.tcp then
+		if not desync.dis.icmp then instance_cutoff_shim(ctx, desync) end
+		return
+	end
+
+	direction_cutoff_opposite(ctx, desync)
+
+	if not desync.arg.fake_blob then
+		error("fakemultisplit: 'fake_blob' arg required")
+	end
+
+	if desync.arg.optional and desync.arg.blob and not blob_exist(desync, desync.arg.blob) then
+		DLOG("fakemultisplit: blob '"..desync.arg.blob.."' not found. skipped")
+		return
+	end
+	if desync.arg.optional and not blob_exist(desync, desync.arg.fake_blob) then
+		DLOG("fakemultisplit: fake_blob '"..desync.arg.fake_blob.."' not found. skipped")
+		return
+	end
+
+	local data = blob_or_def(desync, desync.arg.blob) or desync.reasm_data or desync.dis.payload
+	if #data>0 and direction_check(desync) and payload_check(desync) then
+		if replay_first(desync) then
+			local spos = desync.arg.pos or "2"
+			if b_debug then DLOG("fakemultisplit: split pos: "..spos) end
+
+			local pos = resolve_multi_pos(data, desync.l7payload, spos)
+			if b_debug then DLOG("fakemultisplit: resolved split pos: "..table.concat(zero_based_pos(pos), " ")) end
+			delete_pos_1(pos)
+
+			if #pos>0 then
+				local fake_data = blob(desync, desync.arg.fake_blob)
+				if desync.reasm_data and desync.arg.tls_mod then
+					local pl = tls_mod_shim(desync, fake_data, desync.arg.tls_mod, desync.reasm_data)
+					if pl then fake_data = pl end
+				end
+
+				local fake_pat = "\x00"
+				if desync.arg.pattern then
+					if desync.arg.optional and not blob_exist(desync, desync.arg.pattern) then
+						DLOG("fakemultisplit: blob '"..desync.arg.pattern.."' not found. using zero pattern")
+					else
+						fake_pat = blob(desync, desync.arg.pattern)
+					end
+				end
+
+				local opts_orig = {
+					rawsend = rawsend_opts_base(desync),
+					reconstruct = {},
+					ipfrag = {},
+					ipid = desync.arg,
+					fooling = {tcp_ts_up = desync.arg.tcp_ts_up}
+				}
+				local opts_fake = {
+					rawsend = rawsend_opts(desync),
+					reconstruct = reconstruct_opts(desync),
+					ipfrag = {},
+					ipid = desync.arg,
+					fooling = desync.arg
+				}
+
+				for i=0,#pos do
+					local pos_start = pos[i] or 1
+					local pos_end = i<#pos and pos[i+1]-1 or #data
+					local part_len = pos_end - pos_start + 1
+					local fake_part = fakemultisplit_fake_part(fake_data, fake_pat, pos_start, part_len)
+
+					if not desync.arg["nofake"..tostring(i+1)] then
+						if b_debug then
+							DLOG("fakemultisplit: sending fake part "..(i+1).." "..(pos_start-1).."-"..(pos_end-1).." len="..#fake_part.." : "..hexdump_dlog(fake_part))
+						end
+						if not rawsend_payload_segmented(desync, fake_part, pos_start-1, opts_fake) then
+							return VERDICT_PASS
+						end
+					end
+
+					local part = string.sub(data, pos_start, pos_end)
+					local seqovl = 0
+					if i==0 and desync.arg.seqovl and tonumber(desync.arg.seqovl)>0 then
+						seqovl = tonumber(desync.arg.seqovl)
+						local pat = "\x00"
+						if desync.arg.seqovl_pattern then
+							if desync.arg.optional and not blob_exist(desync, desync.arg.seqovl_pattern) then
+								DLOG("fakemultisplit: blob '"..desync.arg.seqovl_pattern.."' not found. using zero pattern")
+							else
+								pat = blob(desync, desync.arg.seqovl_pattern)
+							end
+						end
+						part = pattern(pat, 1, seqovl) .. part
+					end
+
+					if b_debug then
+						DLOG("fakemultisplit: sending real part "..(i+1).." "..(pos_start-1).."-"..(pos_end-1).." len="..#part.." seqovl="..seqovl.." : "..hexdump_dlog(part))
+					end
+					if not rawsend_payload_segmented(desync, part, pos_start-1-seqovl, opts_orig) then
+						return VERDICT_PASS
+					end
+				end
+
+				replay_drop_set(desync)
+				return desync.arg.nodrop and VERDICT_PASS or VERDICT_DROP
+			else
+				DLOG("fakemultisplit: no valid split positions")
+			end
+		else
+			DLOG("fakemultisplit: not acting on further replay pieces")
+		end
+
+		if replay_drop(desync) then
+			return desync.arg.nodrop and VERDICT_PASS or VERDICT_DROP
+		end
+	end
+end
+
+-- custom helper for nfqws2
+-- load after zapret-lib.lua and zapret-antidpi.lua:
+--   --lua-init=@/mnt/g/Privacy/zapret2_custom/fakemultidisorder.lua
+--
+-- usage example:
+--   --lua-desync=fakemultidisorder:fake_blob=fake_default_tls:pos=1,midsld+1:seqovl=host:seqovl_pattern=0x1603030000
+--
+-- behavior:
+--   real payload is split like multidisorder and sent from last segment to first
+--   by default only the first original-order segment is faked, and that fake is sent first
+--   this reduces packet count versus fake-all-parts while targeting the bytes DPI usually cares about most
+--   fake data is taken from fake_blob at the same byte offsets; if it is shorter, the tail is padded with pattern or zero bytes
+
+local function fakemultidisorder_fake_part(fake_data, fake_pat, pos_start, part_len)
+	local part = ""
+	if fake_data and pos_start <= #fake_data then
+		part = string.sub(fake_data, pos_start, pos_start + part_len - 1)
+	end
+	if #part < part_len then
+		part = part .. pattern(fake_pat, 1, part_len - #part)
+	end
+	return part
+end
+
+local function fakemultidisorder_part_bounds(pos, data_len, part_n)
+	local pos_start = part_n == 1 and 1 or pos[part_n - 1]
+	local pos_end = part_n <= #pos and (pos[part_n] - 1) or data_len
+	return pos_start, pos_end
+end
+
+local function fakemultidisorder_has_fake_protection(arg)
+	return arg.badsum or arg.fool or
+		arg.ip_ttl or arg.ip6_ttl or arg.ip_autottl or arg.ip6_autottl or
+		arg.ip6_hopbyhop or arg.ip6_hopbyhop2 or arg.ip6_destopt or arg.ip6_destopt2 or arg.ip6_routing or arg.ip6_ah or
+		arg.tcp_seq or arg.tcp_ack or arg.tcp_ts or arg.tcp_md5 or
+		arg.tcp_flags_set or arg.tcp_flags_unset or arg.tcp_nop_del
+end
+
+-- nfqws2 custom : "multidisorder" with interleaved "fake"
+-- standard args : direction, payload, fooling, ip_id, rawsend, reconstruct
+-- FOOLING AND REPEATS APPLIED ONLY TO FAKES. real parts keep only ip_id and tcp_ts_up, like fakeddisorder
+-- arg : pos=<posmarker list> . position marker list. for example : "1,host,midsld+1,-10"
+-- arg : fake_blob=<blob> - fake payload source. slices are taken from matching offsets
+-- arg : pattern=<blob> - padding pattern for fake slices when fake_blob is shorter. default - zero byte
+-- arg : fake_count=N - how many initial original-order segments to fake before real disorder. default - 1
+-- arg : fake_all - fake all segments before real disorder
+-- arg : unsafe_fake - do not auto-enable badsum on fake packets when no explicit fake fooling was requested
+-- arg : nofakeN - skip N-th fake segment in original segment numbering, for example nofake1 or nofake3
+-- arg : seqovl=<posmarker> . same semantics as multidisorder: decrease seq number of the second segment in the original order
+-- arg : seqovl_pattern=<blob> . override pattern
+-- arg : blob=<blob> - use this data instead of desync.dis.payload/reasm_data as real payload
+-- arg : optional - skip if blob/fake_blob is absent. use zero pattern if seqovl_pattern or pattern blob is absent
+-- arg : tls_mod=<list> - optional TLS modifications for fake_blob, same format as in fake()
+-- arg : nodrop - do not drop current dissect
+function fakemultidisorder(ctx, desync)
+	if not desync.dis.tcp then
+		if not desync.dis.icmp then instance_cutoff_shim(ctx, desync) end
+		return
+	end
+
+	direction_cutoff_opposite(ctx, desync)
+
+	if not desync.arg.fake_blob then
+		error("fakemultidisorder: 'fake_blob' arg required")
+	end
+
+	if desync.arg.optional and desync.arg.blob and not blob_exist(desync, desync.arg.blob) then
+		DLOG("fakemultidisorder: blob '"..desync.arg.blob.."' not found. skipped")
+		return
+	end
+	if desync.arg.optional and not blob_exist(desync, desync.arg.fake_blob) then
+		DLOG("fakemultidisorder: fake_blob '"..desync.arg.fake_blob.."' not found. skipped")
+		return
+	end
+
+	local data = blob_or_def(desync, desync.arg.blob) or desync.reasm_data or desync.dis.payload
+	if #data>0 and direction_check(desync) and payload_check(desync) then
+		if replay_first(desync) then
+			local spos = desync.arg.pos or "2"
+			if b_debug then DLOG("fakemultidisorder: split pos: "..spos) end
+
+			local pos = resolve_multi_pos(data, desync.l7payload, spos)
+			if b_debug then DLOG("fakemultidisorder: resolved split pos: "..table.concat(zero_based_pos(pos), " ")) end
+			delete_pos_1(pos)
+
+			if #pos>0 then
+				local seqovl
+				if desync.arg.seqovl then
+					seqovl = resolve_pos(data, desync.l7payload, desync.arg.seqovl)
+					if not seqovl then
+						DLOG("fakemultidisorder: seqovl cancelled because could not resolve marker '"..desync.arg.seqovl.."'")
+					end
+				end
+
+				local fake_data = blob(desync, desync.arg.fake_blob)
+				if desync.reasm_data and desync.arg.tls_mod then
+					local pl = tls_mod_shim(desync, fake_data, desync.arg.tls_mod, desync.reasm_data)
+					if pl then fake_data = pl end
+				end
+
+				local fake_pat = "\x00"
+				if desync.arg.pattern then
+					if desync.arg.optional and not blob_exist(desync, desync.arg.pattern) then
+						DLOG("fakemultidisorder: blob '"..desync.arg.pattern.."' not found. using zero pattern")
+					else
+						fake_pat = blob(desync, desync.arg.pattern)
+					end
+				end
+
+				local opts_orig = {
+					rawsend = rawsend_opts_base(desync),
+					reconstruct = {},
+					ipfrag = {},
+					ipid = desync.arg,
+					fooling = {tcp_ts_up = desync.arg.tcp_ts_up}
+				}
+				local fake_reconstruct = reconstruct_opts(desync)
+				if not desync.arg.unsafe_fake and not fakemultidisorder_has_fake_protection(desync.arg) then
+					fake_reconstruct.badsum = true
+					if b_debug then DLOG("fakemultidisorder: enabled badsum for fake packets by default") end
+				end
+				local opts_fake = {
+					rawsend = rawsend_opts(desync),
+					reconstruct = fake_reconstruct,
+					ipfrag = {},
+					ipid = desync.arg,
+					fooling = desync.arg
+				}
+
+				local part_count = #pos + 1
+				local fake_count = tonumber(desync.arg.fake_count) or 1
+				if desync.arg.fake_all then
+					fake_count = part_count
+				elseif fake_count < 0 then
+					fake_count = 0
+				elseif fake_count > part_count then
+					fake_count = part_count
+				end
+
+				for part_n=1,fake_count do
+					local pos_start, pos_end = fakemultidisorder_part_bounds(pos, #data, part_n)
+					local part_len = pos_end - pos_start + 1
+					local fake_part
+
+					if not desync.arg["nofake"..tostring(part_n)] then
+						fake_part = fakemultidisorder_fake_part(fake_data, fake_pat, pos_start, part_len)
+						if b_debug then
+							DLOG("fakemultidisorder: sending prefake part "..part_n.." "..(pos_start-1).."-"..(pos_end-1).." len="..#fake_part.." : "..hexdump_dlog(fake_part))
+						end
+						if not rawsend_payload_segmented(desync, fake_part, pos_start-1, opts_fake) then
+							return VERDICT_PASS
+						end
+					end
+				end
+
+				for i=#pos,0,-1 do
+					local pos_start = pos[i] or 1
+					local pos_end = i<#pos and pos[i+1]-1 or #data
+					local part_n = i + 1
+
+					local part = string.sub(data, pos_start, pos_end)
+					local ovl = 0
+					if i==1 and seqovl and seqovl>0 then
+						if seqovl>=pos[1] then
+							DLOG("fakemultidisorder: seqovl cancelled because seqovl "..(seqovl-1).." is not less than the first split pos "..(pos[1]-1))
+						else
+							ovl = seqovl - 1
+							local pat = "\x00"
+							if desync.arg.seqovl_pattern then
+								if desync.arg.optional and not blob_exist(desync, desync.arg.seqovl_pattern) then
+									DLOG("fakemultidisorder: blob '"..desync.arg.seqovl_pattern.."' not found. using zero pattern")
+								else
+									pat = blob(desync, desync.arg.seqovl_pattern)
+								end
+							end
+							part = pattern(pat, 1, ovl) .. part
+						end
+					end
+
+					if b_debug then
+						DLOG("fakemultidisorder: sending real part "..part_n.." "..(pos_start-1).."-"..(pos_end-1).." len="..#part.." seqovl="..ovl.." : "..hexdump_dlog(part))
+					end
+					if not rawsend_payload_segmented(desync, part, pos_start-1-ovl, opts_orig) then
+						return VERDICT_PASS
+					end
+				end
+
+				replay_drop_set(desync)
+				return desync.arg.nodrop and VERDICT_PASS or VERDICT_DROP
+			else
+				DLOG("fakemultidisorder: no valid split positions")
+			end
+		else
+			DLOG("fakemultidisorder: not acting on further replay pieces")
+		end
+
 		if replay_drop(desync) then
 			return desync.arg.nodrop and VERDICT_PASS or VERDICT_DROP
 		end

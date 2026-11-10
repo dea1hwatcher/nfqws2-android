@@ -29,12 +29,14 @@ function tls_fake_disorder(ctx, desync)
 			local opts_fake = { rawsend = rawsend_opts(desync), reconstruct = reconstruct_opts(desync), ipfrag = {}, ipid = desync.arg, fooling = desync.arg }
 			local opts_orig = { rawsend = rawsend_opts_base(desync), reconstruct = {}, ipfrag = {}, ipid = desync.arg, fooling = { tcp_ts_up = desync.arg.tcp_ts_up } }
 
-			for i = 1, num_fakes do
+			if num_fakes > 0 then
 				local dis = deepcopy(desync.dis)
 				dis.payload = fake_payload
 				if dis.ip then dis.ip.ip_ttl = 2 end
 				if dis.ip6 then dis.ip6.ip6_hlim = 2 end
-				rawsend_dissect(dis, opts_fake.rawsend)
+				for i = 1, num_fakes do
+					rawsend_dissect(dis, opts_fake.rawsend, opts_fake.reconstruct)
+				end
 			end
 
 			local pos1 = resolve_pos(data, desync.l7payload, "host")
@@ -91,10 +93,12 @@ function fake_disorder(ctx, desync)
 			local opts_fake = { rawsend = rawsend_opts(desync), reconstruct = reconstruct_opts(desync), ipfrag = {}, ipid = desync.arg, fooling = desync.arg }
 			local opts_orig = { rawsend = rawsend_opts_base(desync), reconstruct = {}, ipfrag = {}, ipid = desync.arg, fooling = { tcp_ts_up = desync.arg.tcp_ts_up } }
 
-			for i = 1, num_fakes do
+			if num_fakes > 0 then
 				local dis = deepcopy(desync.dis)
 				dis.payload = fake_payload
-				rawsend_dissect(dis, opts_fake.rawsend)
+				for i = 1, num_fakes do
+					rawsend_dissect(dis, opts_fake.rawsend, opts_fake.reconstruct)
+				end
 			end
 
 			local spos1 = desync.arg.pos1 or "host"

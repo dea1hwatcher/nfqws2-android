@@ -11,13 +11,14 @@ function fmtUptime(sec){
   return p(h) + ':' + p(m) + ':' + p(s);
 }
 let uptAnchor = null;   // {ms: uptime_ms, t: performance.now() anchor}
-function uptElapsedMs(){ return uptAnchor.ms + (performance.now() - uptAnchor.t); }
+function uptElapsedMs(){ return uptAnchor ? uptAnchor.ms + (performance.now() - uptAnchor.t) : 0; }
 function stopUptTimer(){
   if(uptTimer){ clearTimeout(uptTimer); uptTimer = null; }
   uptAnchor = null;
   $('upt').textContent = '—';
 }
 function uptTick(){
+  if(!uptAnchor) return;
   const ms = uptElapsedMs();
   $('upt').textContent = fmtUptime(ms / 1000);
   uptTimer = setTimeout(uptTick, 1000 - (ms % 1000) + 10);

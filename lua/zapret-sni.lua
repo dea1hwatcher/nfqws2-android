@@ -31,6 +31,21 @@ local sni_success_cache = {}   -- server_key -> {sni, timestamp, count, group, l
 local sni_failure_cache = {}   -- server_key:sni -> timestamp
 local sni_attempt_history = {} -- server_key -> attempts
 
+local SNI_CACHE_MAX = 512
+local function prune_cache(t, max_entries)
+    local count = 0
+    for _ in pairs(t) do count = count + 1 end
+    if count >= max_entries then
+        local removed = 0
+        local to_remove = math.floor(max_entries * 0.25)
+        for k in pairs(t) do
+            t[k] = nil
+            removed = removed + 1
+            if removed >= to_remove then break end
+        end
+    end
+end
+
 -- indexes: group -> len -> array of sni_info
 local sni_by_group_len = {}
 local sni_by_len = {}
@@ -440,6 +455,7 @@ local function record_sni_success(server_key, sni_used, group, len)
     end
 
     local prev = sni_success_cache[server_key]
+    if not prev then prune_cache(sni_success_cache, SNI_CACHE_MAX) end
     sni_success_cache[server_key] = {
         sni = sni_used,
         group = group,
@@ -448,6 +464,7 @@ local function record_sni_success(server_key, sni_used, group, len)
         count = (prev and prev.count or 0) + 1
     }
 
+    prune_cache(sni_attempt_history, SNI_CACHE_MAX)
     sni_attempt_history[server_key] = 0
     dlog("SUCCESS server=" .. server_key .. " sni=" .. sni_used)
 end
@@ -465,6 +482,7 @@ local function record_sni_failure(server_key, sni_used)
         end
     end
 
+    prune_cache(sni_failure_cache, SNI_CACHE_MAX)
     sni_failure_cache[failure_key] = now
     dlog("FAIL server=" .. server_key .. " sni=" .. sni_used)
 end
@@ -535,6 +553,7 @@ function tls_sni_intelligent(ctx, desync)
 
     -- attempts per server
     local attempts = (sni_attempt_history[server_key] or 0) + 1
+    if not sni_attempt_history[server_key] then prune_cache(sni_attempt_history, SNI_CACHE_MAX) end
     sni_attempt_history[server_key] = attempts
     if attempts > CONFIG.max_attempts_per_server then
         local cached = sni_success_cache[server_key]

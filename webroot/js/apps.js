@@ -19,7 +19,18 @@ async function appsInit(){
           if(raw.startsWith('[')){
             try {
               const next = JSON.parse(raw);
-              if(next.length !== pkgs.length || JSON.stringify(next) !== JSON.stringify(pkgs)){
+              let changed = next.length !== pkgs.length;
+              if(!changed){
+                for(let i = 0; i < next.length; i++){
+                  const a = next[i], b = pkgs[i];
+                  const pa = typeof a === 'string' ? a : (a.pkg || '');
+                  const pb = typeof b === 'string' ? b : (b.pkg || '');
+                  const na = typeof a === 'string' ? a : (a.name || '');
+                  const nb = typeof b === 'string' ? b : (b.name || '');
+                  if(pa !== pb || na !== nb){ changed = true; break; }
+                }
+              }
+              if(changed){
                 pkgs = next;
                 drawPk(false);
               }
