@@ -1,6 +1,6 @@
 {
-  "version": "v2.2.1",
-  "versionCode": 2210,
-  "zipUrl": "https://github.com/dea1hwatcher/nfqws2-android/releases/download/v2.2.1/nfqws2-android-v2.2.1.zip",
+  "version": "v3.0.0",
+  "versionCode": 3000,
+  "zipUrl": "https://github.com/dea1hwatcher/nfqws2-android/releases/download/v3.0.0/nfqws2-android-v3.0.0.zip",
   "changelog": "https://raw.githubusercontent.com/dea1hwatcher/nfqws2-android/main/changelog.md"
 }

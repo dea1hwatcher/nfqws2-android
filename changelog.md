@@ -1,3 +1,23 @@
+### Изменения в v3.0.0:
+
+RU
+
+Новые стратегии: z2r_rocket, Universal V13, fake_disorder (Zapret-2-GUI), rostelecom и z_attacker
+Исправлена работа голосовых каналов Discord 
+Обновлен умный режим
+Добавлено скрытие процесса модуля от рут-детекторов
+Возвращена поддержка legacy версий Magisk
+Оптимизация WebUI и исправления ошибок
+
+EN
+
+New strategies: z2r_rocket, Universal V13, fake_disorder, rostelecom, z_attacker
+Fixed Discord Voice channel
+Updated smart mode 
+Added root detection hide
+Restored legacy Magisk support
+WebUI optimizations, bug fixes
+
 ### Изменения в v2.2.1:
 
 RU
