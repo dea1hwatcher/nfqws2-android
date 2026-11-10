@@ -46,7 +46,7 @@ SANDBOX=$(mktemp -d "${NFQWS_TEST_TMP:-/tmp}/nfqws2-pack.XXXXXX") || exit 1
 SANDBOX=$(cd "$SANDBOX" && pwd)
 
 MODULE_FILES="action.sh boot-completed.sh customize.sh post-fs-data.sh service.sh uninstall.sh module.prop icon.png LICENSE README.md README_EN.md changelog.md"
-MODULE_DIRS="bin $([ -d "$REPO_DIR/binaries" ] && echo binaries) blobs defaults lib lists lua strategies strategy-catalogs system webroot"
+MODULE_DIRS="META-INF bin $([ -d "$REPO_DIR/binaries" ] && echo binaries) blobs defaults lib lists lua strategies strategy-catalogs system webroot"
 
 # ── builder ───────────────────────────────────────────────────────────────────
 section "tools/build.py produces a module-only archive"
@@ -82,6 +82,7 @@ PY
 import os, sys, zipfile
 names = set(zipfile.ZipFile(sys.argv[1]).namelist())
 for n in ('module.prop', 'icon.png', 'customize.sh', 'post-fs-data.sh', 'service.sh', 'action.sh', 'boot-completed.sh', 'uninstall.sh',
+          'META-INF/com/google/android/update-binary', 'META-INF/com/google/android/updater-script',
           'bin/nfqws2-ctl', 'bin/pkglist.jar', 'system/bin/nfqws2-ctl', 'lib/common.sh', 'defaults/nfqws2.conf',
           'webroot/index.html', 'webroot/config.json'):
     print(('OK  ' if n in names else 'MISSING ') + n)
