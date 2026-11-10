@@ -1,0 +1,55 @@
+# probe_cdn.list — 36 CDN test hosts across 16 providers (Zapret-2-GUI)
+# Akamai
+www.mobil.com.se
+cdn.apple-mapkit.com
+# AWS
+amplifon.com
+optout.aboutads.info
+# CDN77
+cdn.eso.org
+# Cloudflare
+go.coveo.com
+justice.gov
+img.wzstats.gg
+esm.sh
+# Contabo
+antoniotartaglia.it
+status.moow.info
+# DigitalOcean
+ui-arts.com
+app.thecuriositylibrary.com
+admin.survey54.com
+# Fastly
+ssl.p.jwpcdn.com
+www.jetblue.com
+# FranTech / BuyVM
+buyvm.net
+dmvideo.download
+# Gcore
+gcore.com
+# GCP
+api.usercentrics.eu
+widgets.reputation.com
+# Hetzner
+king.hr
+mail.server.apaone.com
+nioges.com
+5fd8bdae.nip.io
+net4u.de
+# Melbicom
+elecane.com
+# Azure
+store.takeda.com
+# Oracle
+sh00065.hostgator.com
+ged.com.sg
+# OVH
+www.adwin.fr
+www.emca.be
+# Scaleway
+www.velivole.fr
+# Vultr
+askit-app.de
+us.rudder.qntmnet.com
+# GitHub Pages
+hyperion-cs.github.io
