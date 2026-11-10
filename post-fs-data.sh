@@ -22,4 +22,7 @@ if [ "$ENABLE_HOTSPOT" = "1" ]; then
   settings put global tether_dun_required 0 2>/dev/null || true
 fi
 
+# 3. Early stealth hiding mechanisms (SuSFS, KernelSU ksud umount, SELinux context)
+apply_stealth_hiding >/dev/null 2>&1 || true
+
 exit 0

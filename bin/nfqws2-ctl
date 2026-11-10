@@ -498,6 +498,24 @@ cmd_doctor() {
   else
     row info apps "$(M 'фильтр по приложениям выключен' 'app filter is off')"
   fi
+  local stealth_cap sbin dhandler
+  stealth_cap=$(detect_stealth_capabilities 2>/dev/null)
+  case "$stealth_cap" in
+    susfs:*)
+      sbin="${stealth_cap#susfs:}"
+      row ok stealth "$(M "SuSFS активен ($sbin)" "SuSFS active ($sbin)")"
+      ;;
+    ksud_umount)
+      row ok stealth "$(M "KernelSU umount активен (/data/adb/ksud)" "KernelSU umount active (/data/adb/ksud)")"
+      ;;
+    denylist:*)
+      dhandler="${stealth_cap#denylist:}"
+      row ok stealth "$(M "Denylist обработчик: $dhandler" "Denylist handler: $dhandler")"
+      ;;
+    *)
+      row info stealth "$(M "базовый режим (без SuSFS / ksud umount)" "standard mode (no SuSFS / ksud umount)")"
+      ;;
+  esac
   if [ -e /proc/sys/net/netfilter/nf_conntrack_checksum ]; then
     local est cnt mx
     est=$(sysctl -n net.netfilter.nf_conntrack_tcp_timeout_established 2>/dev/null)
@@ -3609,6 +3627,28 @@ cmd_monet_system() {
   tail -n +2 "$cache"
 }
 
+cmd_stealth() {
+  apply_stealth_hiding
+  local cap sbin dhandler
+  cap=$(detect_stealth_capabilities 2>/dev/null)
+  case "$cap" in
+    susfs:*)
+      sbin="${cap#susfs:}"
+      echo "stealth: active (SuSFS $sbin)"
+      ;;
+    ksud_umount)
+      echo "stealth: active (KernelSU ksud umount)"
+      ;;
+    denylist:*)
+      dhandler="${cap#denylist:}"
+      echo "stealth: active (Denylist handler $dhandler)"
+      ;;
+    *)
+      echo "stealth: standard (none)"
+      ;;
+  esac
+}
+
 # Audit log state-modifying actions prior to execution
 user_action() { # <command> [args] -> description | empty if not action
   case "$1" in
@@ -3668,6 +3708,7 @@ case "$1" in
   orchestra-unblock) cmd_orchestra_unblock "$2" "$3" ;;
   orchestra-clear) cmd_orchestra_clear ;;
   tg-affinity) cmd_tg_affinity ;;
+  stealth) cmd_stealth ;;
   doctor) cmd_doctor ;;
 
   check|dry-run)

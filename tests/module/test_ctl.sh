@@ -460,6 +460,7 @@ assert_match "$ctl_out" "^(ok|warn|fail|info)	" "doctor emits tab-separated seve
 assert_contains "$ctl_out" "NFQUEUE" "doctor checks the NFQUEUE target"
 assert_contains "$ctl_out" "limiter" "doctor reports the limiter in use"
 assert_contains "$ctl_out" "RAM" "doctor reports memory consumption"
+assert_contains "$ctl_out" "$(printf 'info\tstealth\t')" "doctor reports stealth row"
 assert_contains "$ctl_out" "$(printf 'info\tnat_fix\t')" "NAT counters are diagnostic, not proof of traffic handling"
 
 MOCK_IPT_NAT_LIST_FILE="$SANDBOX/nat-counters.txt"
@@ -975,5 +976,10 @@ ctl share file /etc/passwd
 assert_rc 1 "$ctl_rc" "an external path is refused"
 ctl share file "$CONFFILE/../../../etc/passwd"
 assert_rc 1 "$ctl_rc" "a climbing path is refused"
+
+section "stealth command"
+ctl stealth
+assert_rc 0 "$ctl_rc" "stealth command exits 0"
+assert_contains "$ctl_out" "stealth:" "stealth command reports mode"
 
 harness_finish

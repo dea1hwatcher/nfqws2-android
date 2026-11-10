@@ -2133,16 +2133,142 @@ system_config() {
     sysctl_apply net.netfilter.nf_conntrack_max 16384
   fi
   setup_cli_symlinks
+  apply_stealth_hiding
   return 0
 }
 
-setup_cli_symlinks() {
-  local p
-  for p in /data/adb/ap/bin /data/adb/ksu/bin; do
-    if [ -d "$p" ]; then
-      ln -sf "$MODDIR/bin/nfqws2-ctl" "$p/nfqws2-ctl" 2>/dev/null
+# ── Stealth & root detection hiding (bindhosts-compatible mechanisms) ─────────
+# Integrates SuSFS (try_umount, sus_path, sus_mount, kstat spoofing),
+# KernelSU native kernel umount, SELinux context cloning, and safe CLI symlinks.
+
+detect_root_manager() {
+  if [ "${APATCH:-}" = "true" ] || [ -d /data/adb/ap ]; then
+    echo "APatch"
+  elif [ "${KSU:-}" = "true" ] || [ -d /data/adb/ksu ]; then
+    echo "KernelSU"
+  else
+    echo "Magisk"
+  fi
+}
+
+find_susfs_bin() {
+  local b=""
+  for b in "${SUSFS_BIN:-}" /data/adb/ksu/bin/ksu_susfs /data/adb/ap/bin/ksu_susfs /data/adb/magisk/ksu_susfs; do
+    if [ -n "$b" ]; then
+      if [ -x "$b" ] || [ -f "$b" ]; then
+        echo "$b"
+        return 0
+      fi
     fi
   done
+  return 1
+}
+
+detect_stealth_capabilities() {
+  local sbin ksud_bin ksud_umount=0 denylist_handler="" dh
+  sbin=$(find_susfs_bin 2>/dev/null)
+  ksud_bin="${KSUD_BIN:-/data/adb/ksud}"
+  if [ -n "$ksud_bin" ]; then
+    if [ -x "$ksud_bin" ] || [ -f "$ksud_bin" ]; then
+      if "$ksud_bin" kernel 2>&1 | grep -q "umount" >/dev/null 2>&1; then
+        ksud_umount=1
+      fi
+    fi
+  fi
+  for dh in rezygisk zygisk-assistant zygisk_nohello zygisksu; do
+    if [ -d "/data/adb/modules/$dh" ] && [ ! -f "/data/adb/modules/$dh/disable" ]; then
+      denylist_handler="$dh"
+      break
+    fi
+  done
+
+  if [ -n "$sbin" ]; then
+    printf 'susfs:%s\n' "$sbin"
+  elif [ "$ksud_umount" = "1" ]; then
+    printf 'ksud_umount\n'
+  elif [ -n "$denylist_handler" ]; then
+    printf 'denylist:%s\n' "$denylist_handler"
+  else
+    printf 'none\n'
+  fi
+}
+
+setup_cli_symlinks() {
+  local p magisktmp=""
+  for p in /data/adb/ap/bin /data/adb/ksu/bin; do
+    if [ -d "$p" ]; then
+      ln -sf "$MODDIR/bin/nfqws2-ctl" "$p/nfqws2-ctl" 2>/dev/null || true
+      ln -sf "$MODDIR/bin/nfqws2-ctl" "$p/zapret2-status" 2>/dev/null || true
+    fi
+  done
+  if [ -w /sbin ]; then
+    magisktmp=/sbin
+  elif [ -w /debug_ramdisk ]; then
+    magisktmp=/debug_ramdisk
+  fi
+  if [ -n "$magisktmp" ] && [ -x "$MODDIR/bin/nfqws2-ctl" ]; then
+    ln -sf "$MODDIR/bin/nfqws2-ctl" "$magisktmp/nfqws2-ctl" 2>/dev/null || true
+    ln -sf "$MODDIR/bin/nfqws2-ctl" "$magisktmp/zapret2-status" 2>/dev/null || true
+  fi
+  return 0
+}
+
+apply_stealth_hiding() {
+  local sbin ksud_bin wrappers ref_ctx f w target
+  sbin=$(find_susfs_bin 2>/dev/null)
+  ksud_bin="${KSUD_BIN:-/data/adb/ksud}"
+  wrappers="nfqws2-ctl zapret2-start zapret2-stop zapret2-restart zapret2-status zapret2-rollback zapret2-bench"
+
+  # 1. SELinux reference context matching /system/bin/sh
+  ref_ctx="/system/bin/sh"
+  [ -f "$ref_ctx" ] || ref_ctx="/system/bin"
+  if [ -d "$MODDIR/system/bin" ]; then
+    for w in $wrappers; do
+      f="$MODDIR/system/bin/$w"
+      if [ -f "$f" ]; then
+        chmod 755 "$f" 2>/dev/null || true
+        chown 0:0 "$f" 2>/dev/null || true
+        chcon --reference="$ref_ctx" "$f" 2>/dev/null || true
+      fi
+    done
+  fi
+
+  # 2. SuSFS hiding integration (KernelSU/APatch + SuSFS kernel patchset)
+  if [ -n "$sbin" ]; then
+    if [ -d "$MODDIR" ]; then
+      "$sbin" add_sus_path "$MODDIR" >/dev/null 2>&1 || true
+    fi
+    if [ -d "$CONFDIR" ]; then
+      "$sbin" add_sus_path "$CONFDIR" >/dev/null 2>&1 || true
+    fi
+
+    for w in $wrappers; do
+      target="/system/bin/$w"
+      "$sbin" add_sus_kstat "$target" >/dev/null 2>&1 || true
+      "$sbin" update_sus_kstat "$target" >/dev/null 2>&1 || true
+      "$sbin" add_try_umount "$target" 1 >/dev/null 2>&1 || true
+      "$sbin" add_try_umount "$target" >/dev/null 2>&1 || true
+    done
+
+    "$sbin" add_sus_mount "/system/bin" >/dev/null 2>&1 || true
+    "$sbin" add_try_umount "/system/bin" 1 >/dev/null 2>&1 || true
+    echo "nfqws2: apply_stealth_hiding - susfs hiding applied via $sbin" >> /dev/kmsg 2>/dev/null || true
+  fi
+
+  # 3. KernelSU native kernel umount (KernelSU 22106+)
+  if [ -x "$ksud_bin" ]; then
+    if "$ksud_bin" kernel 2>&1 | grep -q "umount" >/dev/null 2>&1; then
+      for w in $wrappers; do
+        "$ksud_bin" kernel umount add "/system/bin/$w" --flags 2 >/dev/null 2>&1 || true
+      done
+      "$ksud_bin" kernel umount add "/system/bin" --flags 2 >/dev/null 2>&1 || true
+      "$ksud_bin" kernel notify-module-mounted >/dev/null 2>&1 || true
+      echo "nfqws2: apply_stealth_hiding - ksud kernel umount applied" >> /dev/kmsg 2>/dev/null || true
+    fi
+  fi
+
+  # 4. Safe root-only CLI symlinks for Termux and root shell
+  setup_cli_symlinks
   return 0
 }
 

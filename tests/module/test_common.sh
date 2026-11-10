@@ -389,6 +389,62 @@ section "setup_cli_symlinks"
 setup_cli_symlinks
 assert_rc 0 $? "setup_cli_symlinks succeeds silently when APatch/KSU paths are absent"
 
+# ── stealth hiding mechanisms (bindhosts) ────────────────────────────────────
+section "stealth hiding mechanisms"
+
+APATCH="true"
+assert_eq "APatch" "$(detect_root_manager)" "detects APatch from env"
+APATCH=""
+KSU="true"
+assert_eq "KernelSU" "$(detect_root_manager)" "detects KernelSU from env"
+KSU=""
+assert_eq "Magisk" "$(detect_root_manager)" "defaults to Magisk"
+
+SUSFS_BIN=""
+assert_eq "1" "$(find_susfs_bin >/dev/null 2>&1; echo $?)" "find_susfs_bin fails when absent"
+
+mock_susfs="$SANDBOX/mock_ksu_susfs"
+cat << EOF > "$mock_susfs"
+#!/bin/sh
+echo "\$@" >> "$SANDBOX/susfs.log"
+exit 0
+EOF
+chmod 0755 "$mock_susfs"
+
+SUSFS_BIN="$mock_susfs"
+assert_eq "$mock_susfs" "$(find_susfs_bin)" "find_susfs_bin finds SUSFS_BIN"
+assert_contains "$(detect_stealth_capabilities)" "susfs:" "detect_stealth_capabilities finds susfs"
+
+mock_ksud="$SANDBOX/mock_ksud"
+cat << EOF > "$mock_ksud"
+#!/bin/sh
+if [ "\$1" = "kernel" ]; then
+  if [ "\$2" = "umount" ] || [ "\$#" -eq 1 ]; then
+    echo "kernel umount supported"
+  fi
+  echo "\$@" >> "$SANDBOX/ksud.log"
+fi
+exit 0
+EOF
+chmod 0755 "$mock_ksud"
+
+SUSFS_BIN=""
+KSUD_BIN="$mock_ksud"
+assert_eq "ksud_umount" "$(detect_stealth_capabilities)" "detect_stealth_capabilities finds ksud umount"
+
+SUSFS_BIN="$mock_susfs"
+KSUD_BIN="$mock_ksud"
+rm -f "$SANDBOX/susfs.log" "$SANDBOX/ksud.log"
+apply_stealth_hiding
+assert_rc 0 $? "apply_stealth_hiding succeeds"
+assert_contains "$(cat "$SANDBOX/susfs.log" 2>/dev/null)" "add_sus_path" "SuSFS add_sus_path invoked"
+assert_contains "$(cat "$SANDBOX/susfs.log" 2>/dev/null)" "add_try_umount" "SuSFS add_try_umount invoked"
+assert_contains "$(cat "$SANDBOX/susfs.log" 2>/dev/null)" "add_sus_kstat" "SuSFS add_sus_kstat invoked"
+assert_contains "$(cat "$SANDBOX/ksud.log" 2>/dev/null)" "notify-module-mounted" "KernelSU notify-module-mounted invoked"
+
+SUSFS_BIN=""
+KSUD_BIN=""
+
 # ── Phase 3 features ──────────────────────────────────────────────────────────
 section "get_strategy_packet_limits"
 

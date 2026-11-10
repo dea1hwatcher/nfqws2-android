@@ -881,6 +881,7 @@ case "$1" in
     rm -f "$HOME_PAUSED_FILE" "$HOME_OVERRIDE_FILE" "$SK_PIDFILE" "$STATE_DIR"/conf_seen.*
     rmdir "$STATE_DIR/home.lock" 2>/dev/null
     update_description ready
+    apply_stealth_hiding >/dev/null 2>&1 || true
     until [ "$(getprop sys.boot_completed 2>/dev/null)" = "1" ]; do sleep 3; done
     sleep 4
     load_conf >/dev/null 2>&1

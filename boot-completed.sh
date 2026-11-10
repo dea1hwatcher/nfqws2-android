@@ -29,4 +29,7 @@ fi
 # ensure watchdog and netwatch are running
 sh "$MODDIR/service.sh" ensure_watchdog >/dev/null 2>&1
 
+# refresh stealth hiding mechanisms
+apply_stealth_hiding >/dev/null 2>&1 || true
+
 exit 0

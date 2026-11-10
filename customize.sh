@@ -117,10 +117,21 @@ busybox chmod +x "$MODPATH/service.sh" "$MODPATH/action.sh" "$MODPATH/uninstall.
 busybox chmod +x "$MODPATH/boot-completed.sh" "$MODPATH/post-fs-data.sh" 2>/dev/null || chmod +x "$MODPATH/boot-completed.sh" "$MODPATH/post-fs-data.sh" 2>/dev/null
 busybox chmod +x "$MODPATH/system/bin/nfqws2-ctl" 2>/dev/null || chmod +x "$MODPATH/system/bin/nfqws2-ctl" 2>/dev/null
 
-# CLI symlinks for APatch and KernelSU environments
+# CLI symlinks for APatch, KernelSU, and Magisk environments
 for p in /data/adb/ap/bin /data/adb/ksu/bin; do
   if [ -d "$p" ]; then
     ln -sf /data/adb/modules/nfqws2-android/bin/nfqws2-ctl "$p/nfqws2-ctl" 2>/dev/null || true
+    ln -sf /data/adb/modules/nfqws2-android/bin/nfqws2-ctl "$p/zapret2-status" 2>/dev/null || true
+  fi
+done
+
+# SELinux reference context cloning (bindhosts stealth pattern)
+ref_ctx="/system/bin/sh"
+[ -f "$ref_ctx" ] || ref_ctx="/system/bin"
+for w in "$MODPATH"/system/bin/*; do
+  if [ -f "$w" ]; then
+    busybox chmod 755 "$w" 2>/dev/null || chmod 755 "$w" 2>/dev/null || true
+    busybox chcon --reference="$ref_ctx" "$w" 2>/dev/null || chcon --reference="$ref_ctx" "$w" 2>/dev/null || true
   fi
 done
 
