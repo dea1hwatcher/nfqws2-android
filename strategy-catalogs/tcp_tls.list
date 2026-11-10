@@ -992,3 +992,8 @@
 --lua-desync=fake:blob=tls_clienthello_steam_chat_com:tcp_ts=-600000:repeats=8 --lua-desync=multisplit:pos=1:seqovl=1100:seqovl_pattern=tls_clienthello_steam_chat_com
 --lua-desync=fake:blob=tls_clienthello_steamstatic_com:tcp_ts=-600000:repeats=8 --lua-desync=multisplit:pos=1:seqovl=1100:seqovl_pattern=tls_clienthello_steamstatic_com
 --lua-desync=fake:blob=tls_clienthello_teamspeak_com:tcp_ts=-600000:repeats=8 --lua-desync=multisplit:pos=1:seqovl=1100:seqovl_pattern=tls_clienthello_teamspeak_com
+--lua-desync=fake:blob=tls_google:repeats=6:fooling=badsum --lua-desync=multidisorder:pos=2,5,105,host+5,sld-1,endsld-5,endsld
+--lua-desync=fake:blob=tls_google:repeats=6:fooling=tcp_ts=-600000,badsum --lua-desync=multidisorder:pos=2,5,105,host+5,sld-1,endsld-5,endsld
+--lua-desync=hostfakesplit:host=rzd.ru:midhost=host-2:seqovl=726:fooling=badsum,tcp_seq=1000000
+--lua-desync=fake:repeats=6:fooling=tcp_ts=-600000,badsum --lua-desync=multisplit:pos=1:fooling=tcp_seq=1000000
+--lua-desync=syndata --lua-desync=multisplit:pos=1,midsld:seqovl=1:fooling=tcp_seq=1000000

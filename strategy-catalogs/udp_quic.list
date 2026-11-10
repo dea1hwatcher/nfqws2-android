@@ -88,3 +88,5 @@
 --lua-desync=fake:repeats=11
 --lua-desync=fake:blob=quic_initial:repeats=6
 --lua-desync=fake:blob=0x00000000:repeats=2
+--lua-desync=fake:blob=quic_google:repeats=3:ipfrag:ipfrag_pos_udp=8:payload=all
+--lua-desync=udplen:increment=8:pattern=0xFEA82025
