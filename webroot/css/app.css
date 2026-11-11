@@ -277,4 +277,105 @@ html[data-containers="true"] #pk .list-item.selected + .list-item:not(.selected)
 .whatsnew code { font-family: var(--md-font-code); font-size: .92em; padding: 0 3px; border-radius: 4px;
   background: var(--md-sys-color-surface-container-highest); }
 
+/* Hero Stealth Mode Pill (Bindhosts style) */
+.hero-stealth-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+  padding: 3px 10px;
+  border-radius: var(--shape-full);
+  font-size: var(--ts-label-medium);
+  line-height: var(--lh-label-medium);
+  font-weight: var(--w-medium);
+  background: color-mix(in srgb, currentColor 10%, transparent);
+  color: inherit;
+  border: 1px solid color-mix(in srgb, currentColor 22%, transparent);
+  cursor: pointer;
+  width: fit-content;
+  max-width: 100%;
+  user-select: none;
+  transition: background-color var(--dur-short) var(--standard), border-color var(--dur-short) var(--standard);
+}
+.hero-stealth-pill:hover {
+  background: color-mix(in srgb, currentColor 18%, transparent);
+}
+.hero-stealth-pill:active {
+  transform: scale(.97);
+}
+.hero-stealth-pill.active {
+  border-color: color-mix(in srgb, var(--status-ok) 45%, transparent);
+  color: var(--status-ok);
+  background: color-mix(in srgb, var(--status-ok) 14%, transparent);
+}
+.hero.running .hero-stealth-pill.active {
+  border-color: color-mix(in srgb, var(--md-sys-color-primary) 35%, transparent);
+  color: var(--md-sys-color-on-primary-container);
+  background: color-mix(in srgb, var(--md-sys-color-primary) 18%, transparent);
+}
+.stealth-mode-card {
+  padding: 16px;
+  border-radius: var(--shape-large);
+  background: var(--md-sys-color-surface-container);
+  border: 1px solid var(--md-sys-color-outline-variant);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+.stealth-mode-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: var(--shape-full);
+  font-size: var(--ts-label-medium);
+  font-weight: var(--w-bold);
+  width: fit-content;
+}
+.stealth-mode-badge.ok {
+  background: color-mix(in srgb, var(--status-ok) 16%, transparent);
+  color: var(--status-ok);
+}
+.stealth-mode-badge.neutral {
+  background: var(--md-sys-color-surface-container-highest);
+  color: var(--md-sys-color-on-surface-variant);
+}
+.stealth-section-title {
+  font-size: var(--ts-title-small);
+  font-weight: var(--w-emph);
+  color: var(--md-sys-color-primary);
+  margin: 12px 0 8px;
+}
+.stealth-layer-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: var(--shape-medium);
+  background: var(--md-sys-color-surface-container-low);
+  margin-bottom: 8px;
+}
+.stealth-layer-icon {
+  flex: none;
+  margin-top: 2px;
+  color: var(--status-ok);
+}
+.stealth-layer-content {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.stealth-layer-name {
+  font-size: var(--ts-body-medium);
+  font-weight: var(--w-medium);
+  color: var(--md-sys-color-on-surface);
+}
+.stealth-layer-desc {
+  font-size: var(--ts-body-small);
+  color: var(--md-sys-color-on-surface-variant);
+  line-height: var(--lh-body-small);
+}
+
+
 

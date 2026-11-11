@@ -98,6 +98,11 @@
           <div class="hero-titles">
             <div class="hero-state" id="st" aria-live="polite">Опрос службы…</div>
             <div class="hero-sub" id="sub"></div>
+            <button class="hero-stealth-pill state" id="stealth-pill" type="button" onclick="openStealthSheet()"
+                    aria-haspopup="dialog" aria-label="Режим скрытия" data-ta="aria-label,title" title="Режим скрытия">
+              <svg aria-hidden="true" class="icon s16"><use href="#i-shield"/></svg>
+              <span id="stealth-mode" data-t>Скрытие: —</span>
+            </button>
           </div>
         </div>
         <div class="hero-stats">
@@ -568,6 +573,17 @@
   <div class="sheet-desc" data-t>Резервные копии конфигураций, сохранённые перед заменой или редактированием.</div>
   <div class="list sheet-scroll" id="replaced-list" style="max-height:360px;"></div>
   <div class="sheet-actions">
+    <button class="btn text state" onclick="closeSheet()"><span data-t>Закрыть</span></button>
+  </div>
+</div>
+
+<div class="sheet list-sheet" id="stealth-sheet" role="dialog" aria-modal="true" aria-labelledby="stealth-sheet-title">
+  <button type="button" class="sheet-drag" aria-label="Закрыть" data-ta="aria-label"><span class="handle"></span></button>
+  <div class="sheet-title" id="stealth-sheet-title" data-t>Режим скрытия модуля</div>
+  <div class="sheet-desc" id="stealth-sheet-desc" data-t>Защита от обнаружения рут-доступа и модулей на основе Bindhosts.</div>
+  <div class="sheet-scroll" id="stealth-sheet-body" style="padding:0 16px 16px;"></div>
+  <div class="sheet-actions">
+    <button class="btn tonal state" id="btn-reapply-stealth" onclick="reapplyStealth()"><span data-t>Обновить скрытие</span></button>
     <button class="btn text state" onclick="closeSheet()"><span data-t>Закрыть</span></button>
   </div>
 </div>

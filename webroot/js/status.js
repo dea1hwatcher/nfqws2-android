@@ -281,6 +281,94 @@ async function restoreReplacedStrategy(name){
   }
 }
 
+async function openStealthSheet(){
+  openSheet('stealth-sheet');
+  const box = $('stealth-sheet-body');
+  if(!box) return;
+  const st = (S && S.stealth) || { mode: 'none', detail: '' };
+  const mode = st.mode || 'none';
+  const detail = st.detail || '';
+
+  let modeTitle = t('Базовый (без сокрытия)');
+  let modeDesc = t('Модуль смонтирован в штатном режиме. Точки монтирования видны приложениям с проверками рут-доступа.');
+
+  if(mode === 'susfs'){
+    modeTitle = 'SuSFS ' + (detail ? '(' + detail + ')' : '');
+    modeDesc = t('Ядро с поддержкой SuSFS автоматически скрывает каталог модуля (/data/adb/modules/nfqws2-android), размонтирует обёртки /system/bin и подменяет метаданные kstat для изолированных приложений.');
+  } else if(mode === 'ksud'){
+    modeTitle = 'KernelSU (ksud kernel umount)';
+    modeDesc = t('Ядро KernelSU 22106+ через ksud выполняет автоматическое размонтирование /system/bin и каталогов модуля из пространств имён изолированных приложений.');
+  } else if(mode === 'denylist'){
+    modeTitle = 'Denylist ' + (detail ? '(' + detail + ')' : '');
+    modeDesc = t('Обнаружен активный обработчик списка Denylist ({0}), выполняющий скрытие модулей из процессов с проверкой рут-доступа.', detail || t('перехватчик'));
+  }
+
+  const layers = [
+    {
+      name: t('SELinux Context Matching'),
+      desc: t('Клонирование контекста /system/bin/sh на бинарные обёртки модуля'),
+      active: true
+    },
+    {
+      name: t('Root CLI Path Independence'),
+      desc: t('Безопасные символические ссылки в tmpfs (/data/adb/ksu/bin, /sbin) для сохранения доступа root'),
+      active: true
+    },
+    {
+      name: (mode === 'susfs') ? t('SuSFS Path & Mount Spoofing') : (mode === 'ksud' ? t('Kernel Namespace Umount') : t('Zygisk Denylist Handler')),
+      desc: (mode === 'susfs') ? t('Скрытие путей модуля и подмена kstat от обнаружения банками и Native Detector') :
+            (mode === 'ksud' ? t('Изоляция монтирований ядра от непривилегированных процессов') :
+            (mode === 'denylist' ? t('Перехват монтирований для приложений из списка запрета') :
+            t('Автоматическое сокрытие точек монтирования недоступно в текущем ядре'))),
+      active: (mode !== 'none')
+    }
+  ];
+
+  let h = '';
+  h += '<div class="stealth-mode-card">';
+  h += (mode !== 'none')
+    ? '<div class="stealth-mode-badge ok">'
+    : '<div class="stealth-mode-badge neutral">';
+  h += '  <svg aria-hidden="true" class="icon s16"><use href="#i-shield"/></svg>';
+  h += '  <span>' + esc(modeTitle) + '</span>';
+  h += '</div>';
+  h += '<div style="font-size:var(--ts-body-medium);line-height:var(--lh-body-medium);color:var(--md-sys-color-on-surface);">' + esc(modeDesc) + '</div>';
+  h += '</div>';
+
+  h += '<div class="stealth-section-title">' + esc(t('Активные уровни защиты')) + '</div>';
+  for(const l of layers){
+    h += '<div class="stealth-layer-item">';
+    h += '  <div class="stealth-layer-icon" style="' + (l.active ? '' : 'color:var(--md-sys-color-outline);') + '">';
+    h += '    <svg aria-hidden="true" class="icon s20"><use href="#' + (l.active ? 'i-check' : 'i-close') + '"/></svg>';
+    h += '  </div>';
+    h += '  <div class="stealth-layer-content">';
+    h += '    <div class="stealth-layer-name">' + esc(l.name) + '</div>';
+    h += '    <div class="stealth-layer-desc">' + esc(l.desc) + '</div>';
+    h += '  </div>';
+    h += '</div>';
+  }
+
+  h += '<div class="stealth-section-title">' + esc(t('Режимы сокрытия Bindhosts')) + '</div>';
+  h += '<div style="font-size:var(--ts-body-small);color:var(--md-sys-color-on-surface-variant);line-height:var(--lh-body-small);display:flex;flex-direction:column;gap:6px;">';
+  h += '  <div><strong>Mode 1 (SuSFS):</strong> ' + esc(t('Максимальный уровень: защита на уровне ядра против Momo, банков и Play Integrity.')) + '</div>';
+  h += '  <div><strong>Mode 10 (KernelSU):</strong> ' + esc(t('Встроенная изоляция KernelSU 22106+ без сторонних патчей ядра.')) + '</div>';
+  h += '  <div><strong>Mode 2 (Denylist):</strong> ' + esc(t('Пользовательский перехватчик Denylist для Magisk/KernelSU/APatch.')) + '</div>';
+  h += '</div>';
+
+  box.innerHTML = h;
+}
+
+async function reapplyStealth(){
+  const r = await withBusy(['stealth']);
+  if(r.code === 0){
+    toast(t('Скрытие успешно применено'));
+    await stat(true);
+    if(openSheetId === 'stealth-sheet') openStealthSheet();
+  } else {
+    toast(errText(r, 'Не удалось применить скрытие'));
+  }
+}
+
 /* Status */
 
 /* Toggle rows stay single-line; service switches live in the developer block */
@@ -390,7 +478,11 @@ function renderParams(j, force){
 /* Paint from the last known status so the screen is never blank */
 function renderStatus(force){
   const j = S;
-  if(!j || j.running == null){ renderHeroActions(); renderParams({}, force); return; }
+  if(!j || j.running == null){
+    if($('stealth-mode')) $('stealth-mode').textContent = t('Скрытие: —');
+    if($('stealth-pill')) $('stealth-pill').classList.remove('active');
+    renderHeroActions(); renderParams({}, force); return;
+  }
   const paused = !j.running && !!j.paused;
   if(j.strategy) currentStrategy = j.strategy;
   $('hero-status').className = 'hero' + (j.running ? ' running' : (paused ? ' paused' : ''));
@@ -413,6 +505,20 @@ function renderStatus(force){
   const rbBtn = $('btn-rollback');
   if(rbBtn) rbBtn.hidden = !(j.has_rollback == 1);
 
+  const st = (j && j.stealth) || { mode: 'none', detail: '' };
+  const smode = st.mode || 'none';
+  const pill = $('stealth-pill');
+  const lbl = $('stealth-mode');
+  if(pill && lbl){
+    const isAct = (smode !== 'none');
+    pill.classList.toggle('active', isAct);
+    let title = t('Базовый');
+    if(smode === 'susfs') title = 'SuSFS';
+    else if(smode === 'ksud') title = 'KernelSU';
+    else if(smode === 'denylist') title = st.detail ? 'Denylist (' + st.detail + ')' : 'Denylist';
+    lbl.textContent = t('Скрытие: {0}', title);
+  }
+
   let w = '';
   if(j.qdrop > 0) w += banner('danger', 'warn', t('Ядро сбросило {0} пакетов: nfqws2 не успевает обрабатывать очередь {1}.', j.qdrop, j.queue));
   if(j.log_level == 1) w += banner('', 'info', t('Включён подробный журнал отладки: обработка заметно медленнее.'));
@@ -433,6 +539,8 @@ async function stat(quiet){
       $('hero-status').className = 'hero offline';
       $('st').textContent = t('Нет связи с модулем');
       $('sub').textContent = t('Проверьте root-доступ и наличие {0}', CTL);
+      if($('stealth-mode')) $('stealth-mode').textContent = t('Скрытие: —');
+      if($('stealth-pill')) $('stealth-pill').classList.remove('active');
       $('queue-num').textContent = '—';
       $('qdrop-num').textContent = '—';
       stopUptTimer();

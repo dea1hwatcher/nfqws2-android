@@ -193,6 +193,26 @@ cmd_json_status() {
   cnt_user="$1" cnt_auto="$2" cnt_excl="$3" cnt_ipset="$4" cnt_ipset_excl="$5" cnt_apps="$6" cnt_probe="$7"
   local has_rb
   if [ -f "$SNAPSHOT_DIR/nfqws2.conf" ]; then has_rb=1; else has_rb=0; fi
+  local stealth_cap stealth_mode="none" stealth_detail=""
+  stealth_cap=$(detect_stealth_capabilities 2>/dev/null)
+  case "$stealth_cap" in
+    susfs:*)
+      stealth_mode="susfs"
+      stealth_detail="${stealth_cap#susfs:}"
+      ;;
+    ksud_umount)
+      stealth_mode="ksud"
+      stealth_detail="/data/adb/ksud"
+      ;;
+    denylist:*)
+      stealth_mode="denylist"
+      stealth_detail="${stealth_cap#denylist:}"
+      ;;
+    *)
+      stealth_mode="none"
+      stealth_detail=""
+      ;;
+  esac
 # Verify every field is numeric to prevent invalid JSON from breaking WebUI
   for v in appn cnt_user cnt_auto cnt_excl cnt_ipset cnt_ipset_excl cnt_apps cnt_probe uptime upms qdrop \
            PKT_LIMIT_OUT PKT_LIMIT_IN BLOCK_QUIC AUTOSTART WATCHDOG IPV6_ENABLED LOG_LEVEL NFQUEUE_NUM WAKELOCK HOME_WIFI ENABLE_HOTSPOT NET_STRATEGY VPN_PAUSE META_QUIC_REJECT CALLS_BYPASS TCP_MSS_CLAMP WL_PAUSE has_rb; do
@@ -204,7 +224,7 @@ cmd_json_status() {
 "limiter":"$(json_str "$(cat "$STATE_DIR/limiter" 2>/dev/null)")","pkt_limit_out":$PKT_LIMIT_OUT,"pkt_limit_in":$PKT_LIMIT_IN,"block_quic":$BLOCK_QUIC,"app_mode":"$(json_str "$APP_MODE")","autostart":$AUTOSTART,"watchdog":$WATCHDOG,"wakelock_on":$WAKELOCK,
 "ipv6":$IPV6_ENABLED,"log_level":$LOG_LEVEL,"qdrop":$qdrop,"queue":$NFQUEUE_NUM,"app_uids":$appn,
 "home_wifi":$HOME_WIFI,"enable_hotspot":$ENABLE_HOTSPOT,"net_strategy":$NET_STRATEGY,"vpn_pause":$VPN_PAUSE,"wl_pause":$WL_PAUSE,"meta_quic":$META_QUIC_REJECT,"calls_bypass":$CALLS_BYPASS,"tcp_mss_clamp":$TCP_MSS_CLAMP,"smart":$(smart_active && echo 1 || echo 0),"paused":"$(json_str "$paused")","home_override":"$(json_str "$override")","pending":"$(json_str "$pending")",
-"has_rollback":$has_rb,
+"has_rollback":$has_rb,"stealth":{"mode":"$(json_str "$stealth_mode")","detail":"$(json_str "$stealth_detail")"},
 "counts":{"user":$cnt_user,"auto":$cnt_auto,"exclude":$cnt_excl,"ipset":$cnt_ipset,"ipset_exclude":$cnt_ipset_excl,"apps":$cnt_apps,"probe_hosts":$cnt_probe}}
 JSON
 }

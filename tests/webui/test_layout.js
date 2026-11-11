@@ -36,7 +36,7 @@ const STATUS = JSON.stringify({
   running: true, pid: '4710', uptime: 52, strategy: 'alt13', version: 'v1.3.6', mode: 'auto',
   limiter: 'connmark_out', pkt_limit_out: 2, pkt_limit_in: 2, block_quic: 0, app_mode: 'off',
   autostart: 1, watchdog: 1, wakelock_on: 0, ipv6: 1, log_level: 0, qdrop: 0, queue: 300,
-  app_uids: 1,
+  app_uids: 1, stealth: { mode: 'none', detail: '' },
   counts: { user: 381, auto: 25, exclude: 2839, ipset: 28420, ipset_exclude: 637, apps: 1 },
 });
 const STRATEGIES = 'default\nalt\nalt2\nalt3\nalt13\nfake_tls_auto\nsimple_fake\nhardcorp74\nkrushaaa\nMartinBacker\nUvvi2\neduncey\nexp';

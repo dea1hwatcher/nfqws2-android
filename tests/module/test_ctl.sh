@@ -31,7 +31,7 @@ assert_contains "$ctl_out" '"uptime":0' "reports uptime 0"
 
 for key in running pid uptime strategy version mode limiter pkt_limit_out pkt_limit_in \
            block_quic app_mode autostart watchdog wakelock_on ipv6 log_level qdrop queue \
-           app_uids home_wifi enable_hotspot net_strategy vpn_pause counts; do
+           app_uids home_wifi enable_hotspot net_strategy vpn_pause stealth counts; do
   assert_contains "$ctl_out" "\"$key\":" "json-status exposes $key"
 done
 for key in user auto exclude ipset ipset_exclude apps; do
