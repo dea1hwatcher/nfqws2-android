@@ -279,23 +279,23 @@ html[data-containers="true"] #pk .list-item.selected + .list-item:not(.selected)
 
 /* Hero Stealth Mode Pill (Bindhosts style) */
 .hero-stealth-pill {
+  appearance: none;
+  border: 0;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
   margin-top: 4px;
-  padding: 3px 10px;
+  padding: 4px 12px;
   border-radius: var(--shape-full);
   font-size: var(--ts-label-medium);
   line-height: var(--lh-label-medium);
   font-weight: var(--w-medium);
   background: color-mix(in srgb, currentColor 10%, transparent);
   color: inherit;
-  border: 1px solid color-mix(in srgb, currentColor 22%, transparent);
   cursor: pointer;
   width: fit-content;
   max-width: 100%;
   user-select: none;
-  transition: background-color var(--dur-short) var(--standard), border-color var(--dur-short) var(--standard);
+  transition: background-color var(--dur-short) var(--standard);
 }
 .hero-stealth-pill:hover {
   background: color-mix(in srgb, currentColor 18%, transparent);
@@ -304,12 +304,10 @@ html[data-containers="true"] #pk .list-item.selected + .list-item:not(.selected)
   transform: scale(.97);
 }
 .hero-stealth-pill.active {
-  border-color: color-mix(in srgb, var(--status-ok) 45%, transparent);
   color: var(--status-ok);
   background: color-mix(in srgb, var(--status-ok) 14%, transparent);
 }
 .hero.running .hero-stealth-pill.active {
-  border-color: color-mix(in srgb, var(--md-sys-color-primary) 35%, transparent);
   color: var(--md-sys-color-on-primary-container);
   background: color-mix(in srgb, var(--md-sys-color-primary) 18%, transparent);
 }
@@ -317,7 +315,6 @@ html[data-containers="true"] #pk .list-item.selected + .list-item:not(.selected)
   padding: 16px;
   border-radius: var(--shape-large);
   background: var(--md-sys-color-surface-container);
-  border: 1px solid var(--md-sys-color-outline-variant);
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -326,7 +323,6 @@ html[data-containers="true"] #pk .list-item.selected + .list-item:not(.selected)
 .stealth-mode-badge {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
   padding: 4px 10px;
   border-radius: var(--shape-full);
   font-size: var(--ts-label-medium);
@@ -353,7 +349,7 @@ html[data-containers="true"] #pk .list-item.selected + .list-item:not(.selected)
   gap: 12px;
   padding: 10px 12px;
   border-radius: var(--shape-medium);
-  background: var(--md-sys-color-surface-container-low);
+  background: var(--md-sys-color-surface-container);
   margin-bottom: 8px;
 }
 .stealth-layer-icon {

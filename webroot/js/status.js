@@ -329,7 +329,6 @@ async function openStealthSheet(){
   h += (mode !== 'none')
     ? '<div class="stealth-mode-badge ok">'
     : '<div class="stealth-mode-badge neutral">';
-  h += '  <svg aria-hidden="true" class="icon s16"><use href="#i-shield"/></svg>';
   h += '  <span>' + esc(modeTitle) + '</span>';
   h += '</div>';
   h += '<div style="font-size:var(--ts-body-medium);line-height:var(--lh-body-medium);color:var(--md-sys-color-on-surface);">' + esc(modeDesc) + '</div>';
