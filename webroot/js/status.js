@@ -331,30 +331,37 @@ async function openStealthSheet(){
     : '<div class="stealth-mode-badge neutral">';
   h += '  <span>' + esc(modeTitle) + '</span>';
   h += '</div>';
-  h += '<div style="font-size:var(--ts-body-medium);line-height:var(--lh-body-medium);color:var(--md-sys-color-on-surface);">' + esc(modeDesc) + '</div>';
+  h += '<div class="stealth-mode-desc">' + esc(modeDesc) + '</div>';
   h += '</div>';
 
-  h += '<div class="stealth-section-title">' + esc(t('Активные уровни защиты')) + '</div>';
+  h += '<div class="stack">';
+  h += '  <h2 class="subhead">' + esc(t('Активные уровни защиты')) + '</h2>';
+  h += '  <div class="stealth-layers">';
   for(const l of layers){
-    h += '<div class="stealth-layer-item">';
-    h += '  <div class="stealth-layer-icon" style="' + (l.active ? '' : 'color:var(--md-sys-color-outline);') + '">';
-    h += '    <svg aria-hidden="true" class="icon s20"><use href="#' + (l.active ? 'i-check' : 'i-close') + '"/></svg>';
+    h += '  <div class="stealth-layer-item">';
+    h += l.active ? '    <div class="stealth-layer-icon">' : '    <div class="stealth-layer-icon off">';
+    h += '      <svg aria-hidden="true" class="icon s20"><use href="#' + (l.active ? 'i-check' : 'i-close') + '"/></svg>';
+    h += '    </div>';
+    h += '    <div class="stealth-layer-content">';
+    h += '      <div class="stealth-layer-name">' + esc(l.name) + '</div>';
+    h += '      <div class="stealth-layer-desc">' + esc(l.desc) + '</div>';
+    h += '    </div>';
     h += '  </div>';
-    h += '  <div class="stealth-layer-content">';
-    h += '    <div class="stealth-layer-name">' + esc(l.name) + '</div>';
-    h += '    <div class="stealth-layer-desc">' + esc(l.desc) + '</div>';
-    h += '  </div>';
-    h += '</div>';
   }
+  h += '  </div>';
+  h += '</div>';
 
-  h += '<div class="stealth-section-title">' + esc(t('Режимы сокрытия Bindhosts')) + '</div>';
-  h += '<div style="font-size:var(--ts-body-small);color:var(--md-sys-color-on-surface-variant);line-height:var(--lh-body-small);display:flex;flex-direction:column;gap:6px;">';
-  h += '  <div><strong>Mode 1 (SuSFS):</strong> ' + esc(t('Максимальный уровень: защита на уровне ядра против Momo, банков и Play Integrity.')) + '</div>';
-  h += '  <div><strong>Mode 10 (KernelSU):</strong> ' + esc(t('Встроенная изоляция KernelSU 22106+ без сторонних патчей ядра.')) + '</div>';
-  h += '  <div><strong>Mode 2 (Denylist):</strong> ' + esc(t('Пользовательский перехватчик Denylist для Magisk/KernelSU/APatch.')) + '</div>';
+  h += '<div class="stack">';
+  h += '  <h2 class="subhead">' + esc(t('Режимы сокрытия Bindhosts')) + '</h2>';
+  h += '  <div class="stealth-mode-card stealth-ref-list">';
+  h += '    <div><strong>Mode 1 (SuSFS):</strong> ' + esc(t('Максимальный уровень: защита на уровне ядра против Momo, банков и Play Integrity.')) + '</div>';
+  h += '    <div><strong>Mode 10 (KernelSU):</strong> ' + esc(t('Встроенная изоляция KernelSU 22106+ без сторонних патчей ядра.')) + '</div>';
+  h += '    <div><strong>Mode 2 (Denylist):</strong> ' + esc(t('Пользовательский перехватчик Denylist для Magisk/KernelSU/APatch.')) + '</div>';
+  h += '  </div>';
   h += '</div>';
 
   box.innerHTML = h;
+  box.scrollTop = 0;
 }
 
 async function reapplyStealth(){
