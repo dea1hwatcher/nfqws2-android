@@ -65,9 +65,15 @@ async function initStrategySelector(){
   renderStrategyRow();
 }
 function renderStrategyRow(){
+  if(!$('strategy-current')) return;
   const s = findStrategy(currentStrategy) || {name: currentStrategy, kind: /^imp:/.test(currentStrategy) ? 'import' : 'builtin'};
   $('strategy-current').textContent = strategyName(currentStrategy);
-  $('strategy-group').textContent = groupTitle(strategyGroup(s)) + (s.mod ? ' · ' + t('изменена') : '');
+  const c = S && S.conn;
+  let groupText = groupTitle(strategyGroup(s)) + (s.mod ? ' · ' + t('изменена') : '');
+  if(c && (c.ok > 0 || c.err > 0)){
+    groupText += ' · ' + t('удачных {0} · ошибок {1}', c.ok, c.err);
+  }
+  if($('strategy-group')) $('strategy-group').textContent = groupText;
 }
 function strategyItem(s){
   const sel = s.name === pendingStrategy;
@@ -491,6 +497,7 @@ function renderStatus(force){
   }
   const paused = !j.running && !!j.paused;
   if(j.strategy) currentStrategy = j.strategy;
+  if(typeof renderStrategyRow === 'function') renderStrategyRow();
   $('hero-status').className = 'hero' + (j.running ? ' running' : (paused ? ' paused' : ''));
   $('st').textContent = j.running ? t('Служба работает') : (paused ? t('Пауза') : t('Служба остановлена'));
   const limiter = j.limiter;

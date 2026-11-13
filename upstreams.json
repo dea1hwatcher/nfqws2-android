@@ -1,0 +1,97 @@
+{
+  "about": "Что взято из чужих проектов и до какой версии. Обновляется при каждом переносе изменений; читает трекер обновлений и тесты целостности.",
+  "updated": "2026-11-13",
+  "module": "nfqws2-android v3.0.1",
+  "projects": [
+    {
+      "id": "zapret2",
+      "name": "zapret2 — nfqws2 и lua",
+      "repo": "bol-van/zapret2",
+      "branch": "master",
+      "track": "commits",
+      "ref": "47dcf17c91e1d3e8ca79743472097781b4f4c6e9",
+      "label": "master (post-v1.0.7)",
+      "date": "2026-11-12T16:11:53+03:00",
+      "use": "Бинарник nfqws2 (сборка в CI) — оптимизация desync_ctx_singleton, sec.c hardening, netns, darkmagic IPv6 frag fix; lua/zapret-lib.lua (u32add, wsize_rewrite, gzip_file, tls dissect/reconstruct) и lua/zapret-obfs.lua (synhide u32add)"
+    },
+    {
+      "id": "ext",
+      "name": "nfqws2-android-ext",
+      "repo": "SpectaCoolAre/nfqws2-android-ext",
+      "branch": "main",
+      "track": "tags",
+      "ref": "0de781bbdd3ce888f98e16bb4b19da4570da233a",
+      "label": "v2.3.9-hotfix",
+      "date": "2026-11-12T18:41:00+03:00",
+      "use": "Умный режим SMART_CONF_VER=21 (варианты Google 47-49, pri=1,47,48, first=8), детекция зависания соединений (2с), smartstat телеметрия, ночное обучение, net_kbytes и dpi_ttl"
+    },
+    {
+      "id": "nfqws-menu",
+      "name": "nfqws-menu — стратегии и списки",
+      "repo": "rndnaame/nfqws-menu",
+      "branch": "main",
+      "path": "strategies",
+      "track": "commits",
+      "ref": "9cf5d00a89d7fafe2d68962ffbf725b8bb896898",
+      "label": "PR #36 (12.11)",
+      "date": "2026-11-12T20:23:01Z",
+      "use": "Свежая ревизия hardcorp74.conf (ozon.ru, wide-youtube.l.google.com со Sochi Park блобом и multidisorder, repeats=6, синхронизация OVH/Vultr)"
+    },
+    {
+      "id": "zapret2-next",
+      "name": "zapret2-next — пресеты и алгоритмы",
+      "repo": "Dunterbabochka/zapret2-next",
+      "branch": "main",
+      "track": "commits",
+      "ref": "0b36eebd0eb098eb33a970d47d10e6a1eb162ea6",
+      "label": "v0.4.6",
+      "date": "2026-11-12T17:15:32Z",
+      "use": "Пресеты Flowseal 1.10.4, реализация hostfakesplit_alt (altorder=1 из zapret 1)"
+    },
+    {
+      "id": "zapret-manager",
+      "name": "Zapret Manager — конфиг zapret2",
+      "repo": "StressOzz/Zapret-Manager",
+      "branch": "main",
+      "path": "files/Zapret2/zapret2",
+      "track": "commits",
+      "ref": "743a2b535d2524a87a6d85913e2f5b61eefec11d",
+      "label": "v5.069",
+      "date": "2026-11-12T19:22:07Z",
+      "use": "Кандидаты умного режима для Google (43-46), списки исключений"
+    },
+    {
+      "id": "nfqws2-keenetic",
+      "name": "nfqws2-keenetic — nfqws2 для роутеров",
+      "repo": "nfqws/nfqws2-keenetic",
+      "branch": "master",
+      "track": "releases",
+      "ref": "v1.3.3",
+      "label": "v1.3.3",
+      "date": "2026-11-05T08:34:59Z",
+      "use": "Патч TLS-сборки для CI, fastpath reassembly, wssize 1 + multidisorder midsld"
+    },
+    {
+      "id": "tachyon",
+      "name": "Tachyon — OpenWrt оркестратор",
+      "repo": "Dushnilin/tachyon",
+      "branch": "main",
+      "track": "commits",
+      "ref": "158fc20a457c9abf505260a4ca50b21e080eb07a",
+      "label": "158fc20",
+      "date": "2026-11-12T22:27:23Z",
+      "use": "STUN Discord voice ports 3478-3481, desync рецепты GoogleVideo"
+    },
+    {
+      "id": "bindhosts",
+      "name": "bindhosts",
+      "repo": "bindhosts/bindhosts",
+      "branch": "master",
+      "track": "releases",
+      "ref": "v2.1.5",
+      "label": "v2.1.5",
+      "date": "2026-08-24T01:43:48Z",
+      "use": "Скрытие рут-модуля (SuSFS, KernelSU, APatch ksu_susfs), подмена hosts"
+    }
+  ]
+}

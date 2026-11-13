@@ -436,21 +436,39 @@ smartkill() {
   smartkill_chain add
   while :; do
     sleep 3
+    # спячка: обрывать почти нечего и учиться незачем — реже, без обучения
+    if dev_idle; then sleep 12; fi
     conf_refresh
     if ! is_running || ! smart_active; then break; fi
     read -r up _ < /proc/uptime; up=${up%.*}
     # Background training: once every SMART_LEARN_EVERY seconds per active network
     [ "$learn_at" = 0 ] && learn_at=$((up + 60))
     every=$SMART_LEARN_EVERY
-    if [ -f "$SMART_TURBO_FILE" ] && [ "$(cat "$SMART_TURBO_FILE" 2>/dev/null)" -gt "$(date +%s)" ] 2>/dev/null; then
-      every=$SMART_TURBO_EVERY
-      [ "$learn_at" -gt $((up + every)) ] && learn_at=$((up + every))
+    if [ -f "$SMART_TURBO_FILE" ]; then
+      stb=$(cat "$SMART_TURBO_FILE" 2>/dev/null)
+      now_s=$(date +%s 2>/dev/null)
+      : "${now_s:=0}"
+      if [ -n "$stb" ] && [ "$stb" -gt "$now_s" ] 2>/dev/null; then
+        every=$SMART_TURBO_EVERY
+        [ "$learn_at" -gt $((up + every)) ] && learn_at=$((up + every))
+      fi
+    fi
+    # ночью во сне на зарядке — учится и во сне (night_learn_ok)
+    if dev_idle && [ "${SMART_LEARN:-1}" = 1 ] && night_learn_ok; then
+      if [ ! -f "$NIGHT_FILE" ]; then
+        : > "$NIGHT_FILE"
+        log_msg "ночное обучение: телефон спит на зарядке — умный режим учится, чтобы утром всё работало"
+      fi
+    elif [ -f "$NIGHT_FILE" ]; then
+      rm -f "$NIGHT_FILE"
     fi
     if [ "${SMART_LEARN:-1}" = 1 ] && [ "$up" -ge "$learn_at" ]; then
-      learn_at=$((up + every))
-      if [ -z "$lp_pid" ] || ! kill -0 "$lp_pid" 2>/dev/null; then
-        sh "$MODDIR/bin/nfqws2-ctl" smart-learn-once </dev/null >/dev/null 2>&1 &
-        lp_pid=$!
+      if ! dev_idle || [ -f "$NIGHT_FILE" ]; then
+        learn_at=$((up + every))
+        if [ -z "$lp_pid" ] || ! kill -0 "$lp_pid" 2>/dev/null; then
+          sh "$MODDIR/bin/nfqws2-ctl" smart-learn-once </dev/null >/dev/null 2>&1 &
+          lp_pid=$!
+        fi
       fi
     fi
     if [ -s "$SMART_KILL_FILE" ]; then
@@ -484,11 +502,14 @@ wlwatch() {
   echo $$ > "$WL_PIDFILE"
   protect_process
   trap 'wlwatch_exit; exit 0' TERM INT HUP
-  local up next=0 pend=0 net last="" res
+  local up next=0 pend=0 net last="" res slept=0
   while :; do
     sleep 5
     conf_refresh
     wl_wanted || break
+    # спячка: проверять белые списки незачем — по пробуждении сразу
+    if dev_idle; then slept=1; sleep 25; continue; fi
+    if [ "$slept" = 1 ]; then slept=0; next=0; fi
     read -r up _ < /proc/uptime; up=${up%.*}
     net=$(cat "$SMART_NET_FILE" 2>/dev/null)
     [ "$net" != "$last" ] && { last="$net"; next=0; pend=0; }
@@ -650,14 +671,48 @@ watchdog_fail_set() {
 
 watchdog() {
   echo $$ > "$WD_PIDFILE"
-  trap 'rm -f "$WD_PIDFILE"; exit 0' INT TERM EXIT
+  trap 'rm -f "$WD_PIDFILE" "$IDLE_FILE"; exit 0' INT TERM EXIT
   protect_process
-  local fails=0 tick=0 dpid
+  local fails=0 tick=0 dpid per=20 kb lkb="" act=0 up slept=0 sm=0
+  rm -f "$IDLE_FILE" "$NIGHT_FILE"
   while :; do
-    sleep 20
+    sleep "$per"
     load_conf >/dev/null 2>&1
     watchers_wanted || break
     tick=$((tick + 1))
+
+    # спячка: если трафик за тик меньше IDLE_KBPS КБ/с — телефон в простое
+    read -r up _ < /proc/uptime; up=${up%.*}
+    kb=$(net_kbytes)
+    if [ "$act" = 0 ]; then act=$up; fi
+    if [ -f "$NIGHT_FILE" ]; then
+      if screen_on; then act=$up; fi
+    elif [ -n "$lkb" ] && [ -n "$kb" ]; then
+      if [ $((kb - lkb)) -gt $((IDLE_KBPS * per)) ]; then
+        act=$up
+      fi
+    fi
+    lkb=$kb
+    if [ "$per" = 20 ] && [ $((up - act)) -ge "$IDLE_AFTER" ]; then
+      per=60
+      : > "$IDLE_FILE"
+      slept=$act
+      sm=$(( ($(mod_now) - (up - act) / 60 + 1440) % 1440 ))
+      log_msg "спячка: $((IDLE_AFTER / 60)) мин почти без трафика — фоновые проверки реже, обучение — по пробуждении"
+    elif [ "$per" = 60 ]; then
+      if [ "$act" = "$up" ] || [ ! -f "$IDLE_FILE" ]; then
+        act=$up
+        per=20
+        rm -f "$IDLE_FILE" "$NIGHT_FILE"
+        tick=0
+        if [ $((up - slept)) -ge "$USAGE_LONG" ]; then
+          usage_add sleep "$sm"
+          usage_add wake "$(mod_now)"
+        fi
+        log_msg "пробуждение: снова трафик — фоновые проверки как обычно"
+      fi
+    fi
+
     { [ "$HOME_WIFI" = "1" ] || [ "$VPN_PAUSE" = "1" ]; } && [ $((tick % 3)) -eq 0 ] && home_check
     [ "$NET_STRATEGY" = "1" ] && [ $((tick % 3)) -eq 0 ] && network_strategy_check
     [ $((tick % 3)) -eq 0 ] && is_running && smart_net_update
@@ -708,7 +763,7 @@ watchdog() {
     fi
     [ $((tick % 25)) -eq 0 ] && rotate_logs
   done
-  rm -f "$WD_PIDFILE"
+  rm -f "$WD_PIDFILE" "$IDLE_FILE"
 }
 
 # home Wi-Fi, VPN, and whitelist pause: home Wi-Fi, active VPN, or carrier whitelisting pause the service.

@@ -37,6 +37,9 @@ SMART_DIR="$CONFDIR/smart"                     # smart mode: network training (<
 SMART_NET_FILE="$STATE_DIR/smart_net"          # current network ID or offline
 SMART_NET_LAST="$STATE_DIR/smart_net_last"     # last real network ID (excluding offline)
 IDLE_FILE="$STATE_DIR/idle"                    # sleep when traffic is idle
+IDLE_AFTER=600
+IDLE_KBPS=5
+HELPER_BIN="$MODDIR/bin/nfqws2-helper"
 SMART_LEARN_FILE="$STATE_DIR/smart_learn"      # background learning state
 SMART_LEARN_EVERY=120                          # seconds between learning attempts
 SMART_TURBO_FILE="$STATE_DIR/smart_turbo"      # fast learning expiration
@@ -576,6 +579,172 @@ port_list_without() {
   printf ',%s,' "$1" | sed "s/,$2,/,/g; s/^,//; s/,\$//"
 }
 
+dev_idle() { [ -f "$IDLE_FILE" ]; }
+
+# Привычки владельца: когда телефон обычно засыпает надолго и просыпается
+# (как это для своих задач копит Android). Пишет watchdog после сна дольше
+# USAGE_LONG секунд: «sleep минута-суток» и «wake минута-суток», последние
+# USAGE_KEEP каждого вида. По ним:
+#   - ночное обучение: телефон спит, на зарядке, сейчас обычное время сна —
+#     умный режим учится, как днём (без зарядки — нет: 6–8 часов сна съели бы
+#     батарею), чтобы утром всё уже работало;
+#   - подготовка к пробуждению: за полчаса до обычного пробуждения — частая
+#     проверка DNS обхода геоблока, чтобы утром маршруты были свежими.
+# Без данных (меньше USAGE_MIN снов) ночь — 01:00–06:00, подготовки нет
+USAGE_FILE="$STATE_DIR/usage"
+USAGE_LONG=10800
+USAGE_KEEP=14
+USAGE_MIN=3
+NIGHT_FILE="$STATE_DIR/night_learn"   # есть — идёт ночное обучение
+PREP_FILE="$STATE_DIR/wake_prep"      # день последней подготовки (ГГГГММДД)
+# минута суток сейчас (08 и 09 — не восьмеричные)
+mod_now() { local h m; h=$(date +%H 2>/dev/null); m=$(date +%M 2>/dev/null); echo $(( ${h#0} * 60 + ${m#0} )); }
+usage_add() { # <sleep|wake> <минута суток>
+  mkdir -p "$STATE_DIR"
+  { cat "$USAGE_FILE" 2>/dev/null; echo "$1 $2"; } | awk -v k="$USAGE_KEEP" '
+    { n[$1]++; l[$1, n[$1]] = $2 } END { for (t in n) for (i = (n[t] > k ? n[t] - k + 1 : 1); i <= n[t]; i++) print t, l[t, i] }' > "$USAGE_FILE.tmp" &&
+    mv -f "$USAGE_FILE.tmp" "$USAGE_FILE"
+}
+# Обычное время: медиана, отсчитанная от полудня (сон около полуночи не
+# рвётся на 23:50 и 00:10). -> минута суток | пусто, если данных мало
+usage_pred() { # <sleep|wake>
+  awk -v k="$1" -v min="$USAGE_MIN" '$1 == k { v[++n] = ($2 + 720) % 1440 }
+    END { if (n < min) exit
+      for (i = 1; i <= n; i++) for (j = i + 1; j <= n; j++) if (v[j] < v[i]) { t = v[i]; v[i] = v[j]; v[j] = t }
+      m = (n % 2) ? v[(n + 1) / 2] : int((v[n / 2] + v[n / 2 + 1]) / 2)
+      print (m + 720) % 1440 }' "$USAGE_FILE" 2>/dev/null
+}
+# на зарядке (или полностью заряжен у зарядки)
+on_charger() {
+  local f
+  for f in /sys/class/power_supply/battery/status /sys/class/power_supply/*/status; do
+    [ -r "$f" ] || continue
+    case "$(cat "$f" 2>/dev/null)" in Charging|Full) return 0 ;; esac
+  done
+  return 1
+}
+# экран включён — человек взял телефон (во время ночного обучения трафик —
+# сам модуль, и пробуждение видно только так)
+screen_on() { dumpsys power 2>/dev/null | grep -q 'mWakefulness=Awake'; }
+# сейчас обычное время сна: от засыпания до получаса перед пробуждением
+night_now() {
+  local s w n
+  s=$(usage_pred sleep); w=$(usage_pred wake)
+  if [ -z "$s" ] || [ -z "$w" ]; then s=60; w=360; fi
+  w=$(( (w - 30 + 1440) % 1440 )); n=$(mod_now)
+  s=$(( (s + 720) % 1440 )); w=$(( (w + 720) % 1440 )); n=$(( (n + 720) % 1440 ))
+  [ "$n" -ge "$s" ] && [ "$n" -lt "$w" ]
+}
+night_learn_ok() { dev_idle && on_charger && night_now; }
+# пора подготовки к пробуждению: за 30–20 минут до обычного, раз в сутки
+wake_prep_due() {
+  local w n d
+  w=$(usage_pred wake); [ -n "$w" ] || return 1
+  d=$(date +%Y%m%d 2>/dev/null); [ "$(cat "$PREP_FILE" 2>/dev/null)" = "$d" ] && return 1
+  n=$(mod_now)
+  n=$(( (w - n + 1440) % 1440 ))
+  [ "$n" -le 30 ] && [ "$n" -gt 20 ]
+}
+
+# Расстояние до фильтра (nfqws2-helper -ttltrace, замер — nfqws2-ctl
+# dpi-distance): «сеть узлов-до-сервера узел-фильтра время». Вариант умного
+# режима с фейком ip_ttl=2 берёт срок жизни по месту фильтра этой сети: такой
+# фейк фильтр видит, а сервер — нет (2 — наугад: у одних фильтр ближе, у
+# других дальше). Замер — раз в неделю для каждой сети
+DPI_TTL_FILE="$STATE_DIR/dpi_ttl"
+DPI_TTL_EVERY=604800
+DPI_TTL_VARIANT="hostfakesplit:host=www.google.com:midhost=midsld-2:repeats=4:ip_ttl=2:ip6_ttl=2"
+dpi_ttl() { # -> срок жизни фейка для текущей сети | пусто
+  local net n h f t
+  [ -s "$DPI_TTL_FILE" ] || return 0
+  net=$(cat "$SMART_NET_FILE" 2>/dev/null)
+  read -r n h f t < "$DPI_TTL_FILE"
+  if [ -z "$net" ] || [ "$n" != "$net" ]; then return 0; fi
+  case "$h$f" in *[!0-9]*|'') return 0 ;; esac
+  # фейк должен дойти до фильтра и не дойти до сервера
+  if [ "$f" -ge 1 ] && [ "$h" -gt $((f + 1)) ]; then
+    echo "$f"
+  fi
+}
+dpi_ttl_due() {
+  local net n t try now
+  net=$(cat "$SMART_NET_FILE" 2>/dev/null)
+  case "$net" in ''|offline) return 1 ;; esac
+  [ -x "$HELPER_BIN" ] || return 1
+  # попытка не чаще раза в час (сеть могла не отвечать)
+  try=$(cat "$DPI_TTL_FILE.try" 2>/dev/null)
+  now=$(date +%s 2>/dev/null)
+  : "${now:=0}"
+  if [ -n "$try" ]; then
+    if [ $(( now - try )) -lt 3600 ]; then return 1; fi
+  fi
+  [ -s "$DPI_TTL_FILE" ] || return 0
+  read -r n _ _ t < "$DPI_TTL_FILE"
+  if [ "$n" != "$net" ]; then return 0; fi
+  if [ $(( now - ${t:-0} )) -ge "$DPI_TTL_EVERY" ]; then return 0; fi
+  return 1
+}
+ttl_inject() {
+  local t
+  t=$(dpi_ttl)
+  if [ -z "$t" ]; then
+    cat
+    return
+  fi
+  sed "s/$DPI_TTL_VARIANT/$(printf '%s' "$DPI_TTL_VARIANT" | sed "s/ip_ttl=2:ip6_ttl=2/ip_ttl=$t:ip6_ttl=$t/")/"
+}
+# Принято и отдано всеми интерфейсами, кроме lo и служебных, — в КБ (в КБ —
+# потому что арифметика mksh 32-битная, а счётчики байт её переполняют)
+net_kbytes() {
+  awk 'NR > 2 { sub(/^ */, ""); i = index($0, ":"); n = substr($0, 1, i - 1); if (n == "lo" || n ~ /^(dummy|ifb)/) next
+    split(substr($0, i + 1), f, " "); s += f[1] + f[9] } END { printf "%d\n", s / 1024 }' /proc/net/dev 2>/dev/null
+}
+
+exclude_profiles() {
+  local p=""
+  if [ "$(list_count "$LISTS_DIR/exclude.list" 2>/dev/null)" -gt 0 ] 2>/dev/null; then
+    p="--hostlist=$LISTS_DIR/exclude.list --new"
+  fi
+  if [ "$(list_count "$LISTS_DIR/ipset_exclude.list" 2>/dev/null)" -gt 0 ] 2>/dev/null; then
+    p="$p --ipset=$LISTS_DIR/ipset_exclude.list --new"
+  fi
+  printf '%s' "$p"
+}
+
+stat_inject() {
+  local name
+  name=$(head -n 1 "$ACTIVE_FILE" 2>/dev/null | tr -d '\r\n')
+  if [ "$name" = smart ]; then cat; return 0; fi
+  awk -v name="${name:-default}" -v home="$CONFDIR" -v lua="$LUA_DIR" '
+    function flush(   i, tcp, lua_any, at) {
+      tcp = 0; lua_any = 0; at = 0
+      for (i = 1; i <= n; i++) {
+        if (p[i] ~ /^--filter-tcp=/) tcp = 1
+        if (p[i] ~ /^--lua-desync=/) lua_any = 1
+        if (!at && p[i] ~ /^--(in-range|out-range|payload|lua-desync)=/) at = i
+      }
+      for (i = 1; i <= n; i++) {
+        if (tcp && lua_any && i == at)
+          out = out " --in-range=-s19000 --out-range=-s34228 --payload=all --lua-desync=smartstat:home=" home ":name=" name " --in-range=x --out-range=a --payload=all"
+        out = out " " p[i]
+        if (p[i] ~ /^--lua-init=/) { lastinit = length(out); if (p[i] ~ /zapret-auto\.lua$/) hasauto = 1; if (p[i] ~ /zapret-smart\.lua$/) hassmart = 1; if (p[i] ~ /zapret-lib\.lua$/) haslib = 1 }
+      }
+      n = 0
+    }
+    { for (j = 1; j <= NF; j++) { if ($j == "--new") { flush(); out = out " --new" } else p[++n] = $j } }
+    END {
+      flush()
+      if (!haslib || !lastinit) { print substr(original, 2); exit }
+      add = ""
+      if (!hasauto) add = add " --lua-init=@" lua "/zapret-auto.lua"
+      if (!hassmart) add = add " --lua-init=@" lua "/zapret-smart.lua"
+      out = substr(out, 1, lastinit) add substr(out, lastinit + 1)
+      print substr(out, 2)
+    }
+    { original = original " " $0 }
+  '
+}
+
 _startup_args() {
   local base tcp quic udp extra custom ipset
   base=$(norm_args "$NFQWS_BASE_ARGS")
@@ -618,7 +787,7 @@ _startup_args() {
   [ -n "$ipset" ] && args="$args $tcp $ipset --ipset-ip=0.0.0.0 --new"
   args="$args $tcp $extra"
 
-  printf '%s' "$args" | tr -s ' '
+  printf '%s' "$args" | tr -s ' ' | stat_inject | ttl_inject
 }
 
 dry_run_check() { # <args...>

@@ -29,8 +29,8 @@ TARGET_ABI="${1:-all}"
 OUTPUT_DIR="${OUTPUT_DIR:-$REPO_DIR}"
 
 ZAPRET2_REPO="${ZAPRET2_REPO:-https://github.com/bol-van/zapret2.git}"
-ZAPRET2_TAG="${ZAPRET2_TAG:-v1.0.7}"
-ZAPRET2_SHA="${ZAPRET2_SHA:-038c97e5819df10f8e8c22a2f1fffe57f2f7379b}" # v1.0.7 (reasm fastpath patch, UAF fix, ! hostlists)
+ZAPRET2_TAG="${ZAPRET2_TAG:-master}"
+ZAPRET2_SHA="${ZAPRET2_SHA:-47dcf175cfd5435aebd0959c4903f78d168e5a60}" # post-v1.0.7 (desync_ctx_singleton, sec.c syscall hardening, netns, darkmagic IPv6 frag fix)
 
 LUAJIT_RELEASE="${LUAJIT_RELEASE:-2.1-20250826}"
 LUAJIT_VER="2.1"

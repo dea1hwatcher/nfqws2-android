@@ -46,7 +46,7 @@ section "line endings"
 # The check covers every shipped text file, not just the scripts: an editor on
 # Windows will happily save index.html or a config as CRLF too, and the repo
 # pins LF.
-TEXT_FILES="$SCRIPTS module.prop LICENSE README.md README_EN.md webroot/index.html webroot/config.json"
+TEXT_FILES="$SCRIPTS module.prop LICENSE README.md README_EN.md webroot/index.html webroot/config.json upstreams.json"
 TEXT_FILES="$TEXT_FILES $(cd "$REPO_DIR" && ls lists/*.list defaults/lists/*.list defaults/*.conf \
                                             strategies/*.conf lua/*.lua strategy-catalogs/*.list 2>/dev/null)"
 
@@ -392,6 +392,14 @@ section "service entry points the WebUI relies on"
 
 for cmd in start autostart stop restart reload status firewall_apply firewall_stop ensure_watchdog; do
   assert_contains "$(cat "$REPO_DIR/service.sh")" "$cmd)" "service.sh handles $cmd"
+done
+
+section "upstreams metadata"
+
+UPSTREAMS="$REPO_DIR/upstreams.json"
+assert_file "$UPSTREAMS" "upstreams.json exists"
+for proj in zapret2 ext nfqws-menu zapret2-next; do
+  assert_contains "$(cat "$UPSTREAMS")" "\"id\": \"$proj\"" "upstreams.json tracks $proj"
 done
 
 harness_finish

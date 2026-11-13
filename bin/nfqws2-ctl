@@ -193,6 +193,14 @@ cmd_json_status() {
   cnt_user="$1" cnt_auto="$2" cnt_excl="$3" cnt_ipset="$4" cnt_ipset_excl="$5" cnt_apps="$6" cnt_probe="$7"
   local has_rb
   if [ -f "$SNAPSHOT_DIR/nfqws2.conf" ]; then has_rb=1; else has_rb=0; fi
+  local strat_ok=0 strat_err=0
+  if [ -f "$STATE_DIR/strat_stat" ]; then
+    local skey
+    skey=$(printf '%s' "$cur_strat" | sed 's/[^A-Za-z0-9._-]/_/g')
+    set -- $(awk -F'\t' -v k="$skey" '$1 == k { print $2, $3; exit }' "$STATE_DIR/strat_stat" 2>/dev/null)
+    strat_ok=${1:-0}
+    strat_err=${2:-0}
+  fi
   local stealth_cap stealth_mode="none" stealth_detail=""
   stealth_cap=$(detect_stealth_capabilities 2>/dev/null)
   case "$stealth_cap" in
@@ -214,7 +222,7 @@ cmd_json_status() {
       ;;
   esac
 # Verify every field is numeric to prevent invalid JSON from breaking WebUI
-  for v in appn cnt_user cnt_auto cnt_excl cnt_ipset cnt_ipset_excl cnt_apps cnt_probe uptime upms qdrop \
+  for v in appn cnt_user cnt_auto cnt_excl cnt_ipset cnt_ipset_excl cnt_apps cnt_probe uptime upms qdrop strat_ok strat_err \
            PKT_LIMIT_OUT PKT_LIMIT_IN BLOCK_QUIC AUTOSTART WATCHDOG IPV6_ENABLED LOG_LEVEL NFQUEUE_NUM WAKELOCK HOME_WIFI ENABLE_HOTSPOT NET_STRATEGY VPN_PAUSE META_QUIC_REJECT CALLS_BYPASS TCP_MSS_CLAMP WL_PAUSE has_rb; do
     eval "case \"\${$v}\" in ''|*[!0-9]*) $v=0 ;; esac"
   done
@@ -225,7 +233,8 @@ cmd_json_status() {
 "ipv6":$IPV6_ENABLED,"log_level":$LOG_LEVEL,"qdrop":$qdrop,"queue":$NFQUEUE_NUM,"app_uids":$appn,
 "home_wifi":$HOME_WIFI,"enable_hotspot":$ENABLE_HOTSPOT,"net_strategy":$NET_STRATEGY,"vpn_pause":$VPN_PAUSE,"wl_pause":$WL_PAUSE,"meta_quic":$META_QUIC_REJECT,"calls_bypass":$CALLS_BYPASS,"tcp_mss_clamp":$TCP_MSS_CLAMP,"smart":$(smart_active && echo 1 || echo 0),"paused":"$(json_str "$paused")","home_override":"$(json_str "$override")","pending":"$(json_str "$pending")",
 "has_rollback":$has_rb,"stealth":{"mode":"$(json_str "$stealth_mode")","detail":"$(json_str "$stealth_detail")"},
-"counts":{"user":$cnt_user,"auto":$cnt_auto,"exclude":$cnt_excl,"ipset":$cnt_ipset,"ipset_exclude":$cnt_ipset_excl,"apps":$cnt_apps,"probe_hosts":$cnt_probe}}
+"counts":{"user":$cnt_user,"auto":$cnt_auto,"exclude":$cnt_excl,"ipset":$cnt_ipset,"ipset_exclude":$cnt_ipset_excl,"apps":$cnt_apps,"probe_hosts":$cnt_probe},
+"conn":{"ok":$strat_ok,"err":$strat_err}}
 JSON
 }
 
@@ -3266,6 +3275,28 @@ cmd_probe_dpi() {
   echo done
 }
 
+cmd_dpi_distance() {
+  local ip net r rule
+  [ -x "$HELPER_BIN" ] || { echo skip; return 0; }
+  date +%s > "$DPI_TTL_FILE.try"
+  ip=$(ping -c 1 -W 2 www.youtube.com 2>/dev/null | sed -n '1s/^PING [^(]*(\([0-9.]*\)).*/\1/p')
+  [ -n "$ip" ] || { echo skip; return 0; }
+  rule="-m owner --uid-owner 0 -d $ip -j RETURN"
+  if is_running; then
+    iptables -w -t mangle -I $IPT_GROUP_POST 1 $rule 2>/dev/null || rule=""
+  else
+    rule=""
+  fi
+  r=$("$HELPER_BIN" -ttltrace -ip "$ip" -blocked "$BLOBS_DIR/quic_my_youtube_initial.bin" \
+    -open "$BLOBS_DIR/quic_initial_www_google_com.bin" -wait 2s 2>/dev/null)
+  [ -n "$rule" ] && iptables -w -t mangle -D $IPT_GROUP_POST $rule 2>/dev/null
+  [ -n "$r" ] || { echo skip; return 0; }
+  net=$(cat "$SMART_NET_FILE" 2>/dev/null)
+  printf '%s\n' "$r" | awk -F'\t' -v n="${net:-any}" -v t="$(date +%s)" '{ print n, $1, $2, t }' > "$DPI_TTL_FILE"
+  rm -f "$DPI_TTL_FILE.try"
+  echo "$r"
+}
+
 # ---------------------------------------------------------------- list updates
 # Pending updates from module installer for user-modified lists
 cmd_list_update() { # <list_name>
@@ -3982,6 +4013,7 @@ case "$1" in
   backup-restore-b64) cmd_backup_restore_b64 "$2" ;;
   net-info) cmd_net_info ;;
   probe-dpi) cmd_probe_dpi "${2:-all}" "$3" ;;
+  dpi-distance) cmd_dpi_distance ;;
   bench-strategies) cmd_bench_strategies "$2" ;;
   check-domain) cmd_check_domain "$2" ;;
   lint) cmd_lint "$2" ;;
@@ -4031,7 +4063,7 @@ EOF
     echo "         list-strategies get-strategy set-strategy strategy-get-b64 strategy-save-b64 strategy-reset" >&2
     echo "         import-add-b64 list-imports get-import-merged-b64 rename-import delete-import" >&2
     echo "         get-list save-list-b64 list-update add-domain clear-auto reset-lists set set-mode list-apps" >&2
-    echo "         get-logs export-logs clear-logs wifi-ssid backup-create backup-list backup-restore backup-restore-b64 probe-dpi probe-cancel net-info bench-strategies check-domain domain-check page-hosts lint lint-lists" >&2
+    echo "         get-logs export-logs clear-logs wifi-ssid backup-create backup-list backup-restore backup-restore-b64 probe-dpi probe-cancel net-info dpi-distance bench-strategies check-domain domain-check page-hosts lint lint-lists" >&2
     echo "         smart-status smart-sites smart-export smart-import-b64 smart-learn-once smart-bench smart-apply-variant smart-turbo smart-reset" >&2
     echo "         home-pause net-recheck upload share changelog" >&2
     echo "         current-network list-net-strategies clear-net-strategies googlevideo-discovery orchestra-status orchestra-lock orchestra-unlock orchestra-block orchestra-unblock orchestra-clear tg-affinity" >&2

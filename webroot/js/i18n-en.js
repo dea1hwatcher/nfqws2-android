@@ -672,6 +672,7 @@ EN = {
   "продолжится, когда служба возобновит работу": "will continue when the service resumes",
   "служба остановлена — продолжится при запуске": "service is stopped — will continue on start",
   "только по ходу работы": "only as it works",
+  "удачных {0} · ошибок {1}": "successful {0} · errors {1}",
   "удачных {0} · с ошибками {1}": "successful {0} · with errors {1}",
   "Калибровка вариантов": "Calibrate variants",
   "Экспресс-тест вариантов обхода без перезапуска службы. Подбирает лучший вариант десинхронизации для текущей сети.": "Express test of bypass variants without service restarts. Finds the best desync variant for this network.",

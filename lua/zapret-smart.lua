@@ -1,72 +1,150 @@
--- nfqws2-android-ext: smart mode — self-learning orchestrator (MIT License)
+-- nfqws2-android-ext: умный режим — обучаемый оркестратор (лицензия MIT)
 --
--- Similar to circular in zapret-auto.lua: a single smart call precedes strategy
--- variants labeled with strategy=N, determining which bypass variant to apply.
+-- Похож на circular из zapret-auto.lua: перед вариантами обхода с меткой
+-- strategy=N стоит один вызов smart, и он решает, какой вариант применить к
+-- соединению. Чем отличается:
 --
--- Key features:
---   * Per-host and per-network scoring: successes and errors tracked with exponential
---     decay (halving every hour) so past performance does not mask current degradation.
---   * Mid-stream inspection: monitors /proc/net/tcp every 3s to detect stalls,
---     freezes, and ~16 KB cutoffs, terminating dead connections early via smart_kill.
---   * Flexible success criteria: verified responses, clean teardowns (FIN/RST),
---     and sustained keep-alive sessions (>30s) accrue weighted credit.
---   * Sliding window: decisions evaluated over the last 8 connections; switches
---     occur when errors dominate.
---   * Parameter tuning: failing variants auto-tune single parameters (fake repeats,
---     split positions, SNI, seqovl pattern) before switching to unrelated strategies.
---   * Fast learning: networks, subnets, and domains maintain state in smart/<net>.tsv.
+--   * Счётчики. Для каждого сайта и каждого варианта — удачи и ошибки, и такие
+--     же итоги по всей сети. Старые события со временем весят меньше (вдвое за
+--     час): вариант, который сломался сегодня, не держится на вчерашних удачах.
+--   * Ошибки видны и посреди работы, а не только в начале соединения. В начале
+--     — сброс (RST), повторные отправки, редирект DPI, обрыв на ~16 КБ. Посреди
+--     — наблюдатель раз в 3 секунды смотрит таблицу TCP-соединений телефона
+--     (/proc/net/tcp): соединение к сайту, по которому телефон раз за разом
+--     переотправляет данные без ответа, — поток режут. Это ошибка того
+--     варианта, на котором шло соединение, даже если начало было удачным.
+--     Застрявшее соединение модуль обрывает (state/smart_kill → iptables), и
+--     приложение сразу открывает новое — уже на другом варианте. Быстрее
+--     наблюдателя — сам smart: после ответа сервера телефон трижды подряд
+--     переотправляет один и тот же сегмент (следующий запрос по тому же
+--     соединению), а от сервера — ничего: ТСПУ заморозил соединение после
+--     первого обмена. Повторы разных сегментов — обычные потери в мобильной
+--     сети (сервер подтверждает их сразу после), это не заморозка. Так
+--     ведут себя части сайтов на Cloudflare: первый запрос отвечает, любой
+--     следующий по этому соединению висит до тайм-аута приложения.
+--   * Удача — не только 4 КБ ответа: соединение, закрытое после ответа
+--     сервера (FIN или сброс от самого приложения), и ответившее соединение,
+--     которое 30 секунд живо и не застряло (keep-alive, HTTP/2). Сброс от
+--     сервера после его ответа — не ошибка: начало соединения DPI пропустил.
+--     Удача, после которой соединение долго работает, весит больше: ошибка
+--     длится секунды, а такая работа — минуты (полудачи за минуту, до +3).
+--   * Решение — по окну последних 8 соединений сайта на текущем варианте:
+--     вариант меняется, когда в окне не меньше трёх ошибок и их больше удач
+--     (у варианта с долгой хорошей историей — не меньше четырёх). Редкие
+--     обрывы на рабочем варианте его не сбрасывают. Новым выбирается вариант с лучшей
+--     долей удач для этого сайта, а без данных о сайте — лучший в этой сети.
+--     Лучший в сети вариант — стартовый для новых сайтов: общее правило
+--     находится само, а сайты-исключения закрепляются за своим.
+--   * Подстройка: вариант, на котором сайт работал и который стал сбоить,
+--     сначала пробуется с одним другим параметром (повторы фейка, позиция
+--     разреза, подставное имя, шаблон seqovl — значения из авторских
+--     стратегий и blockcheck2). Удачная подстройка — новый вариант для всех
+--     сайтов сети, неудачные со временем удаляются.
+--   * Без пинг-понга и без заморозок: сломавшийся вариант «остывает» — 5 минут,
+--     при повторе 10, 20… до двух часов — и всё это время выбирается только
+--     при отсутствии лучшего. Сайт с ошибками никогда не замирает на месте.
+--   * Без перебора при пропавшей связи: модуль сообщает, что сети нет, а когда
+--     разом ломаются три сайта и не открывается ни один, — ошибки не считаются.
+--   * Выученное — на диске, отдельно для каждой сети (Wi‑Fi по SSID, мобильная
+--     по оператору). Новая сеть начинает с копии прежней и меняется сама.
+--   * Не всякая ошибка — DPI: если сайт ломается на половине вариантов (и хотя
+--     бы на четырёх), а не открылся ни на одном, — дело не в блокировке (сервер лежит, прокси
+--     или само приложение). Такой сайт на 6 часов перестаёт перебираться и
+--     обрываться. Наблюдатель смотрит только на соединения приложений (uid от
+--     10000): системные и root-процессы — прокси, VPN, проверки модуля — не его.
+--   * Сайт — домен второго уровня, а для общих зон (co.uk, com.ru, msk.ru,
+--     workers.dev, github.io…) — третьего: иначе все британские сайты были бы
+--     одним «co.uk».
+-- Инструкции без strategy= выполняются всегда (как у обычного профиля).
 --
--- Orchestrator options:
---   slot=NAME    profile identifier (tls, quic, google, etc.)
---   home=DIR     working directory (/data/adb/nfqws2)
---   first=N      initial strategy for unlearned domains (default 1)
---   base=LIST    primary strategy set (e.g. 1-6,10,22)
---   pass=N       pass-through variant (tried last, never set as network default)
---   cutoff=N     inbound byte threshold to end tracking (default 18 KB)
+-- Аргументы smart:
+--   slot=<имя>   набор вариантов; профили с одним slot делят выученное и должны
+--                перечислять одни и те же варианты в одном порядке (по этой
+--                раскладке строятся подстройки)
+--   home=<путь>  каталог модуля с данными (/data/adb/nfqws2)
+--   first=N      с какого варианта начинать новый сайт, пока в сети нет
+--                явного лучшего (по умолчанию 1)
+--   pass=N       вариант «без обхода»: лучшим в сети не бывает и пробуется
+--                последним, если сайту раньше не помогал
+--   okin=N       tcp: сколько байт должно прийти, чтобы соединение считалось
+--                удачным (4096, как у стандартного детектора). Соединение,
+--                закрытое FIN после ответа сервера, — тоже удача: короткие
+--                ответы (API) до порога не дорастают
+--   retrans=N, udp_in=N, udp_out=N — как у стандартного детектора
+--   base=СПИСОК  основной набор: номера через запятую, диапазоны через дефис
+--                (base=1-6,10,22) или просто число N — это 1…N. Остальные
+--                варианты (расширенный пул) идут в перебор, только когда в
+--                state/smart_pool записано ext. Номера при этом не меняются, и
+--                выученное с ними остаётся верным
+--
+-- Отладочный замер (ctl smart-bench): пока в state/smart_bench записано число
+-- его исполнителей W, в state/smart_bench.0 … .(W-1) — «сайт вариант время»:
+-- что каждый из них сейчас проверяет. Запись старше минуты не действует —
+-- замер оборвался, а файлы остались (проверить сам процесс нельзя: nfqws2 без
+-- прав чужих процессов в /proc не видит). Вариант «-» — проба: соединение
+-- идёт на выученном варианте сайта. Пока запись свежая, соединения
+-- к такому сайту идут на этом варианте (0 — без обхода) и в обучение не попадают; профиль, в который
+-- попало соединение, дописывается в state/smart_bench.seen
 
 SMART = SMART or {
 	home = nil, net = nil, db = {}, ns = {}, nstrat = {}, conns = {},
 	dirty = false, saved = 0, netcheck = 0, offline = false,
 	lastok = 0, lastconn = 0, failhosts = {}, suspect_since = nil, watching = false,
-	layout = {}, mut = {}, mutnext = {}, mutt = {}, allow = {}, nallow = {}, basesets = {},
+	layout = {}, mut = {}, mutnext = {}, mutt = {}, allow = {}, nallow = {}, basesets = {}, isbase = {}, pri = {},
 	proc = { "/proc/net/tcp", "/proc/net/tcp6" }
 }
 local SM = SMART
 
-local SAVE_EVERY = 20       -- sec: save learned state to disk interval
-local NET_EVERY = 5         -- sec: network change check interval
-local MAX_HOSTS = 3000      -- max host records per network
-local HALF = 3600           -- sec: half-life for score decay
-local COOL_BASE = 300       -- sec: initial cooldown for failed variant
+local SAVE_EVERY = 20       -- сек: как часто сбрасывать выученное на диск
+local NET_EVERY = 5         -- сек: как часто смотреть, не сменилась ли сеть
+local MAX_HOSTS = 3000      -- больше записей на сеть не храним
+local HALF = 3600           -- сек: за это время вес события падает вдвое
+local COOL_BASE = 300       -- сек: первое «остывание» сломавшегося варианта
 local COOL_MAX = 7200
-local SWITCH_GAP = 15       -- sec: min delay between variant switches per host
-local WIN = 8               -- window: recent connections for host on current variant
-local WATCH_MS = 3000       -- connection watcher tick
-local STUCK_RETRANS = 4     -- consecutive unacknowledged retransmits before stall verdict
-local FROZEN_RTX = 3        -- retransmits of identical segment after server response = frozen connection
-local FROZEN_IN = 12        -- max incoming packets before queue cutoff
-local NET_STUCK_IPS = 3     -- stalls across N distinct server IPs = network-wide issue, not DPI
-local APP_UID = 10000       -- watcher tracks user apps only
-local NODPI_VARIANTS = 4    -- failure across N variants without success = non-DPI failure
+local SWITCH_GAP = 15       -- сек: не чаще одной смены варианта у сайта
+local WIN = 8               -- окно: последние соединения сайта на текущем варианте
+local WATCH_MS = 3000       -- наблюдатель за соединениями
+local STUCK_RETRANS = 4     -- столько неудачных переотправок подряд (~15 с без ответа) — поток режут
+local FROZEN_RTX = 3        -- столько переотправок одного и того же сегмента подряд после ответа сервера — соединение заморожено
+local FROZEN_IN = 12        -- входящих пакетов: дальше их может не быть видно (лимит очереди), и счёт нечем обнулять
+local NET_STUCK_IPS = 3     -- застряло у стольких разных серверов разом — это сеть, а не DPI
+local SILENT_SEC = 4        -- сек: ClientHello дошёл (переотправок нет), а сервер молчит — DPI съел ответ
+local APP_UID = 10000       -- наблюдатель — только за приложениями
+local NODPI_VARIANTS = 4    -- ошибки хотя бы на стольких вариантах (и на половине набора), ни одной удачи — не DPI
 local NODPI_TIME = 6 * 3600
-local ANSWER = 300          -- bytes: server response size indicating DPI bypass success
-local ALIVE_OK = 30         -- sec: connection alive after response = confirmed success
-local CREDIT_STEP = 60      -- sec: connection duration credit step
-local CREDIT_W = 0.5        --   credit weight per step
-local CREDIT_MAX = 3        --   max accumulated credit bonus
-local MUT_BASE = 100        -- tuned variant IDs start at 101
-local MUT_MAX = 32          -- max tuned variants per network variant set
-local MUT_DEPTH = 3         -- max modified parameters per tuning
-local MUT_EVERY = 30        -- sec: min delay between new tunings
-local TUNE_GAP = 600        -- sec: min delay between tuning the same host
--- Subnet neighbours: CDN services host multiple domains on shared addresses
--- (e.g. SoundCloud on CloudFront: soundcloud.com for API, sndcdn.com for media).
--- A variant recently working for one domain is prioritized for adjacent domains
--- sharing the same /24 or /48 subnet.
-local NEAR_TIME = 3600      -- sec: address subnet affinity duration
-local NEAR_MAX = 4096       -- max subnet entries per variant set
+local ANSWER = 300          -- байт: сервер ответил — DPI пропустил начало соединения
+local ALIVE_OK = 30         -- сек: ответивший сервер и соединение живо, не застряло — удача
+local CREDIT_STEP = 60      -- сек: долгая работа соединения весит больше: за каждую минуту
+local CREDIT_W = 0.5        --   ещё полудачи,
+local CREDIT_MAX = 3        --   но не больше трёх сверху
+local MUT_BASE = 100        -- номера подстроенных вариантов — от 101
+local MUT_MAX = 32          -- подстроек на набор вариантов в сети, не больше
+local MUT_DEPTH = 3         -- изменённых параметров в одной подстройке, не больше
+local MUT_EVERY = 30        -- сек: новая подстройка в наборе — не чаще
+local TUNE_GAP = 600        -- сек: подстраивать вариант одного сайта — не чаще
+-- Соседи по серверам: у сервиса на CDN несколько сайтов на одних адресах
+-- (SoundCloud на CloudFront: API — soundcloud.com, картинки и музыка —
+-- sndcdn.com). Вариант, что только что открыл один из них, — следующий, что
+-- пробует сайт, ещё ни разу не открывшийся на этих адресах (та же /24 или
+-- /48): по общей статистике сети перебор до него мог не дойти вовсе
+-- (sndcdn.com перебрал два десятка вариантов, кроме того, что открывал
+-- soundcloud.com). Стартовый вариант нового сайта это не меняет: на одних
+-- /24 у Cloudflare — тысячи чужих сайтов
+local NEAR_TIME = 3600      -- сек: столько помним удачу варианта на адресах
+local NEAR_MAX = 4096       -- адресных блоков на набор вариантов, не больше
+-- Медленное соединение: сервер отвечает, но данные идут еле-еле (замедление
+-- ТСПУ, как у raw.githubusercontent.com). Скорость — по продвижению данных
+-- между пакетами сервера, медиана: пауза сервера перед ответом — одна, а
+-- замедление растягивает каждый пакет. Видно только начало соединения (лимит
+-- очереди — ~20 КБ), этого хватает. Медленная сама по себе сеть — не
+-- замедление: сравниваем с обычной скоростью в этой сети
+local SLOW_N = 6            -- столько интервалов между пакетами сервера, чтобы судить
+local SLOW_BYTES = 12000    -- и столько байт ответа
+local SLOW_BPS = 32768      -- байт/с: медленнее — похоже на замедление,
+local SLOW_RATIO = 4        --   если ещё и во столько раз медленнее обычного для сети
+local SLOW_BASE_N = 5       -- обычная скорость сети — после стольких соединений
 
--- Multi-part ccTLDs: domain key is one label deeper (e.g. co.uk, com.tr)
+-- Общие зоны: сайт в них — на уровень глубже
 local SLD2 = { co = 1, com = 1, net = 1, org = 1, gov = 1, edu = 1, ac = 1, ["or"] = 1, ne = 1, go = 1,
 	ltd = 1, plc = 1, gen = 1, nic = 1, mil = 1, biz = 1, info = 1, me = 1, ["in"] = 1 }
 local SHARED = { ["msk.ru"] = 1, ["spb.ru"] = 1, ["workers.dev"] = 1, ["pages.dev"] = 1, ["github.io"] = 1,
@@ -77,7 +155,8 @@ local function shared_zone(two)
 	local sld, tld = two:match("^([^.]+)%.([^.]+)$")
 	return sld ~= nil and SLD2[sld] ~= nil and #tld == 2
 end
--- Host key: domain name, or IP if protocol does not carry SNI (MTProto, etc.)
+-- Ключ сайта. Без имени — адрес, но только там, где имени и не будет
+-- (mtproto и прочее): у TLS, HTTP и QUIC имя приходит с первым пакетом данных
 local function site_key(desync)
 	local h = desync.track and desync.track.hostname
 	if not h then
@@ -86,16 +165,6 @@ local function site_key(desync)
 		return host_ip(desync)
 	end
 	if desync.track.hostname_is_ip then return h end
-	-- Zephyron domain grouping: CDN shards share learned strategy
-	if h == "redirector.googlevideo.com" then return h end
-	if h:match("%.googlevideo%.com$") then return "googlevideo.com" end
-	if h:match("%.youtube%.com$") or h == "youtube.com" then return "youtube.com" end
-	if h:match("%.ytimg%.com$") or h == "ytimg.com" then return "ytimg.com" end
-	if h:match("%.ggpht%.com$") or h == "ggpht.com" then return "ggpht.com" end
-	if h:match("%.googleapis%.com$") or h == "googleapis.com" then return "googleapis.com" end
-	if h:match("%.google%.com$") or h == "google.com" then return "google.com" end
-	if h:match("%.rapidgator%.net$") or h == "rapidgator.net" then return "rapidgator.net" end
-
 	local two = dissect_nld(h, 2)
 	if not two then return h end
 	if shared_zone(two) then return dissect_nld(h, 3) or h end
@@ -114,14 +183,16 @@ end
 
 local function netfile(net) return SM.home .. "/smart/" .. net .. ".tsv" end
 
--- ── Smart Mode Log (logs/smart.log) ──────────────────────────────────
--- Records decisions: variant switches, tuning, non-DPI verdicts, kills, network changes
--- Output: logs/smart.log (rotated to smart.log.1 at 256 KB)
+-- ── Журнал умного режима (logs/smart.log) ─────────────────────────────────
+-- Только решения: смена варианта, подстройка, «не похоже на блокировку»,
+-- обрывы, смена сети — с именами вариантов из шапки strategies/smart.conf
+-- (служба копирует её в state/smart_names).
+-- Пишется всегда, не только при отладке; больше 256 КБ — в smart.log.1
 local JOURNAL_MAX = 262144
 local function variant_names()
 	if SM.names then return SM.names end
 	SM.names = {}
--- Service seeds strategy labels on boot: "slot N name"
+	-- служба при запуске кладёт сюда шапку strategies/smart.conf: «slot N имя»
 	local f = SM.home and io.open(SM.home .. "/state/smart_names", "r")
 	if f then
 		for line in f:lines() do
@@ -137,11 +208,11 @@ local function vname(slot, v)
 	local function one(x)
 		return names[slot .. "|" .. x] or names[(slot:match("^([^_]+)") or slot) .. "|" .. x] or ("#" .. x)
 	end
-	local m = v and v > MUT_BASE and SM.mut[slot] and SM.mut[slot][v]
+	m = v and v > MUT_BASE and SM.mut[slot] and SM.mut[slot][v]
 	if m then
 		local a = {}
 		for _, c in ipairs(m.ch) do a[#a + 1] = c.k .. "=" .. c.val end
-		return one(m.base) .. " · tuning " .. v .. ": " .. table.concat(a, ", ")
+		return one(m.base) .. " · подстройка " .. v .. ": " .. table.concat(a, ", ")
 	end
 	return one(v)
 end
@@ -173,7 +244,7 @@ local function csv_dump(t, prec)
 	return table.concat(a, ",")
 end
 
--- Score decay: exponential halving over HALF seconds
+-- Старение счётчиков: вдвое за HALF секунд
 local function age(o, t)
 	if not o.dt then o.dt = t; return end
 	local dt = t - o.dt
@@ -202,9 +273,16 @@ local function restat()
 	end
 end
 
--- ── Strategy parameter tuning ─────────────────────────────────────────
--- Explores variations of working strategies that began failing by mutating
--- a single parameter (repeats, split pos, fake SNI, seqovl pattern).
+-- ── Подстройка вариантов ────────────────────────────────────────────────
+-- Вариант, на котором сайт работал и который стал сбоить, умный режим не
+-- только меняет на другой, но и подстраивает: пробует его же с одним другим
+-- параметром — числом повторов фейка, позицией разреза, подставным именем,
+-- шаблоном seqovl. Значения — только те, что берут авторы стратегий
+-- (MartinBacker, hardcorp74, Flowseal) и перебирает blockcheck2 из zapret2:
+-- ничего не выдумывается. Подстройка — такой же вариант, как авторский: со
+-- своими счётчиками, её пробуют и другие сайты, она может стать лучшей в
+-- сети. Неудачные со временем удаляются. Подстройка изменённого варианта
+-- копит изменения (до MUT_DEPTH) — так удачное сохраняется и дорабатывается
 local TLS_BLOBS = { "fake_default_tls", "tls_clienthello", "tls_google", "tls_sferum", "tls_sochi", "tls_4pda" }
 local QUIC_BLOBS = { "quic_initial", "quic_google", "quic_5ka" }
 local STUN_BLOBS = { "stun", "stun2" }
@@ -232,7 +310,7 @@ local function in_list(l, x)
 	for _, y in ipairs(l) do if y == x then return true end end
 	return false
 end
--- Parameter value in instance; fake host lives inside tls_mod
+-- значение параметра у экземпляра; подставное имя живёт внутри tls_mod
 local function gene_get(arg, k)
 	if k == "sni" then return arg.tls_mod and arg.tls_mod:match("sni=([^,]+)") end
 	return arg[k]
@@ -240,7 +318,8 @@ end
 local function gene_set(arg, k, val)
 	if k == "sni" then arg.tls_mod = arg.tls_mod:gsub("sni=[^,]+", "sni=" .. val) else arg[k] = val end
 end
--- Mutation candidate pool: alters existing parameters within protocol limits
+-- из чего выбирать: меняется только то, что у автора уже задано; фейк
+-- остаётся фейком своего протокола
 local function gene_pool(func, arg, k)
 	local g = GENES[func] and GENES[func][k]
 	local cur = gene_get(arg, k)
@@ -287,7 +366,7 @@ local function mut_drop(slot, id)
 	if s then s.ok[id], s.err[id] = nil, nil end
 	SM.dirty = true
 end
--- Prune stale mutations unused across the network for >1 hour
+-- уборка: подстройка, которая никому не помогла за час и ни у кого не текущая
 local function mut_gc(slot, t, need_room)
 	local ms = SM.mut[slot]
 	if not ms then return end
@@ -305,7 +384,7 @@ local function mut_gc(slot, t, need_room)
 	end
 	if need_room and n >= MUT_MAX and worst then mut_drop(slot, worst) end
 end
--- Spawn new mutation derived from base variant
+-- новая подстройка варианта from (авторского или уже подстроенного)
 local function make_mutant(slot, from, t)
 	local pm = mutant(slot, from)
 	local base = pm and pm.base or from
@@ -350,12 +429,12 @@ local function make_mutant(slot, from, t)
 	end
 	return nil
 end
--- Check if variant belongs to currently active candidate set
+-- вариант в наборе, который сейчас перебирается (основной или весь пул)
 local function allowed(slot, v)
 	local a = SM.allow[slot]
 	return not a or a[v] ~= nil
 end
--- Parse base=1-6,10,22 into lookup table
+-- base=1-6,10,22 → { [1]=true, … }, сколько в нём вариантов
 local function base_set(str, nall)
 	local c = SM.basesets[str]
 	if c then return c.set, c.count end
@@ -372,7 +451,7 @@ local function base_set(str, nall)
 	return set, count
 end
 
--- Return all active variants in set (builtin + mutations)
+-- все варианты набора: авторские и подстроенные
 local function variants(slot, n)
 	local l = {}
 	for v = 1, n do if allowed(slot, v) then l[#l + 1] = v end end
@@ -391,13 +470,16 @@ local function load_net(net)
 	local f = io.open(netfile(net), "r")
 	if not f then return false end
 	local head = f:read("*l")
-	-- Migrate older layout formats, discarding unreliable non-DPI flags
+	-- файлы первых тестовых сборок — другой формат: начинаем заново. В v2 не
+	-- было отметки «открывался хоть раз»; в v2 и v3 «не похоже на блокировку»
+	-- ставилось по ложным ошибкам (обрывы на мобильной сети, сброс после
+	-- закрытия соединения) — такие отметки сбрасываем
 	if not head or not head:find("^#v[234]") then f:close(); return false end
 	local v2 = head:find("^#v2") ~= nil
 	local old = not head:find("^#v4")
 	local db, mut, mutnext = {}, {}, {}
 	for line in f:lines() do
--- Mutation record: #m slot id base changes created
+		-- подстроенный вариант: #m slot id base изменения создан
 		local ms, mid, mb, mch, mt = line:match("^#m\t([^\t]+)\t(%d+)\t(%d+)\t([^\t]+)\t(%d+)")
 		if ms then
 			mid = tonumber(mid)
@@ -407,7 +489,7 @@ local function load_net(net)
 		end
 		local slot, host, cur, ok, err, cool, seen, flags =
 			line:match("^([^\t#]+)\t([^\t]+)\t(%d+)\t([^\t]*)\t([^\t]*)\t([^\t]*)\t(%d+)\t?(%w*)")
--- Ignore deprecated multi-part TLD entries (e.g. co.uk)
+		-- «co.uk» и подобные — записи прежних сборок, где общая зона была сайтом
 		if slot and not shared_zone(host) then
 			local r = newrec(tonumber(cur))
 			r.ok, r.err, r.seen = csv_parse(ok), csv_parse(err), tonumber(seen)
@@ -420,7 +502,8 @@ local function load_net(net)
 		end
 	end
 	f:close()
-	-- Keep mutation ID monotonic across sessions
+	-- номер подстройки не берётся повторно, даже если её уже удалили: у сайтов
+	-- могли остаться её счётчики
 	for key, r in pairs(db) do
 		local slot = key:match("^([^|]+)|")
 		for v in pairs(r.ok) do if v > MUT_BASE then mutnext[slot] = math.max(mutnext[slot] or 0, v + 1) end end
@@ -456,7 +539,7 @@ local function save()
 		local slot, host = k:match("^([^|]+)|(.*)$")
 		local cool = {}
 		for v, u in pairs(r.cool) do if u > t then cool[v] = u end end
--- Non-DPI exclusion marker under index 0
+		-- «не похоже на блокировку» — до какого времени, под номером 0
 		if r.nodpi and r.nodpi > t then cool[0] = r.nodpi end
 		f:write(slot, "\t", host, "\t", r.cur, "\t", csv_dump(r.ok, true), "\t", csv_dump(r.err, true), "\t",
 			csv_dump(cool), "\t", r.seen or 0, "\t", r.everok and "e" or "", "\n")
@@ -466,20 +549,13 @@ local function save()
 	SM.dirty = false
 end
 
--- Active network ID from state/smart_net (or offline)
-local function check_bench(t)
-	if t - (SM.benchcheck or 0) < 1 then return end
-	SM.benchcheck = t
-	local l = readline(SM.home .. "/state/smart_bench")
-	SM.bench = l and tonumber(l:match("^(%d+)")) or nil
-end
-
+-- Сеть: модуль пишет её id в state/smart_net (или offline, если сети нет)
 local function check_net()
 	local t = now()
 	if t - SM.netcheck < NET_EVERY then return end
 	SM.netcheck = t
 	SM.pool_ext = readline(SM.home .. "/state/smart_pool") == "ext"
-	check_bench(t)
+	SM.bench = tonumber((readline(SM.home .. "/state/smart_bench") or ""):match("^(%d+)") or "")
 	local net = readline(SM.home .. "/state/smart_net") or "default"
 	net = net:gsub("[^%w%-_.]", "_")
 	if net == "" then net = "default" end
@@ -488,14 +564,15 @@ local function check_net()
 	if SM.net then save() end
 	local prev = SM.net
 	SM.net = net
-	SM.near = {}                 -- server subnet affinity map
+	SM.rate, SM.raten = nil, 0   -- обычная скорость — у каждой сети своя
+	SM.near = {}                 -- и соседи по серверам
 	if load_net(net) then
 		DLOG("smart: network '" .. net .. "': loaded")
-		SJ("network " .. net .. ": learned data loaded")
+		SJ("сеть " .. net .. ": выученное загружено")
 	else
--- Initialize new network from copy of prior network state
+		-- новая сеть — с копии выученного в прежней; меняется уже отдельно
 		DLOG("smart: network '" .. net .. "' is new, starting from a copy of '" .. tostring(prev) .. "'")
-		SJ("network " .. net .. ": new" .. (prev and (", starts from copy of " .. prev) or ""))
+		SJ("сеть " .. net .. ": новая" .. (prev and (", начинает с копии " .. prev) or ""))
 		for _, r in pairs(SM.db) do r.cool = {}; r.cooln = {}; r.win = {} end
 		SM.dirty = true
 	end
@@ -503,7 +580,8 @@ local function check_net()
 	SM.conns = {}
 end
 
--- Return network's highest-scoring strategy with >=3 successes
+-- Лучший вариант в сети: самая высокая доля удач среди тех, у кого их хотя бы
+-- три. Иначе — first
 local function leader(slot, n, first, pass)
 	local s = SM.ns[slot]
 	local best, bs
@@ -519,21 +597,33 @@ local function leader(slot, n, first, pass)
 	return first
 end
 
--- Pick next candidate variant for host based on host history or network leader
+-- Следующий вариант для сайта: лучшая доля удач у сайта (если он на варианте
+-- бывал) или в сети. Остывающий — с небольшим штрафом: вариант, на котором
+-- сайт долго работал, выигрывает у почти не проверенных, и сайт на него
+-- возвращается, а не уходит всё дальше по худшим
 local function next_strategy(slot, r, n, t, pass)
 	local s = netstat(slot)
 	local best, bs
 	local cb = base_of(slot, r.cur)
 	for _, v in ipairs(variants(slot, n)) do
 		local seen = (r.ok[v] or 0) + (r.err[v] or 0)
--- Foreign mutations require at least 1 local success before adoption
+		-- чужая подстройка — кандидат, только если она уже где-то помогла
 		local m = mutant(slot, v)
 		if v ~= r.cur and (not m or seen >= 0.5 or (s.ok[v] or 0) >= 0.5) then
 			local net = share(s.ok[v], s.err[v])
 			local sc = seen >= 0.5 and (0.7 * share(r.ok[v], r.err[v]) + 0.3 * net) or (net - 0.05)
 			if v == pass and (r.ok[v] or 0) < 0.5 then sc = sc - 1 end
 			if (r.cool[v] or 0) > t then sc = sc - 0.3 end
--- Break ties by choosing next sequential builtin variant
+			-- не проверенный ни сайтом, ни в сети: сначала первые в очереди
+			-- (pri=), потом основной набор, расширенный пул — последним. Раньше
+			-- шли просто по номеру после текущего, и с Youtube_circular #1 (21)
+			-- до hardcorp74 (1), который работал, перебор шёл десятки минут
+			if seen < 0.5 and (s.ok[v] or 0) + (s.err[v] or 0) < 0.5 and not m then
+				local pr = SM.pri[slot] and SM.pri[slot][v]
+				if pr then sc = sc + 0.03 - pr * 0.001
+				elseif SM.isbase[slot] and SM.isbase[slot][v] then sc = sc + 0.01 end
+			end
+			-- при равенстве — авторский вариант, ближайший по номеру после текущего
 			if m then sc = sc - 0.02 - (v - MUT_BASE) * 0.00001
 			else sc = sc - (((v - cb) % n) * 0.0001) end
 			if not best or sc > bs then best, bs = v, sc end
@@ -542,7 +632,10 @@ local function next_strategy(slot, r, n, t, pass)
 	return best
 end
 
--- Network outage detection: multiple simultaneous failures without successes are ignored
+-- Связь пропала или совсем плохая: несколько сайтов ломаются разом, а не
+-- открывается ни один. Такие ошибки не считаются — блокировка тут ни при чём.
+-- Если «всё молчит» дольше двух минут при живой сети — это уже похоже на
+-- блокировку, и ошибки снова считаются
 local function network_suspect(key, t)
 	if SM.offline then return true end
 	SM.failhosts[key] = t
@@ -567,20 +660,52 @@ local function count(r, slot, field, v, d, t)
 	SM.dirty = true
 end
 
--- Sliding window of recent connection outcomes (1 = ok, 0 = fail)
+-- Окно: исходы последних соединений сайта на текущем варианте (1 — удача,
+-- 0 — ошибка). По нему решается смена варианта, а не по паре ошибок подряд
 local function win_push(r, c, val)
 	r.win = r.win or {}
 	r.win[#r.win + 1] = { c = c, v = val }
 	if #r.win > WIN then table.remove(r.win, 1) end
 end
--- Long-lived connections accrue additional success weight
+-- удача весит больше, если соединение потом долго работало (см. credit)
 local function win_count(r)
 	local e, o = 0, 0
 	for _, x in ipairs(r.win or {}) do if x.v == 1 then o = o + (x.w or 1) else e = e + 1 end end
 	return e, o
 end
 
--- Subnet mask: IPv4 /24, IPv6 /48
+-- время с долями секунды (в nfqws2 — clock_getfloattime)
+local function ftime() return clock_getfloattime and clock_getfloattime() or os.time() end
+local function median(a)
+	local s = {}
+	for i = 1, #a do s[i] = a[i] end
+	table.sort(s)
+	return s[math.floor((#s + 1) / 2)]
+end
+-- Продвижение ответа сервера: копит скорости между пакетами; когда их
+-- достаточно — вердикт: nil (ещё рано или не медленно) или скорость в байт/с
+local function slow_sample(cs, p)
+	local ft = ftime()
+	if cs.lt and p > (cs.lpos or 0) then
+		local dt = ft - cs.lt
+		if dt > 0 then
+			cs.rs = cs.rs or {}
+			cs.rs[#cs.rs + 1] = (p - (cs.lpos or 0)) / dt
+		end
+	end
+	if p > (cs.lpos or 0) then cs.lt, cs.lpos = ft, p end
+	if cs.slowdone or not cs.rs or #cs.rs < SLOW_N or p < SLOW_BYTES then return nil end
+	cs.slowdone = true
+	local m = median(cs.rs)
+	-- обычная скорость сети: средняя (в логарифмах) по соединениям
+	local base = SM.rate
+	SM.raten = (SM.raten or 0) + 1
+	SM.rate = base and math.exp(0.8 * math.log(base) + 0.2 * math.log(math.max(m, 1))) or m
+	if base and SM.raten > SLOW_BASE_N and m < SLOW_BPS and m * SLOW_RATIO < base then return m, base end
+	return nil
+end
+
+-- блок адресов сервера: IPv4 — /24, IPv6 — /48 (первые три группы)
 local function ip_block(ip)
 	if not ip then return nil end
 	local b4 = ip:match("^(%d+%.%d+%.%d+)%.%d+$")
@@ -605,7 +730,7 @@ local function near_put(slot, ip, v, t)
 	end
 	ns.m[b] = { v = v, t = t }
 end
--- Most recent working variant on this subnet
+-- вариант, что недавно открыл какой-то сайт на этих адресах (если он ещё в наборе)
 local function near_get(slot, ip, n, t)
 	local b = ip_block(ip)
 	local ns = b and SM.near and SM.near[slot]
@@ -619,7 +744,9 @@ end
 
 local function on_ok(slot, r, v, t, c)
 	count(r, slot, "ok", v, 1, t)
-	-- Record only non-default variants for subnet sharing
+	-- запоминаем только «особый» вариант: не лучший в сети (с лучшего новые
+	-- сайты и так начинают). На одних /24 у Cloudflare — тысячи чужих сайтов,
+	-- и общий вариант сети не должен из-за соседства подменяться чем попало
 	if c and c.ip and v ~= c.pass and c.n and v ~= leader(slot, c.n, c.first or 1, c.pass) then near_put(slot, c.ip, v, t) end
 	r.everok = true
 	if c then c.okt = c.okt or t end
@@ -627,7 +754,9 @@ local function on_ok(slot, r, v, t, c)
 	SM.lastok = t
 	SM.suspect_since = nil
 end
--- Credit bonus for connections that remain active and healthy for >30s
+-- Соединение после удачного начала долго работает и не застревает: ошибка
+-- длится секунды, а такая удача — минуты. За каждую минуту — ещё полудачи
+-- (до трёх сверху), и в окне решения — тоже
 local function credit(slot, r, v, w, t, c)
 	count(r, slot, "ok", v, w, t)
 	for _, x in ipairs(r.win or {}) do
@@ -635,9 +764,11 @@ local function credit(slot, r, v, w, t, c)
 	end
 end
 
--- Connection failure on variant v (mid-stream stall or handshake drop)
+-- Ошибка соединения, шедшего на варианте v. mid — оборвалось посреди работы
+-- после удачного начала: удача остаётся удачей (сайт на варианте открывался),
+-- а для «не похоже на блокировку» такие ошибки не в счёт
 local function on_err(slot, key, r, v, n, t, pass, mid, c)
--- Known non-DPI host: skip rotation
+	-- уже ясно, что дело не в DPI: не считаем и не перебираем
 	if r.nodpi and r.nodpi > t then return end
 	if network_suspect(key, t) then
 		DLOG("smart: " .. key .. ": error ignored — network looks down")
@@ -645,24 +776,35 @@ local function on_err(slot, key, r, v, n, t, pass, mid, c)
 	end
 	count(r, slot, "err", v, 1, t)
 	if not mid then r.early[v] = true end
-	if v ~= r.cur then return end   -- host already switched away from this variant
-	-- Convert in-flight success to failure on mid-stream stall
+	if v ~= r.cur then return end   -- сайт уже ушёл с этого варианта
+	-- обрыв посреди работы превращает удачу этого же соединения в ошибку,
+	-- а не добавляет вторую запись
 	local found = false
 	if mid and c then
 		for _, x in ipairs(r.win or {}) do if x.c == c then x.v = 0; x.w = nil; found = true end end
 	end
 	if not found then win_push(r, c, 0) end
-	-- Switch variant if error threshold met in sliding window (>=3 errors)
+	-- менять вариант — когда в окне ошибок не меньше трёх и больше, чем удач;
+	-- варианту с хорошей историей у этого сайта (80% удач, от пяти) — от четырёх.
+	-- Сайту, что ещё ни разу не открылся, — от двух: к редким сайтам (API
+	-- расширений и т.п.) соединений мало, и по три ошибки на вариант перебор
+	-- шёл сутками. Редкие ошибки рабочий вариант не сбрасывают
 	local e, o = win_count(r)
 	local need = r.everok and 3 or 2
 	if share(r.ok[v], r.err[v]) >= 0.8 and (r.ok[v] or 0) >= 5 then need = 4 end
 	local bad = e >= need and e > o
 	if not bad or t - (r.sw or 0) < SWITCH_GAP then return end
-	-- Server unreachable across multiple variants: classify as non-DPI
+	-- сайт не открылся ни разу, а с первых пакетов ломается на многих
+	-- вариантах — это не блокировка: сервер недоступен, прокси или само
+	-- приложение. Перебор тут ничего не даст; сайт возвращается на стартовый
+	-- вариант и 6 часов не трогается
 	local bad_v = 0
 	for x = 1, n do if r.early[x] then bad_v = bad_v + 1 end end
 	local nset = SM.nallow[slot] or n
-	-- Host fails across nearly all variants with <10% success: pause rotation
+	-- перепробовал почти все варианты, а открывался считанные разы (меньше
+	-- 10% соединений; в наборе от восьми вариантов): разовая удача не делает перебор осмысленным — сайт
+	-- встаёт на вариант, где открывался чаще всего, и 6 часов не трогается
+	-- (иначе такой сайт сутками ходит по кругу)
 	local tried, tok, terr = 0, 0, 0
 	for x = 1, n do if (r.err[x] or 0) > 0 then tried = tried + 1 end end
 	for _, w in pairs(r.ok) do tok = tok + w end
@@ -674,27 +816,28 @@ local function on_err(slot, key, r, v, n, t, pass, mid, c)
 		r.cur = best
 		r.win = {}
 		DLOG("smart: " .. key .. ": tried " .. tried .. " variants, worked on " .. string.format("%.1f", tok) .. " of " .. string.format("%.0f", tok + terr) .. " — pausing the search for " .. NODPI_TIME .. "s")
-		SJ(key .. ": tried almost all variants (" .. tried .. "), opened very few times — search paused for 6h")
+		SJ(key .. ": перепробованы почти все варианты (" .. tried .. "), открывался считанные разы — перебор на паузе 6 часов")
 		return
 	end
-	-- Pass-through variant evaluated last; skip waiting
+	-- «без обхода» выбирается последним и сюда может не дойти — его не ждём
 	if not r.everok and bad_v >= math.min(nset - 1, math.max(NODPI_VARIANTS, math.ceil(nset / 2))) then
 		r.nodpi = t + NODPI_TIME
 		r.cur = r.first or 1
 		r.win = {}
 		DLOG("smart: " .. key .. ": fails on " .. bad_v .. " variants, never worked — not DPI, leaving it alone for " .. NODPI_TIME .. "s")
-		SJ(key .. ": did not open on any of " .. bad_v .. " variants — does not look like DPI blocking, paused for 6h")
+		SJ(key .. ": не открылся ни на одном из " .. bad_v .. " вариантов — не похоже на блокировку, 6 часов не трогаем")
 		return
 	end
--- Exponential cooldown for frequently failing variants
+	-- вариант остывает: чем чаще ломается, тем дольше
 	r.cooln[v] = (r.cooln[v] or 0) + 1
 	r.cool[v] = t + math.min(COOL_MAX, COOL_BASE * 2 ^ (r.cooln[v] - 1))
-	-- Mutate existing working variant before switching to different family
+	-- на этом варианте (или на том, что он подстраивает) сайт уже работал —
+	-- сначала пробуем его подстроить, а не уходить на совсем другой
 	local nxt, tuned
 	local base = base_of(slot, v)
 	local worked = (r.ok[v] or 0) >= 2 or (r.ok[base] or 0) >= 2
 	if worked and v ~= pass and t - (r.tune or 0) >= TUNE_GAP then
-	-- Try proven mutation that helped other hosts first
+		-- подстройка этого варианта, что уже помогла другим сайтам, — прежде новой
 		local s, bs = netstat(slot), nil
 		for id, m in pairs(SM.mut[slot] or {}) do
 			if m.base == base and id ~= v and (r.ok[id] or 0) + (r.err[id] or 0) < 0.5 and (s.ok[id] or 0) >= 0.5 then
@@ -702,7 +845,7 @@ local function on_err(slot, key, r, v, n, t, pass, mid, c)
 				if sc >= 0.6 and (not bs or sc > bs) then nxt, bs = id, sc end
 			end
 		end
-	-- Avoid chaining mutations on unproven variants
+		-- подстройка, которая сама не помогла, — не основа для следующей
 		if not nxt and t - (SM.mutt[slot] or 0) >= MUT_EVERY then
 			nxt = make_mutant(slot, ((r.ok[v] or 0) >= 1) and v or base, t)
 		end
@@ -710,15 +853,16 @@ local function on_err(slot, key, r, v, n, t, pass, mid, c)
 			r.tune, tuned = t, true
 			if not bs then SM.mutt[slot] = t end
 			DLOG("smart: " .. key .. ": tuning variant " .. base .. " as " .. nxt .. " (" .. ch_str(SM.mut[slot][nxt].ch) .. ")")
-			SJ(key .. ": " .. vname(slot, v) .. " failing — " .. (bs and "using successful tuning: " or "trying tuning: ") .. vname(slot, nxt))
+			SJ(key .. ": " .. vname(slot, v) .. " сбоит — " .. (bs and "берём удачную подстройку: " or "пробуем подстройку: ") .. vname(slot, nxt))
 		end
 	end
-	-- Try variant recently proven on same subnet for brand new host
+	-- сайт ни разу не открывался, а на его адресах только что открылся другой
+	-- сайт — сначала его вариант (если этот сайт на нём ещё не ломался)
 	if not nxt and not r.everok then
 		local nv = near_get(slot, c and c.ip, n, t)
 		if nv and nv ~= v and nv ~= pass and (r.err[nv] or 0) < 1 and not ((r.cool[nv] or 0) > t) then
 			nxt = nv
-			SJ(key .. ": " .. vname(slot, v) .. " → " .. vname(slot, nv) .. " — just opened neighbour site on same IP block")
+			SJ(key .. ": " .. vname(slot, v) .. " → " .. vname(slot, nv) .. " — он только что открыл соседний сайт на тех же адресах")
 			tuned = true
 		end
 	end
@@ -728,7 +872,7 @@ local function on_err(slot, key, r, v, n, t, pass, mid, c)
 			", err " .. string.format("%.1f", r.err[v] or 0) .. ")")
 		if not tuned then
 			local e, o = win_count(r)
-			SJ(key .. ": " .. vname(slot, v) .. " → " .. vname(slot, nxt) .. string.format(" (recent conns: errors %d, ok %.1f; total ok %.1f, errors %.1f)", e, o, r.ok[v] or 0, r.err[v] or 0))
+			SJ(key .. ": " .. vname(slot, v) .. " → " .. vname(slot, nxt) .. string.format(" (за последние соединения: ошибок %d, удач %.1f; всего удач %.1f, ошибок %.1f)", e, o, r.ok[v] or 0, r.err[v] or 0))
 		end
 		r.cur = nxt
 	end
@@ -736,13 +880,13 @@ local function on_err(slot, key, r, v, n, t, pass, mid, c)
 	r.sw = t
 end
 
--- Active benchmark candidate under test
-local function bench_variant(host, full_host)
+-- вариант, который отладочный замер сейчас проверяет на этом сайте
+local function bench_variant(host)
 	for i = 0, SM.bench - 1 do
 		local l = readline(SM.home .. "/state/smart_bench." .. i)
 		if l then
 			local h, v, ts = l:match("^(%S+)%s+([%d-]+)%s+(%d+)$")
-			if (h == host or (full_host and h == full_host)) and math.abs(now() - tonumber(ts)) <= 60 then return v end
+			if h == host and math.abs(now() - tonumber(ts)) <= 60 then return v end
 		end
 	end
 end
@@ -751,7 +895,8 @@ local function count_strategies(desync)
 	local n = SM.nstrat[desync.func_instance]
 	if n then return n end
 	n = 0
-	-- Plan layout: sequential instances of each variant
+	-- раскладка: экземпляры каждого варианта по порядку — по ней строятся
+	-- подстройки (профили одного slot перечисляют одни и те же варианты)
 	local lay = {}
 	for _, instance in ipairs(desync.plan) do
 		local s = tonumber(instance.arg.strategy)
@@ -773,7 +918,10 @@ local function detector_args(desync)
 	return setmetatable({ arg = a }, { __index = desync }), a
 end
 
--- ── TCP Connection Monitor (/proc/net/tcp) ───────────────────────────
+-- ── Наблюдатель за соединениями ──────────────────────────────────────────
+-- Адрес из /proc/net/tcp: IPv4 — 8 hex-цифр, байты задом наперёд; IPv6 — 32,
+-- по четыре байта задом наперёд. IPv4 через IPv6-сокет (::ffff:a.b.c.d — так
+-- соединяется большинство приложений) — как обычный IPv4
 local function proc_ip(h)
 	local function v4(x)
 		return string.format("%d.%d.%d.%d", tonumber(x:sub(7, 8), 16), tonumber(x:sub(5, 6), 16),
@@ -790,7 +938,7 @@ local function proc_ip(h)
 	end
 	return table.concat(g, ":")
 end
--- Hex address normalization for IPv4 and IPv6
+-- Адрес соединения в том же виде: IPv6 — все восемь групп по 4 цифры
 local function norm_ip(s)
 	if not s then return nil end
 	s = s:lower()
@@ -810,7 +958,12 @@ local function norm_ip(s)
 	return table.concat(parts, ":")
 end
 
--- Check for stalled connections with active retransmit timers
+-- Соединения, по которым телефон переотправляет данные и не слышит ответа:
+-- ESTABLISHED, таймер переотправки взведён, неудачных попыток уже
+-- STUCK_RETRANS, сокет приложения (uid от APP_UID). Возвращает
+-- {локальный порт = адрес сервера} — для всех портов: застрявшие соединения
+-- к разным серверам у кого угодно говорят о сети. Вторая таблица — живые:
+-- ESTABLISHED и не застрявшие
 local function scan_sockets()
 	local stuck, alive = {}, {}
 	for _, path in ipairs(SM.proc) do
@@ -833,7 +986,8 @@ local function scan_sockets()
 	return stuck, alive
 end
 
--- Emit smart_kill signal for service.sh to send TCP RST
+-- Оборвать соединения: «4|6 адрес локальный-порт» в state/smart_kill, дальше —
+-- service.sh (REJECT с tcp-reset на следующий пакет приложения)
 local function kill_conns(lines)
 	if #lines == 0 or not SM.home then return end
 	local f = io.open(SM.home .. "/state/smart_kill", "a")
@@ -844,7 +998,8 @@ local function kill_line(ip, lp) return (ip:find(":") and "6 " or "4 ") .. ip ..
 function smart_watch()
 	local ok, err = pcall(function()
 		local t = now()
-		-- Idle monitor when no connections are active
+		-- без трафика наблюдатель спит: таблицу читать незачем. Но пока живы
+		-- удачные соединения — смотрит, сколько они проработали
 		local busy = t - SM.lastconn <= 120
 		if not busy then
 			for _, c in pairs(SM.conns) do
@@ -857,13 +1012,13 @@ function smart_watch()
 		for lp, ip in pairs(stuck) do
 			if not ips[ip] then ips[ip] = true; nips = nips + 1 end
 			local c = SM.conns[lp]
--- Port reuse check: verify remote address matches
+			-- порт мог достаться уже другому соединению: адрес сервера должен совпасть
 			if c and c.ip ~= ip then c = nil end
--- Skip duplicate processing for already resolved connections
+			-- закрытое или уже засчитанное ошибкой соединение второй раз не считается
 			if c and c.done and not c.failed then c = nil end
 			local cr = c and SM.db[c.key]
 			if c and not c.stuck and t - c.t >= 3 and not (cr and cr.nodpi and cr.nodpi > t) then
--- Require stall detection across two consecutive checks
+				-- застрявшим считается только то, что застряло и на прошлой проверке
 				if c.suspect then
 					hits[#hits + 1] = { c = c, ip = ip, lp = lp }
 					if not keys[c.key] then keys[c.key] = true; nkeys = nkeys + 1 end
@@ -873,10 +1028,12 @@ function smart_watch()
 		end
 		for lp, c in pairs(SM.conns) do
 			if c.suspect and not stuck[lp] then c.suspect = nil end
--- Expire tracking for closed connections (>30m old)
+			-- соединения уже нет в таблице (закрыто) или оно старше получаса — забываем
 			if (not stuck[lp] and not alive[lp] and t - c.t > 15) or t - c.t > 1800 then SM.conns[lp] = nil end
 		end
-		-- Credit sustained keep-alive / HTTP/2 sessions
+		-- живые соединения: ответивший сервер и 30 секунд без застреваний —
+		-- удача (keep-alive, HTTP/2: такие не закрываются и до 4 КБ не дорастают);
+		-- удачное соединение, что работает дальше, весит больше
 		for lp, c in pairs(SM.conns) do
 			local r = alive[lp] == c.ip and not c.done and not c.stuck and SM.db[c.key]
 			if r then
@@ -892,8 +1049,40 @@ function smart_watch()
 				end
 			end
 		end
+		-- Молчание после ClientHello: соединение живо и не застряло (переотправок
+		-- нет — сервер всё принял), а от сервера ни байта: ни в пакетах, ни в
+		-- подтверждениях телефона. Так ТСПУ глушит ответ сервера; приложение ждёт
+		-- свой тайм-аут (браузер — до 30 с), видео стоит. Обрываем — оно сразу
+		-- откроет новое, уже на другом варианте. Пакеты соединения nfqws2 видит
+		-- не все (лимит очереди): перестал видеть хоть в одну сторону — не судим
+		local silent = {}
+		for lp, c in pairs(SM.conns) do
+			if c.cht and alive[lp] == c.ip and not stuck[lp] and not c.done and not c.ok
+				and not c.srv and c.maxin == 0 and (c.nin or 0) < FROZEN_IN and (c.nout or 0) < FROZEN_IN
+				and t - c.cht >= SILENT_SEC then
+				silent[#silent + 1] = { c = c, ip = c.ip, lp = lp }
+			end
+		end
+		if #silent > 0 then
+			local sips, sn = {}, 0
+			for _, h in ipairs(silent) do if not sips[h.ip] then sips[h.ip] = true; sn = sn + 1 end end
+			local kill = {}
+			for _, h in ipairs(silent) do
+				local c, r = h.c, SM.db[h.c.key]
+				c.done, c.failed = true, true
+				-- молчат разом несколько серверов — это сеть, а не DPI: не считаем
+				if r and sn < NET_STUCK_IPS and not (r.nodpi and r.nodpi > t) then
+					DLOG("smart: " .. c.key .. ": connection :" .. h.lp .. " silent after ClientHello on variant " .. c.v)
+					SJ(c.key .. ": сервер " .. tostring(c.ip) .. " принял ClientHello и молчит — ошибка " .. vname(c.slot, c.v) .. ", обрываем")
+					on_err(c.slot, c.key, r, c.v, c.n, t, c.pass, false, c)
+				end
+				kill[#kill + 1] = kill_line(h.ip, h.lp)
+			end
+			kill_conns(kill)
+		end
 		if #hits == 0 then return end
-		-- Correlate multi-host stall as network degradation rather than DPI
+		-- застряло разом у нескольких сайтов или у соединений к нескольким
+		-- серверам (у любых приложений) — это связь, а не DPI
 		local network = nips >= NET_STUCK_IPS or (nkeys >= 3 and t - SM.lastok > 10)
 		local kill = {}
 		for _, h in ipairs(hits) do
@@ -902,17 +1091,19 @@ function smart_watch()
 			if not network then
 				local r = SM.db[c.key]
 				if r and not c.done then
-				-- Distinguish mid-stream stall from initial handshake failure
+					-- застряло после удачного начала — обрыв посреди работы; ещё до
+					-- ответа сервера — ошибка начала соединения
 					DLOG("smart: " .. c.key .. ": connection :" .. h.lp .. " stuck " .. (c.ok and "mid-stream" or "before any answer") .. " on variant " .. c.v)
-					SJ(c.key .. ": connection stuck " .. (c.ok and "mid-stream" or "before server response") .. " — error " .. vname(c.slot, c.v) .. ", cutting")
+					SJ(c.key .. ": соединение с " .. tostring(c.ip) .. " застряло " .. (c.ok and "посреди работы" or "до ответа сервера") .. " — ошибка " .. vname(c.slot, c.v) .. ", обрываем")
 					c.done, c.failed = true, true
 					on_err(c.slot, c.key, r, c.v, c.n, t, c.pass, c.ok, c)
 				end
--- Terminate stalled connection immediately
+				-- и то, и уже засчитанное — обрываем: приложение переподключится
 				kill[#kill + 1] = kill_line(h.ip, h.lp)
 			end
 		end
-		-- Kill stalled connection so application reconnects on new variant
+		-- застрявшие соединения модуль обрывает: приложение переподключится
+		-- на новом варианте, а не будет ждать своего таймаута
 		kill_conns(kill)
 	end)
 	if not ok then DLOG_ERR("smart_watch: " .. tostring(err)) end
@@ -933,18 +1124,25 @@ function smart(ctx, desync)
 	if not SM.home then SM.home = desync.arg.home or "/data/adb/nfqws2" end
 	local t = now()
 	check_net()
-	check_bench(t)
 	if SM.dirty and t - SM.saved >= SAVE_EVERY then save() end
 
 	local slot = desync.arg.slot or "default"
 	local host = site_key(desync)
 	local nall = count_strategies(desync)
 	local n = nall
--- Extended pool disabled: restrict search to base set
+	-- расширенный пул выключен — перебор только по основному набору
 	if desync.arg.base and not SM.pool_ext then
 		SM.allow[slot], SM.nallow[slot] = base_set(desync.arg.base, nall)
 	else
 		SM.allow[slot], SM.nallow[slot] = nil, nil
+	end
+	-- основной набор и первые в очереди (pri=) — для порядка перебора
+	-- непроверенных вариантов (см. next_strategy)
+	SM.isbase[slot] = desync.arg.base and (base_set(desync.arg.base, nall)) or nil
+	if desync.arg.pri and not SM.pri[slot] then
+		local p, i = {}, 0
+		for x in desync.arg.pri:gmatch("%d+") do i = i + 1; p[tonumber(x)] = i end
+		SM.pri[slot] = p
 	end
 	if not host or n == 0 then
 		local verdict = VERDICT_PASS
@@ -965,7 +1163,7 @@ function smart(ctx, desync)
 		r = newrec(leader(slot, n, tonumber(desync.arg.first) or 1, pass))
 		SM.db[key] = r
 	end
--- Fallback to starting variant if current variant is outside active pool
+	-- сайт на варианте вне набора (пул выключили, набор сменился) — к стартовому
 	local cb = base_of(slot, r.cur)
 	if cb > n or not allowed(slot, cb) then
 		r.cur = leader(slot, n, tonumber(desync.arg.first) or 1, pass)
@@ -973,13 +1171,15 @@ function smart(ctx, desync)
 	r.seen = t
 
 	local crec = automate_conn_record(desync)
--- Benchmark override: variant forced by test runner
+	-- отладочный замер: вариант задаёт он, итог считает он же
 	if crec and not crec.smart and SM.bench then
-		local bv = bench_variant(host, desync.track and desync.track.hostname)
+		local bv = bench_variant(host)
 		if bv then
-			-- Name probe ('-'): test variant without resetting learned state
+			-- «-» — проба имени: узнать профиль, а соединение — на выученном
+			-- варианте сайта. Без обхода ТСПУ увидел бы SNI и на время закрыл
+			-- адрес, и следующие попытки к сайту не соединялись бы
 			bv = bv == "-" and r.cur or tonumber(bv)
--- Resolve mutation base variant
+			-- подстройка (номер больше 100) — по её основе
 			if base_of(slot, bv) > nall then bv = 0 end
 			crec.smart = { bench = true, done = true, v = bv, maxin = 0, tin = t, t = t }
 			local f = io.open(SM.home .. "/state/smart_bench.seen", "a")
@@ -987,19 +1187,22 @@ function smart(ctx, desync)
 		end
 	end
 	if crec and not crec.smart then
-		-- Track connection under active host variant
+		-- новое соединение идёт на текущем варианте сайта; его итог засчитается
+		-- этому варианту, даже если сайт к тому времени перейдёт на другой
 		crec.smart = { maxin = 0, tin = t, v = r.cur, key = key, slot = slot, n = n, pass = pass, t = t, first = tonumber(desync.arg.first) or 1 }
-		-- Detect ~16 KB stream cutoff based on prior connection byte count
+		-- прежнее соединение к этому сайту замерло на 14–17 КБ и браузер скоро
+		-- открыл новое — это обрыв по объёму. Ответ, который просто уложился в
+		-- эти размеры, так не выглядит: новое соединение сразу после него не нужно
 		local prev = r.lastc
 		if prev and not prev.done and prev.maxin >= 14000 and prev.maxin < 17000 and t - prev.tin <= 30 then
 			prev.done = true
 			DLOG("smart: " .. key .. ": previous connection stalled at " .. prev.maxin .. " bytes")
-			SJ(key .. ": connection stalled at " .. prev.maxin .. " bytes (16KB cut) — error " .. vname(slot, prev.v))
--- Mark as mid-stream cutoff if initial payload succeeded (>4 KB)
+			SJ(key .. ": соединение замерло на " .. prev.maxin .. " байтах (обрыв на 16 КБ) — ошибка " .. vname(slot, prev.v))
+			-- начало у него было удачным (больше 4 КБ) — это обрыв посреди работы
 			on_err(slot, key, r, prev.v, n, t, pass, prev.ok, prev)
 		end
 		r.lastc = crec.smart
--- Map local port to host and strategy for watcher
+		-- для наблюдателя: по локальному порту он узнает сайт и вариант
 		if desync.dis.tcp and desync.outgoing then
 			crec.smart.ip = desync.target and norm_ip(host_ip(desync))
 			SM.conns[desync.dis.tcp.th_sport] = crec.smart
@@ -1011,18 +1214,45 @@ function smart(ctx, desync)
 	if cs and not cs.done then
 		local okin = tonumber(desync.arg.okin) or 4096
 		local tcp = desync.dis.tcp
+		local slowbps, slowbase
 		if tcp and not desync.outgoing and #desync.dis.payload > 0 then
 			local p = pos_get(desync, 'p')
 			if p > cs.maxin then cs.maxin = p end
 			cs.tin = t
+			cs.srv = true
+			slowbps, slowbase = slow_sample(cs, p)
+		end
+		if slowbps then
+			DLOG("smart: " .. key .. ": slow answer, " .. math.floor(slowbps) .. " B/s vs " .. math.floor(slowbase) .. " B/s usual here")
+			if not (r.nodpi and r.nodpi > t) then
+				SJ(key .. ": медленно — " .. math.floor(slowbps / 1024 + 0.5) .. " КБ/с при обычных для сети " ..
+					math.floor(slowbase / 1024 + 0.5) .. " КБ/с — ошибка " .. vname(slot, cs.v))
+				on_err(slot, key, r, cs.v, n, t, pass, true, cs)
+			end
 		end
 		local fin = tcp and bitand(tcp.th_flags, TH_FIN) ~= 0
 		local rst = tcp and bitand(tcp.th_flags, TH_RST) ~= 0
-		-- Detect post-handshake freeze (repeated resends of same segment without server reply)
+		-- переотправки после ответа сервера: один и тот же сегмент снова и
+		-- снова, и между ними от сервера ничего. Любой пакет от сервера счёт
+		-- обнуляет — поэтому только пока пакеты сервера видны: до конца
+		-- входящего диапазона (19 КБ) и до лимита очереди на соединение
 		if tcp and not fin and not rst then
 			if desync.outgoing then
 				local len = #desync.dis.payload
+				-- ответ сервера видно и по подтверждениям телефона: пакеты сервера
+				-- nfqws2 может уже не видеть (лимит очереди съели его пустые ACK),
+				-- а телефон их подтверждает. ack0 — подтверждение до ответа (ISN+1)
+				cs.nout = (cs.nout or 0) + 1
+				local a = tcp.th_ack
+				if a then
+					if not cs.ack0 then cs.ack0 = a
+					else
+						local d = (a - cs.ack0) % 4294967296
+						if d > 0 and d < 2147483648 then cs.srv = true end
+					end
+				end
 				if len > 0 then
+					if not cs.cht and desync.l7payload == "tls_client_hello" then cs.cht = t end
 					local s = pos_get(desync, 's')
 					if (cs.ok or cs.maxin >= ANSWER) and cs.outmax and s < cs.outmax
 						and cs.maxin < 18000 and (cs.nin or 0) < FROZEN_IN then
@@ -1042,35 +1272,38 @@ function smart(ctx, desync)
 			local lp = tcp.th_sport
 			DLOG("smart: " .. key .. ": connection :" .. lp .. " frozen after the answer on variant " .. cs.v)
 			if r.nodpi and r.nodpi > t then
-				SJ(key .. ": connection frozen after first response — cutting, app will reopen")
+				SJ(key .. ": соединение заморожено после первого ответа — обрываем, приложение откроет новое")
 			else
-				SJ(key .. ": connection frozen after first response — error " .. vname(slot, cs.v) .. ", cutting")
+				SJ(key .. ": соединение заморожено после первого ответа — ошибка " .. vname(slot, cs.v) .. ", обрываем")
 				on_err(slot, key, r, cs.v, n, t, pass, true, cs)
 			end
 			if cs.ip then kill_conns({ kill_line(cs.ip, lp) }) end
 		elseif fin or (rst and desync.outgoing) then
-			-- Clean teardown (FIN/app RST) counts as success
+			-- соединение закрывают: FIN с любой стороны или сброс от самого
+			-- приложения (так многие закрывают ненужное соединение). Ответил
+			-- сервер — это удача, даже если ответ был коротким (API, статистика).
+			-- Сброс, которым сервер отвечает на закрытие, — уже не DPI
 			cs.done = true
 			if not cs.ok and cs.maxin >= ANSWER then
 				cs.ok = true
 				on_ok(slot, r, cs.v, t, cs)
 			end
 		elseif rst and (cs.ok or cs.maxin >= ANSWER) then
-			-- Server RST after data response is not considered a DPI block
+			-- сброс от сервера, когда он уже ответил: начало соединения DPI
+			-- пропустил, сбрасывает сам сервер — не ошибка обхода
 			cs.done = true
 			DLOG("smart: " .. key .. ": server reset after " .. cs.maxin .. " bytes — not counted")
 		elseif not cs.ok then
 			local dd, a = detector_args(desync)
 			a.inseq = tostring(okin)
 			if standard_success_detector(dd, crec) then
--- Mark success and continue watching for 16 KB cutoff
+				-- удача; соединение смотрим и дальше — вдруг замрёт на 16 КБ
 				cs.ok = true
 				on_ok(slot, r, cs.v, t, cs)
 			else
--- Server RST during handshake considered DPI block
+				-- сброс от сервера — блокировка, только пока сервер не ответил
 				a.inseq = tostring(ANSWER)
-				local fail = standard_failure_detector(dd, crec)
-				if fail then
+				if standard_failure_detector(dd, crec) then
 					cs.done, cs.failed = true, true
 					on_err(slot, key, r, cs.v, n, t, pass, false, cs)
 				end
@@ -1078,14 +1311,15 @@ function smart(ctx, desync)
 		end
 	end
 
-	-- Complete connection under its originating variant
+	-- соединение до конца идёт на своём варианте: смена варианта сайта
+	-- касается новых соединений
 	local v = cs and cs.v or r.cur
 	if not (cs and cs.bench) then
 		local bv = base_of(slot, v)
 		if bv > n or not allowed(slot, bv) then v = r.cur end
 		if base_of(slot, v) > n then v = 1 end
 	end
--- Execute mutation instances with modified parameters
+	-- подстройка: экземпляры её основы, у некоторых — другие параметры
 	local m = mutant(slot, v)
 	local base, ov = m and m.base or v, nil
 	if m then
@@ -1106,7 +1340,7 @@ function smart(ctx, desync)
 				copy.arg = {}
 				for k, x in pairs(instance.arg) do copy.arg[k] = x end
 				for k, x in pairs(o) do gene_set(copy.arg, k, x) end
--- Custom instance cutoff threshold
+				-- своё имя: у экземпляра своя отсечка (cutoff)
 				copy.func_instance = instance.func_instance .. "~" .. v
 				instance = copy
 			end
@@ -1118,7 +1352,15 @@ function smart(ctx, desync)
 	return verdict
 end
 
--- ── Strategy Statistics Collector (smartstat) ─────────────────────────
+-- ── Статистика обычной стратегии ─────────────────────────────────────────
+-- В режиме «Стратегии» модуль ставит smartstat первым экземпляром каждого
+-- TCP-профиля (lib/common.sh: stat_inject). Он ничего не меняет в пакетах и в
+-- плане, только считает соединения теми же признаками, что умный режим:
+-- удача — ответ от 4 КБ, закрытие после ответа сервера (FIN или сброс от
+-- приложения); ошибка — повторы без ответа или сброс сервера, пока он не
+-- ответил. Решив, экземпляр отцепляется от соединения. Без сети не считает.
+-- Итоги — в state/strat_stat: «стратегия удачи ошибки с какого времени»
+--   name=<стратегия>  home=<каталог модуля>
 SMART_STAT = SMART_STAT or { ok = 0, err = 0, since = 0, name = nil, dirty = false, saved = 0, netcheck = 0, offline = false }
 local function stat_file(home) return home .. "/state/strat_stat" end
 local function stat_load(st, home, name)
@@ -1185,8 +1427,7 @@ function smartstat(ctx, desync)
 		if standard_success_detector(dd, crec) then res = "ok"
 		else
 			a.inseq = tostring(ANSWER)
-			local fail = standard_failure_detector(dd, crec)
-			if fail then res = "err" end
+			if standard_failure_detector(dd, crec) then res = "err" end
 		end
 		if res then cs.done = true end
 	end
@@ -1195,12 +1436,20 @@ function smartstat(ctx, desync)
 		st.dirty = true
 	end
 	if st.dirty and t - st.saved >= SAVE_EVERY then stat_save(st, home) end
--- Connection outcome recorded, bypass further inspection
+	-- решено — экземпляр больше не нужен этому соединению
 	if cs.done and ctx then instance_cutoff_shim(ctx, desync) end
 end
 
 -- ---------------------------------------------------------------- hostfakesplit_alt
--- hostfakesplit variant preserving zapret 1 altorder=1 sequencing
+-- hostfakesplit с порядком частей из zapret 1 (--dpi-desync-hostfakesplit-mod=
+-- altorder=1): начало, фейковое имя, конец ClientHello, настоящее имя. В
+-- zapret2 параметра altorder у hostfakesplit нет, и стратегии, переведённые с
+-- zapret 1 (Flowseal ALT13 через eduncey, YouTube из Zapret-Manager), молча
+-- шли обычным порядком — фейк имени без порчи и не туда, куда задумано.
+-- По next_hostfakesplit из zapret2-next (MIT, (c) 2026 Zapret 2 NEXT
+-- contributors), который сам — по hostfakesplit bol-van (zapret2, MIT).
+-- Порча (tcp_ts, badsum…), repeats и ip_id — только у фейка, как у
+-- hostfakesplit; blob и optional — тоже как у него
 function hostfakesplit_alt(ctx, desync)
 	if not desync.dis.tcp then
 		if not desync.dis.icmp then instance_cutoff_shim(ctx, desync) end

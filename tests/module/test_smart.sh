@@ -325,10 +325,20 @@ gn=$(sed -n 's/^#@google \([0-9]*\) .*/\1/p' "$REPO_DIR/strategies/smart.conf" |
 assert_eq "$gv" "$gn" "the variants of the google slot and their names match"
 assert_contains "$(grep '^#@google 4[56] ' "$REPO_DIR/strategies/smart.conf")" "Manager: Yv35" "Yv34 and Yv35 of Zapret-Manager are in"
 assert_contains "$(grep 'strategy=45' "$REPO_DIR/strategies/smart.conf")" "hostfakesplit:host=google.com:tcp_flags_unset=ack:badsum:repeats=3" "Yv34: datanoack is tcp_flags_unset=ack in zapret2"
-# Field test 2026-11-07 on MTS: Yv34 — 15/15, Yv35 — 3/5
-assert_contains "$(grep 'slot=google' "$REPO_DIR/strategies/smart.conf")" ",43-45:" "Yv34 and googlevideo #1, #2 (15 of 15 in the benchmark) are in the base set"
+assert_contains "$(grep '^#@google 47 ' "$REPO_DIR/strategies/smart.conf")" "wide-youtube" "the hardcorp74 wide-youtube profile is a Google variant"
+assert_contains "$(grep 'slot=google' "$REPO_DIR/strategies/smart.conf")" ",47-49:" "and in the base set"
+assert_contains "$(grep 'strategy=48' "$REPO_DIR/strategies/smart.conf")" "fake:blob=0x00000000:tcp_ack=-66000:tcp_ts_up:strategy=48" "the hardcorp74 googlevideo profile is a Google variant too"
+assert_contains "$(grep '^ *--lua-desync=multidisorder:pos=1,midsld:strategy=48' "$REPO_DIR/strategies/smart.conf")" "strategy=48" "with multidisorder, as in nfqws-menu now"
+assert_contains "$(grep '^#@google 49 ' "$REPO_DIR/strategies/smart.conf")" "wssize" "the wssize YouTube variant is a Google variant"
+assert_contains "$(grep -A1 'wssize:wsize=1:scale=1:strategy=49' "$REPO_DIR/strategies/smart.conf" | tr -s ' \n' ' ')" "wssize:wsize=1:scale=1:strategy=49 --lua-desync=multidisorder:pos=midsld:strategy=49" "wssize goes before the split, as in the guide"
+assert_contains "$(grep '^#@bench-google' "$REPO_DIR/strategies/smart.conf")" ",49" "and the benchmark tries it"
+assert_contains "$(grep 'slot=google' "$REPO_DIR/strategies/smart.conf")" ",21,34," "Youtube_circular #1 is in the Google base set"
+assert_contains "$(grep 'slot=google' "$REPO_DIR/strategies/smart.conf")" ":first=21" "and Google sites start on it"
+assert_contains "$(grep 'slot=google' "$REPO_DIR/strategies/smart.conf")" ":pri=1,47,48" "hardcorp74 (Google, wide-youtube, googlevideo) is tried right after the start variant"
+assert_contains "$(grep 'strategy=21$' "$REPO_DIR/strategies/smart.conf")" "hostfakesplit:host=google.com:tcp_ts=-600000" "it is the hostfakesplit google.com variant"
 assert_not_contains "$(grep 'slot=google' "$REPO_DIR/strategies/smart.conf")" "46" "Yv35 (3 of 5) waits in the extended pool"
-assert_eq "" "$(grep -o 'slot=tls[a-z_0-9]*:pass=14:base=[0-9,-]*' "$REPO_DIR/strategies/smart.conf" | grep -v 'base=1,4-6,8,')" "hardcorp74 #1 (95%, the most checks) is in the base set of every TLS slot"
+assert_eq "" "$(grep -o 'slot=tls[a-z_0-9]*:pass=14:base=[0-9,-]*' "$REPO_DIR/strategies/smart.conf" | grep -v 'base=1,4-6,8-9,')" "hardcorp74 #1 and #2 (96%, each opens sites no other does) are in the base set of every TLS slot"
+assert_contains "$(grep -o 'slot=tls:pass=14:base=[0-9,-]*:first=[0-9]*' "$REPO_DIR/strategies/smart.conf")" ":first=8" "ordinary TLS sites start on hardcorp74 #1: the most checks and its own sites in both benchmarks"
 # eduncey #4: fooling=ts mutates fake ClientHello rather than only hostfakesplit;
 # without it fake reaches server causing RST
 assert_contains "$(grep 'strategy=35' "$REPO_DIR/strategies/smart.conf" | grep 'fake:blob=tls_clienthello')" "tcp_ts=-600000" "eduncey #4: the fake ClientHello is fooled too"

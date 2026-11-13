@@ -1195,7 +1195,7 @@ end
 
 -- option : ipfrag.ipfrag_disorder - send fragments from last to first
 function rawsend_dissect_ipfrag(dis, options)
-	if options and options.ipfrag and options.ipfrag.ipfrag and not dis.frag then
+	if options and options.ipfrag and options.ipfrag.ipfrag and not dis.frag_off then
 		local frag_func = options.ipfrag.ipfrag=="" and "ipfrag2" or options.ipfrag.ipfrag
 		if type(_G[frag_func]) ~= "function" then
 			error("rawsend_dissect_ipfrag: ipfrag function '"..tostring(frag_func).."' does not exist")
@@ -1284,7 +1284,7 @@ function rawsend_payload_segmented(desync, payload, seq, options)
 	local dis = (payload or seq and seq~=0) and deepcopy(desync.dis) or desync.dis
 	if payload then dis.payload = payload end
 	if dis.tcp and seq then
-		dis.tcp.th_seq = dis.tcp.th_seq + seq
+		dis.tcp.th_seq = u32add(dis.tcp.th_seq, seq)
 	end
 	return rawsend_dissect_segmented(desync, dis, nil, options)
 end
@@ -1455,9 +1455,9 @@ function wsize_rewrite(dis, arg)
 		b = true
 	end
 	if arg.scale then
-		local scale = tonumber(arg.scale)
 		local i = find_tcp_option(dis.tcp.options, TCP_KIND_SCALE)
-		if i then
+		if i and #dis.tcp.options[i].data==1 then
+			local scale = tonumber(arg.scale)
 			local oldscale = u8(dis.tcp.options[i].data)
 			if scale>oldscale then
 				DLOG("wsize_rewrite: not increasing scale factor")
@@ -1705,13 +1705,14 @@ function gzip_file(filename, data, expected_ratio, level, memlevel, compress_blo
 
 	local gz = gzip_init(nil, level, memlevel)
 	if not gz then
+		f:close()
 		error("gzip_file: stream init error")
 	end
 	local off=1
 	repeat
 		local block_size = #data-off+1
 		if block_size>compress_block_size then block_size=compress_block_size end
-		local comp, eof = gzip_deflate(gz, string.sub(data,off,off+block_size-1), block_size / expected_ratio)
+		local comp, eof = gzip_deflate(gz, string.sub(data,off,off+block_size-1), math.ceil(block_size / expected_ratio))
 		if not comp then
 			f:close()
 			gzip_end(gz)
@@ -2313,7 +2314,7 @@ end
 
 -- dissect tls extension
 -- create dis tables inside ext for supported exts. leave 'data' as is for unsupported exts
-function tls_dissect_ext(ext)
+function tls_dissect_ext(ext, typ)
 	local function len16_header()
 		local left, len, off
 		left = #ext.data
@@ -2370,7 +2371,26 @@ function tls_dissect_ext(ext)
 			left = left - 1 - len
 			off = off + 1 + len
 		end
-	elseif ext.type==TLS_EXT_SUPPORTED_VERSIONS or ext.type==TLS_EXT_COMPRESS_CERTIFICATE then
+	elseif ext.type==TLS_EXT_SUPPORTED_VERSIONS then
+		if typ==TLS_HANDSHAKE_TYPE_CLIENT then
+			left, off = len8_header()
+			if not left then return end
+			dis.list = {}
+			for i=1,left/2 do
+				dis.list[#dis.list+1] = u16(ext.data,off)
+				left = left - 2
+				off = off + 2
+			end
+		elseif typ==TLS_HANDSHAKE_TYPE_SERVER then
+			if #ext.data==2 then
+				dis.version = u16(ext.data)
+			else
+				dis = nil
+			end
+		else
+			dis = nil
+		end
+	elseif ext.type==TLS_EXT_COMPRESS_CERTIFICATE then
 		left, off = len8_header()
 		if not left then return end
 		dis.list = {}
@@ -2398,15 +2418,25 @@ function tls_dissect_ext(ext)
 			off = off + 1
 		end
 	elseif ext.type==TLS_EXT_KEY_SHARE then
-		left, off = len16_header()
-		if not left then return end
-		dis.list = {}
-		while left>=4 do
-			len = u16(ext.data, off + 2)
-			if (len+4)>left then return end
-			dis.list[#dis.list+1] = { group = u16(ext.data, off) , kex = string.sub(ext.data, off+4, off+4+len-1) }
-			left = left - 4 - len
-			off = off + 4 + len
+		if typ==TLS_HANDSHAKE_TYPE_CLIENT then
+			left, off = len16_header()
+			if not left then return end
+			dis.list = {}
+			while left>=4 do
+				len = u16(ext.data, off + 2)
+				if (len+4)>left then return end
+				dis.list[#dis.list+1] = { group = u16(ext.data, off) , kex = string.sub(ext.data, off+4, off+4+len-1) }
+				left = left - 4 - len
+				off = off + 4 + len
+			end
+		elseif typ==TLS_HANDSHAKE_TYPE_SERVER then
+			if #ext.data<4 then return end
+			dis.group = u16(ext.data)
+			len = u16(ext.data, 3)
+			if (len+4)>#ext.data then return end
+			dis.kex = string.sub(ext.data,5)
+		else
+			dis = nil
 		end
 	elseif ext.type==TLS_EXT_QUIC_TRANSPORT_PARAMETERS then
 		left, off = len16_header()
@@ -2508,8 +2538,11 @@ function tls_dissect_handshake(handshake, partialOK)
 				left = left - 1
 			end
 
+			if left==0 then return true end -- no extensions
+
 			-- tls extensions
 			if left<2 then return partialOK end
+
 			local extlen = u16(handshake.data, off)
 			if left<(2+extlen) and not partialOK then return false end
 			off = off + 2
@@ -2528,7 +2561,7 @@ function tls_dissect_handshake(handshake, partialOK)
 				end
 				local typ = u16(handshake.data, off)
 				handshake.dis.ext[#handshake.dis.ext+1] = { type = typ, name = tostring(TLS_HELLO_EXT_NAMES[typ]), data = string.sub(handshake.data, off+4, off+4+len-1) }
-				tls_dissect_ext(handshake.dis.ext[#handshake.dis.ext])
+				tls_dissect_ext(handshake.dis.ext[#handshake.dis.ext], handshake.dis.type)
 				left = left - 4 - len
 				off = off + 4 + len
 			end
@@ -2619,7 +2652,16 @@ function tls_reconstruct_ext(ext)
 		elseif ext.type==TLS_EXT_ALPN then
 			ext.data = barray(ext.dis.list, function(a) return bu8(#a) .. a end)
 			ext.data = bu16(#ext.data) .. ext.data
-		elseif ext.type==TLS_EXT_SUPPORTED_VERSIONS or ext.type==TLS_EXT_COMPRESS_CERTIFICATE then
+		elseif ext.type==TLS_EXT_SUPPORTED_VERSIONS then
+			if ext.dis.list then
+				-- client hello
+				ext.data = barray(ext.dis.list, bu16)
+				ext.data = bu8(#ext.data) .. ext.data
+			elseif ext.dis.version then
+				-- server hello
+				ext.data = bu16(ext.dis.version)
+			end
+		elseif ext.type==TLS_EXT_COMPRESS_CERTIFICATE then
 			ext.data = barray(ext.dis.list, bu16)
 			ext.data = bu8(#ext.data) .. ext.data
 		elseif ext.type==TLS_EXT_SIGNATURE_ALGORITHMS or ext.type==TLS_EXT_DELEGATED_CREDENTIALS or ext.type==TLS_EXT_SUPPORTED_GROUPS then
@@ -2629,15 +2671,19 @@ function tls_reconstruct_ext(ext)
 			ext.data = barray(ext.dis.list, bu8)
 			ext.data = bu8(#ext.data) .. ext.data
 		elseif ext.type==TLS_EXT_KEY_SHARE then
-			ext.data = barray(ext.dis.list, function(a) return bu16(a.group) .. bu16(#a.kex) .. a.kex end)
-			ext.data = bu16(#ext.data) .. ext.data
+			if ext.dis.list then
+				-- client hello
+				ext.data = barray(ext.dis.list, function(a) return bu16(a.group) .. bu16(#a.kex) .. a.kex end)
+				ext.data = bu16(#ext.data) .. ext.data
+			elseif ext.dis.group and ext.dis.kex then
+				-- server hello
+				ext.data = bu16(ext.dis.group)..bu16(#ext.dis.kex)..ext.dis.kex
+			end
 		elseif ext.type==TLS_EXT_QUIC_TRANSPORT_PARAMETERS then
 			ext.data = barray(ext.dis.list, function(a) return bu16(a.type) .. bu16(#a.data) .. a.data end)
 			ext.data = bu16(#ext.data) .. ext.data
 		elseif ext.type==TLS_EXT_QUIC_TRANSPORT_PARAMETERS_V1 then
 			ext.data = barray(ext.dis.list, function(a) return bquic_tvb(a.type) .. bquic_tvb(#a.data) .. a.data end)
-		else
-			ext.data=nil
 		end
 	end
 
