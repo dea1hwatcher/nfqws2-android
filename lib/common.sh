@@ -714,17 +714,19 @@ exclude_profiles() {
 stat_inject() {
   local name
   name=$(head -n 1 "$ACTIVE_FILE" 2>/dev/null | tr -d '\r\n')
-  if [ "$name" = smart ]; then cat; return 0; fi
   awk -v name="${name:-default}" -v home="$CONFDIR" -v lua="$LUA_DIR" '
     function flush(   i, tcp, lua_any, at) {
       tcp = 0; lua_any = 0; at = 0
       for (i = 1; i <= n; i++) {
         if (p[i] ~ /^--filter-tcp=/) tcp = 1
-        if (p[i] ~ /^--lua-desync=/) lua_any = 1
+        if (p[i] ~ /^--lua-desync=/) {
+          lua_any = 1
+          if (p[i] ~ /^--lua-desync=smart(:|$)/) is_smart = 1
+        }
         if (!at && p[i] ~ /^--(in-range|out-range|payload|lua-desync)=/) at = i
       }
       for (i = 1; i <= n; i++) {
-        if (tcp && lua_any && i == at)
+        if (tcp && lua_any && !is_smart && i == at)
           out = out " --in-range=-s19000 --out-range=-s34228 --payload=all --lua-desync=smartstat:home=" home ":name=" name " --in-range=x --out-range=a --payload=all"
         out = out " " p[i]
         if (p[i] ~ /^--lua-init=/) { lastinit = length(out); if (p[i] ~ /zapret-auto\.lua$/) hasauto = 1; if (p[i] ~ /zapret-smart\.lua$/) hassmart = 1; if (p[i] ~ /zapret-lib\.lua$/) haslib = 1 }

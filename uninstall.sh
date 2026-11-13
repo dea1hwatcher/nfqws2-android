@@ -16,6 +16,7 @@ if [ -n "$wlpid" ]; then kill "$wlpid" 2>/dev/null; fi
 sh "$MODDIR/service.sh" stop >/dev/null 2>&1
 killall -9 nfqws2 2>/dev/null
 rm -f /data/adb/ap/bin/nfqws2-ctl /data/adb/ksu/bin/nfqws2-ctl 2>/dev/null
-# Preserve settings and lists; remove /data/adb/nfqws2 for a full reset
+# Remove runtime state, net strategies, logs, and configuration on uninstall
 rm -rf /data/adb/nfqws2/state
+rm -rf /data/adb/nfqws2 2>/dev/null || true
 exit 0

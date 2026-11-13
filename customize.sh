@@ -46,13 +46,24 @@ mkdir -p "$CONF/lists" "$CONF/state" "$CONF/logs" "$CONF/imports" "$CONF/strateg
   abort "! Cannot create $CONF; check /data/adb access"
 
 if [ -f "$CONF/nfqws2.conf" ]; then
-  ui_print "- Keeping existing config: $CONF/nfqws2.conf"
-  cp -f "$MODPATH/defaults/nfqws2.conf" "$CONF/nfqws2.conf.dist" ||
-    abort "! Failed to save the default config"
+  if ! sh -n "$CONF/nfqws2.conf" 2>/dev/null; then
+    ui_print "! Existing config has syntax errors; resetting to default"
+    cp -f "$MODPATH/defaults/nfqws2.conf" "$CONF/nfqws2.conf" || abort "! Failed to reset config"
+    echo "default" > "$CONF/state/active_strategy"
+  else
+    ui_print "- Keeping existing config: $CONF/nfqws2.conf"
+    cp -f "$MODPATH/defaults/nfqws2.conf" "$CONF/nfqws2.conf.dist" ||
+      abort "! Failed to save the default config"
+  fi
 else
   cp -f "$MODPATH/defaults/nfqws2.conf" "$CONF/nfqws2.conf" ||
     abort "! Failed to create $CONF/nfqws2.conf"
+  echo "default" > "$CONF/state/active_strategy"
   ui_print "- Created config: $CONF/nfqws2.conf"
+fi
+
+if [ ! -f "$CONF/state/active_strategy" ]; then
+  echo "default" > "$CONF/state/active_strategy"
 fi
 
 DIST="$CONF/lists/.dist"
