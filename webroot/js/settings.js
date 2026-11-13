@@ -395,16 +395,16 @@ function renderBenchRow(idx, name, ok, total, avg_ms, top_fail, isRunning, yt_ok
   let svcBadges = '';
   if(total > 0 && (yt_ok !== undefined || dc_ok !== undefined)){
     const ytPill = yt_ok > 0
-      ? '<span class="pill ok" style="padding:1px 6px; font-size:11px;">YT ✓</span>'
-      : '<span class="pill tonal" style="padding:1px 6px; font-size:11px;">YT ✗</span>';
+      ? '<span class="pill ok" style="padding:1px 6px;">YT ✓</span>'
+      : '<span class="pill tonal" style="padding:1px 6px;">YT ✗</span>';
     const dcPill = dc_ok > 0
-      ? '<span class="pill ok" style="padding:1px 6px; font-size:11px;">DC ✓</span>'
-      : '<span class="pill tonal" style="padding:1px 6px; font-size:11px;">DC ✗</span>';
+      ? '<span class="pill ok" style="padding:1px 6px;">DC ✓</span>'
+      : '<span class="pill tonal" style="padding:1px 6px;">DC ✗</span>';
     svcBadges = ' <span style="display:inline-flex; gap:4px; margin-left:6px; vertical-align:middle;">' + ytPill + dcPill + '</span>';
   }
   let regrBadge = '';
   if(broken && broken > 0){
-    regrBadge = ' <span class="pill bad" style="padding:1px 6px; font-size:11px;" title="' + esc(t('Ломает ранее работавшие сайты')) + '">' + esc(t('Регрессия -{0}', broken)) + '</span>';
+    regrBadge = ' <span class="pill bad" style="padding:1px 6px;" title="' + esc(t('Ломает ранее работавшие сайты')) + '">' + esc(t('Регрессия -{0}', broken)) + '</span>';
   }
 
   const pct = total > 0 ? Math.round((ok / total) * 100) + '%' : '0%';

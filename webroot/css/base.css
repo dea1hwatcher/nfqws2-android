@@ -19,7 +19,7 @@
   --ts-body-small: 12px;      --lh-body-small: 16px;
   --ts-label-large: 14px;     --lh-label-large: 20px;
   --ts-label-medium: 12px;    --lh-label-medium: 16px;
-  --ts-label-small: 11px;     --lh-label-small: 16px;
+  --ts-label-small: 12px;     --lh-label-small: 16px;
   /* M3 tracking */
   --tr-display-large: -.25px; --tr-display-medium: 0px;   --tr-display-small: 0px;
   --tr-headline-large: 0px;   --tr-headline-medium: 0px;  --tr-headline-small: 0px;
@@ -426,7 +426,7 @@ body.swiping .state::after { opacity: 0 !important; }
   border-radius: var(--shape-full); background: var(--md-sys-color-error);
   color: var(--md-sys-color-on-error); font-size: var(--ts-label-small);
   line-height: var(--lh-label-small); font-weight: var(--w-bold);
-  flex: none; user-select: none;
+  flex: none; user-select: none; font-variant-numeric: tabular-nums;
 }
 .badge.dot { width: 6px; height: 6px; padding: 0; }
 .badge.number { min-width: 16px; height: 16px; padding: 0 4px; }
@@ -642,7 +642,8 @@ html[data-containers="true"] .list > .list-item:active {
 .list-item .li-mono { font-family: var(--md-font-code); font-size: 13px; }
 .list-item .li-trail { flex: none; display: flex; align-items: center; gap: 8px;
   color: var(--md-sys-color-on-surface-variant);
-  font-size: var(--ts-body-medium); line-height: var(--lh-body-medium); font-weight: var(--w-medium); }
+  font-size: var(--ts-body-medium); line-height: var(--lh-body-medium); font-weight: var(--w-medium);
+  font-variant-numeric: tabular-nums; }
 .list-item .switch { margin-left: auto; }
 .list-item.selected { background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container);
   border-radius: var(--shape-large); }
@@ -721,7 +722,7 @@ html[data-containers="true"] .list > .list-item:active {
   animation: fadeIn var(--dur-short) var(--standard); }
 @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
 .dialog {
-  position: relative; width: 100%; max-width: 380px;
+  position: relative; width: 100%; max-width: 380px; max-height: 85vh;
   background: var(--md-sys-color-surface-container-high); color: var(--md-sys-color-on-surface);
   border-radius: var(--shape-extra-large); padding: 24px;
   display: flex; flex-direction: column; gap: 16px; box-shadow: var(--md-elev-3);
@@ -730,10 +731,10 @@ html[data-containers="true"] .list > .list-item:active {
 @keyframes dialogIn { from { opacity: 0; transform: scale(.86); } to { opacity: 1; transform: none; } }
 .dialog .d-icon { align-self: center; flex: none; display: grid; place-items: center; color: var(--md-sys-color-secondary); }
 .dialog .d-icon.danger { color: var(--md-sys-color-error); }
-.dialog .d-title { font-size: var(--ts-headline-small); line-height: var(--lh-headline-small); font-weight: var(--w-regular); }
+.dialog .d-title { font-size: var(--ts-headline-small); line-height: var(--lh-headline-small); font-weight: var(--w-regular); flex: none; }
 .dialog .d-body { font-size: var(--ts-body-medium); line-height: var(--lh-body-medium); color: var(--md-sys-color-on-surface-variant);
-  white-space: pre-line; }
-.dialog .d-actions { display: flex; justify-content: flex-end; gap: 8px; }
+  white-space: pre-line; min-height: 0; overflow-y: auto; }
+.dialog .d-actions { display: flex; justify-content: flex-end; gap: 8px; flex: none; }
 
 /* Snackbar */
 .snackbar {

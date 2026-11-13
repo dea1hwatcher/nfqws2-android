@@ -208,7 +208,7 @@ async function loadCatalogCategory(cat){
     return '<div class="list-item two-line" style="align-items:flex-start;padding:10px 16px;">' +
       '<span class="li-text" style="gap:4px;">' +
         '<span class="li-primary t-label-large">#' + esc(idx) + '</span>' +
-        '<div class="li-mono" style="font-size:11px;line-height:1.4;word-break:break-all;color:var(--md-sys-color-on-surface-variant);">' + esc(text) + '</div>' +
+        '<div class="li-mono" style="font-size:12px;line-height:1.4;word-break:break-all;color:var(--md-sys-color-on-surface-variant);">' + esc(text) + '</div>' +
       '</span>' +
       '<span class="li-trail" style="align-self:center;">' +
         '<button class="btn sm tonal with-icon state" onclick="applyCatalogModule(' + jsArg(cat) + ', ' + jsArg(idx) + ')">' +

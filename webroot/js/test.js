@@ -1018,8 +1018,8 @@ function renderPageHostsList(domain, done){
   dcPageHosts.forEach((it, idx) => {
     const isBlocked = it.st === 'blocked';
     const stBadge = isBlocked
-      ? '<span class="pill bad" style="padding:1px 6px; font-size:11px;">' + esc(t('Блок')) + '</span>'
-      : '<span class="pill ok" style="padding:1px 6px; font-size:11px;">OK · ' + esc(it.ms) + ' ' + esc(t('мс')) + '</span>';
+      ? '<span class="pill bad" style="padding:1px 6px;">' + esc(t('Блок')) + '</span>'
+      : '<span class="pill ok" style="padding:1px 6px;">OK · ' + esc(it.ms) + ' ' + esc(t('мс')) + '</span>';
 
     html += '<label class="list-item two-line" style="cursor:pointer;">' +
       '<input type="checkbox" class="cb" id="ph-cb-' + idx + '" ' + (it.checked ? 'checked' : '') +
