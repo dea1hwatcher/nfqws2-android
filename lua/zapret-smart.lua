@@ -61,7 +61,7 @@
 --   slot=<имя>   набор вариантов; профили с одним slot делят выученное и должны
 --                перечислять одни и те же варианты в одном порядке (по этой
 --                раскладке строятся подстройки)
---   home=<путь>  каталог модуля с данными (/data/adb/nfqws2)
+--   home=<путь>  каталог модуля с данными (/data/adb/modules/nfqws2-android)
 --   first=N      с какого варианта начинать новый сайт, пока в сети нет
 --                явного лучшего (по умолчанию 1)
 --   pass=N       вариант «без обхода»: лучшим в сети не бывает и пробуется
@@ -1121,7 +1121,7 @@ function smart(ctx, desync)
 		DLOG_ERR("smart: conntrack is missing but required")
 		return replay_execution_plan(desync)
 	end
-	if not SM.home then SM.home = desync.arg.home or "/data/adb/nfqws2" end
+	if not SM.home then SM.home = desync.arg.home or "/data/adb/modules/nfqws2-android" end
 	local t = now()
 	check_net()
 	if SM.dirty and t - SM.saved >= SAVE_EVERY then save() end
@@ -1395,7 +1395,7 @@ end
 function smartstat(ctx, desync)
 	local st = SMART_STAT
 	if not desync.track or not desync.dis.tcp then return end
-	local home = desync.arg.home or "/data/adb/nfqws2"
+	local home = desync.arg.home or "/data/adb/modules/nfqws2-android"
 	local name = (desync.arg.name or "default"):gsub("[^%w%._%-]", "_")
 	if st.name ~= name then stat_load(st, home, name) end
 	local t = now()

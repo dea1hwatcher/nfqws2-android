@@ -65,7 +65,6 @@ function renderSettings(force){
     '<div class="stack"><h2 class="subhead">' + esc(t(title)) + '</h2><div class="list">' + rows.map(settingsRow).join('') + '</div></div>').join('') +
     devHtml, false);
 }
-const GITHUB_URL = 'https://github.com/Dea1hwa1cher/nfqws2-android';
 
 /* Settings row long-press: quick actions */
 const SETTINGS_LONG = {

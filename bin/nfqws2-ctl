@@ -243,7 +243,9 @@ cmd_status() {
   echo "$status_line"
   echo "Режим: $(current_mode) | Пресет: $(get_current_strategy) | QUIC-блок: $BLOCK_QUIC | Приложения: $APP_MODE"
   echo "user=$(list_count "$LISTS_DIR/user.list") auto=$(list_count "$LISTS_DIR/auto.list") exclude=$(list_count "$LISTS_DIR/exclude.list") ipset=$(list_count "$LISTS_DIR/ipset.list")"
-  if is_running; then firewall_ok && echo "Правила iptables: активны" || echo "Правила iptables: ОТСУТСТВУЮТ"; fi
+  if is_running; then
+    if firewall_ok; then echo "Правила iptables: активны"; else echo "Правила iptables: ОТСУТСТВУЮТ"; fi
+  fi
 }
 
 # ---------------------------------------------------------------- lint
@@ -423,11 +425,18 @@ cmd_doctor() {
     fi
   }
   local arch
-  [ "$(id -u)" = "0" ] && row ok root "uid 0" || row fail root "$(M 'нужен root' 'root required')"
+  if [ "$(id -u)" = "0" ]; then
+    row ok root "uid 0"
+  else
+    row fail root "$(M 'нужен root' 'root required')"
+  fi
   arch=$(getprop ro.product.cpu.abi 2>/dev/null)
   row ok abi "$arch, $(M ядро kernel) $(uname -r)"
-  [ -x "$NFQWS_BIN" ] && row ok nfqws2 "$(ls -l "$NFQWS_BIN" | awk '{print $5}') bytes" \
-    || row fail nfqws2 "$(M 'бинарник не найден или не исполняемый' 'binary is missing or not executable')"
+  if [ -x "$NFQWS_BIN" ]; then
+    row ok nfqws2 "$(ls -l "$NFQWS_BIN" | awk '{print $5}') bytes"
+  else
+    row fail nfqws2 "$(M 'бинарник не найден или не исполняемый' 'binary is missing or not executable')"
+  fi
   if [ -x "$NFQWS_BIN" ]; then
     local _dry_err
     if _dry_err=$(validate_conf_file "$CONFFILE" 2>&1); then
@@ -436,8 +445,16 @@ cmd_doctor() {
       row fail dry_run "$(M "ошибка параметров: $_dry_err" "parameter error: $_dry_err")"
     fi
   fi
-  command -v iptables >/dev/null 2>&1 && row ok iptables "$(M есть present)" || row fail iptables "$(M 'не найден' 'not found')"
-  command -v ip6tables >/dev/null 2>&1 && row ok ip6tables "$(M есть present)" || row warn ip6tables "$(M 'нет — отключите обработку IPv6' 'missing — turn IPv6 processing off')"
+  if command -v iptables >/dev/null 2>&1; then
+    row ok iptables "$(M есть present)"
+  else
+    row fail iptables "$(M 'не найден' 'not found')"
+  fi
+  if command -v ip6tables >/dev/null 2>&1; then
+    row ok ip6tables "$(M есть present)"
+  else
+    row warn ip6tables "$(M 'нет — отключите обработку IPv6' 'missing — turn IPv6 processing off')"
+  fi
   has_ipt_feature iptables -p tcp --dport 65000 -j NFQUEUE --queue-num "$NFQUEUE_NUM" --queue-bypass \
     && row ok NFQUEUE "$(M 'цель NFQUEUE доступна' 'NFQUEUE target available')" \
     || row fail NFQUEUE "$(M 'ядро без NFQUEUE — модуль работать НЕ БУДЕТ' 'kernel has no NFQUEUE — the module will NOT work')"
@@ -1187,7 +1204,7 @@ probe_attempt() { # <kind> <bin_path> <host[/path]> [proto 1=http, 2=tls1.2, 3=t
   local kind="$1" bin="$2" target="$3" proto="${4:-3}" t0 t1 out rc to=""
   target=$(resolve_probe_target "$target")
   local host="${target%%/*}" path="${target#*/}"
-  [ "$host" = "$path" ] && path="" || path="/$path"
+  if [ "$host" = "$path" ]; then path=""; else path="/$path"; fi
   command -v timeout >/dev/null 2>&1 && to="timeout 10"
   # Parallel bench restricts slot probe to dedicated local port range to isolate traffic
   local lp=""
@@ -2544,9 +2561,7 @@ bench_slot_count() { # [free KB] -> slot count; BENCH_SLOTS sets explicitly, 0 =
   esac
   [ -n "$avail" ] || avail=$(awk '/^MemAvailable:/ { print $2; exit }' /proc/meminfo 2>/dev/null)
   case "$avail" in ''|*[!0-9]*) avail=0 ;; esac
-# Hex port conversion without gawk strtonum
   if [ "$avail" -lt 131072 ]; then printf '0'; return 0; fi
-  # Avoid mksh per-byte read bug on /proc/sys
   n=$(( (avail - 262144) / 65536 ))
   [ "$n" -gt "$BENCH_SLOTS_MAX" ] && n="$BENCH_SLOTS_MAX"
   [ "$n" -lt 1 ] && n=1
@@ -2558,7 +2573,7 @@ bench_ports_free() { # <lo> <hi> -> 0 if no sockets exist in range
   for f in "${PROC_NET_ROOT:-/proc/net}"/tcp "${PROC_NET_ROOT:-/proc/net}"/tcp6 \
            "${PROC_NET_ROOT:-/proc/net}"/udp "${PROC_NET_ROOT:-/proc/net}"/udp6; do
     [ -r "$f" ] || continue
-  # Probe curl --local-port syntax support
+    # Hex port conversion without gawk strtonum
     n=$(awk -v lo="$1" -v hi="$2" '
       function hex(h,   i, c, v, r) {
         r = 0; h = toupper(h)
@@ -4023,7 +4038,12 @@ case "$1" in
   home-pause)
     rm -f "$HOME_OVERRIDE_FILE"
     sh "$SERVICE" home_check >/dev/null 2>&1
-    [ -f "$HOME_PAUSED_FILE" ] && echo OK || { echo "$(M 'Причины для паузы больше нет: телефон не в домашней сети и VPN выключен' 'Nothing to pause for: not on home Wi‑Fi and VPN is off')" >&2; exit 1; } ;;
+    if [ -f "$HOME_PAUSED_FILE" ]; then
+      echo OK
+    else
+      echo "$(M 'Причины для паузы больше нет: телефон не в домашней сети и VPN выключен' 'Nothing to pause for: not on home Wi‑Fi and VPN is off')" >&2
+      exit 1
+    fi ;;
   net-recheck) sh "$SERVICE" net_recheck >/dev/null 2>&1; echo OK ;;
   upload)
     f=$(upload_file "@up:$2") || { echo "Неверная метка" >&2; exit 1; }

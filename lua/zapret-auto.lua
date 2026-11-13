@@ -613,7 +613,7 @@ local orchestra_locked = {}
 local orchestra_blocked = {}
 
 local function orchestra_load_memory()
-	local mem_path = os.getenv("Z2K_ORCHESTRA_FILE") or "/data/adb/nfqws2/state/orchestra_memory.json"
+	local mem_path = os.getenv("Z2K_ORCHESTRA_FILE") or "/data/adb/modules/nfqws2-android/state/orchestra_memory.json"
 	local f = io.open(mem_path, "r")
 	if not f then return end
 	local content = f:read("*a")
