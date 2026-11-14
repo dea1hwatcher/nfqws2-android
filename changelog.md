@@ -1,3 +1,19 @@
+### Изменения в v3.0.2:
+
+RU
+
+- Исправлена ошибка «LUA SHUTDOWN»
+- Полная очистка данных модуля  при удалении через KernelSU / APatch / Magisk
+- Синхронизация с апстримом zapret2
+- Обновление стратегии hardcorp74 (правила для Ozon и YouTube)
+
+EN
+
+- Fixed "LUA SHUTDOWN" error 
+- Module data cleanup (/data/adb/nfqws2) upon uninstall via KernelSU / APatch / Magisk
+- Upstream sync with zapret2
+- Updated hardcorp74 strategy
+
 ### Изменения в v3.0.1:
 
 RU
