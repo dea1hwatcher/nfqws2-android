@@ -1,3 +1,17 @@
+### Изменения в v3.0.3:
+
+RU
+
+- Исправлено ложное отключение обхода при активных вызовах по Wi-Fi
+- Устранены задержки и буферизация YouTube
+- Синхронизация с апстримом zapret2
+
+EN
+
+- Fixed false bypass pause on active Wi-Fi Calling (VoWiFi IPsec interface)
+- Eliminated YouTube buffering stalls
+- Upstream sync with zapret2
+
 ### Изменения в v3.0.2:
 
 RU
