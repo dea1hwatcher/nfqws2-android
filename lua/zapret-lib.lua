@@ -179,6 +179,10 @@ function apply_execution_plan(desync, instance)
 	desync.arg = deepcopy(instance.arg)
 	-- no apply_arg_prefix here because it may refer non-existing blobs
 end
+-- extract instance identification and args from desync
+function get_desync_instance_id(desync)
+	return { func = desync.func, func_n = desync.func_n, func_instance = desync.func_instance, arg = deepcopy(desync.arg) }
+end
 -- produce resulting verdict from 2 verdicts
 function verdict_aggregate(v1, v2)
 	v1 = v1 or VERDICT_PASS
@@ -1093,10 +1097,10 @@ function apply_ip_id(desync, dis, ipid_options, def)
 		if mode == "seq" then
 			if desync.track and ipid_options.ip_id_conn then
 				dis.ip.ip_id = desync.track.lua_state.ip_id or dis.ip.ip_id
-				desync.track.lua_state.ip_id = dis.ip.ip_id + 1
+				desync.track.lua_state.ip_id = u16add(dis.ip.ip_id, 1)
 			else
 				dis.ip.ip_id = desync.ip_id or dis.ip.ip_id
-				desync.ip_id = dis.ip.ip_id + 1
+				desync.ip_id = u16add(dis.ip.ip_id, 1)
 			end
 		elseif mode == "zero" then
 			dis.ip.ip_id = 0
@@ -1613,7 +1617,11 @@ function tls_client_hello_mod(tls, options)
 		else
 			tdis.handshake[TLS_HANDSHAKE_TYPE_CLIENT].dis.ext={}
 		end
-		if not idx_sni then
+		if idx_sni then
+			if not tdis.handshake[TLS_HANDSHAKE_TYPE_CLIENT].dis.ext[idx_sni].dis then
+				tdis.handshake[TLS_HANDSHAKE_TYPE_CLIENT].dis.ext[idx_sni].dis = { list = {} }
+			end
+		else
 			DLOG("tls_client_hello_mod: no SNI extension. adding")
 			table.insert(tdis.handshake[TLS_HANDSHAKE_TYPE_CLIENT].dis.ext, 1, { type = TLS_EXT_SERVER_NAME, dis = { list = {} } } )
 			idx_sni = 1
@@ -1849,44 +1857,39 @@ function http_reconstruct_req(hdis, unixeol)
 end
 
 function dissect_url(url)
-	local p1,pb,pstart,pend
+	local p1,pstart,pend
 	local proto, creds, domain, port, uri
 	p1 = string.find(url,"[^ \t]")
 	if not p1 then return nil end
-	pb = p1
-	pstart,pend = string.find(url,"[a-z]+://",p1)
+	pstart,pend = string.find(url,"^[a-zA-Z][a-zA-Z0-9+.-]*://",p1)
 	if pend then
-		proto = string.sub(url,pstart,pend-3)
+		-- scheme present : http://...
+		proto = string.lower(string.sub(url,pstart,pend-3))
 		p1 = pend+1
+	else
+		-- no scheme. everything is URI
+		return { uri = string.sub(url,p1) }
 	end
-	pstart,pend = string.find(url,"[@/]",p1)
+	pstart,pend = string.find(url,"[@/?#]",p1)
 	if pend and string.sub(url,pstart,pend)=='@' then
 		creds = string.sub(url,p1,pend-1)
 		p1 = pend+1
+		pstart,pend = string.find(url,"[/?#]",p1)
 	end
-	pstart,pend = string.find(url,"[/?#]",p1)
 	if pend then
-		if pend==pb then
-			uri = string.sub(url,pb)
-		else
-			uri = string.sub(url,pend)
-			domain = string.sub(url,p1,pend-1)
-		end
+		uri = string.sub(url,pend)
+		domain = string.sub(url,p1,pend-1)
 	else
-		if proto then
-			domain = string.sub(url,p1)
-		else
-			uri = string.sub(url,p1)
-		end
+		domain = string.sub(url,p1)
 	end
 	if domain then
 		pstart,pend = string.find(domain,':',1,true)
 		if pend then
 			port = string.sub(domain, pend+1)
-			domain = string.sub(domain, 1, pstart-1)
+			domain = string.sub(domain, 1, pend-1)
 		end
 	end
-	return { proto = proto, creds = creds, domain = domain, port = port, uri=uri }
+	return { proto = proto, creds = creds, domain = domain, port = port, uri = uri }
 end
 
 function dissect_nld(domain, level)
@@ -2593,21 +2596,25 @@ function tls_dissect(tls, offset, partialOK)
 		tdis.rec[#tdis.rec+1] = { type = typ, name = tostring(TLS_RECORD_TYPE_NAMES[typ]), len = len, ver = u16(tls, off+1), encrypted = encrypted, data = string.sub(tls, off+5, off+5+len-1) }
 		if typ==TLS_RECORD_TYPE_CHANGE_CIPHER_SPEC then
 			encrypted = true
-		elseif typ==TLS_RECORD_TYPE_HANDSHAKE and not encrypted then
-			-- need 4 bytes for handshake type and 24-bit length
-			if (#tls-off+1)<9 then
+		elseif typ==TLS_RECORD_TYPE_HANDSHAKE and not encrypted and len>0 then
+			if (#tls-off+1)<len then
 				if not partialOK then return end
 				break
 			end
 			local htyp = tls_handshake_type(tls, off + 5)
 			tdis.rec[#tdis.rec].htype = htyp
+			tdis.rec[#tdis.rec].not_first = false
 			if not tdis.handshake then tdis.handshake = {} end
-			local hlen = tls_handshake_len(tls, off + 5)
 			tdis.handshake[htyp] = { type = htyp, name = TLS_HANDSHAKE_TYPE_NAMES[htyp], data = "" }
+			local hlen
 			-- reasm handshake if required
 			while true do
 				tdis.handshake[htyp].data = tdis.handshake[htyp].data .. string.sub(tls, off + 5, off + 5 + len - 1)
-				if #tdis.handshake[htyp].data >= hlen then
+				if not hlen and #tdis.handshake[htyp].data>=4 then
+					-- discovered hlen
+					hlen = tls_handshake_len(tdis.handshake[htyp].data)
+				end
+				if hlen and #tdis.handshake[htyp].data >= hlen then
 					-- reasm complete
 					break
 				end

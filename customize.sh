@@ -83,6 +83,10 @@ for src in "$MODPATH"/lists/*.list; do
     continue
   fi
 
+  if [ "$f" = "geoblock.list" ] && [ -f "$dst" ] && grep -q '^www\.google\.com$' "$dst" 2>/dev/null; then
+    sed -i '/^www\.google\.com$/d' "$dst" 2>/dev/null || true
+  fi
+
   if [ ! -f "$dst" ] || cmp -s "$src" "$dst"; then
     cp -f "$src" "$dst" || abort "! Failed to install $f"
     rm -f "$PEND/$f"

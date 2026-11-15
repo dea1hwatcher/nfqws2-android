@@ -179,7 +179,9 @@ start() {
 
   local ret=0
   _start_internal || ret=$?
-  [ "$own_lock" = "1" ] && svc_lock_release
+  if [ "$own_lock" = "1" ]; then
+    svc_lock_release
+  fi
   return $ret
 }
 
@@ -403,9 +405,13 @@ ensure_helper() {
 
 ensure_watchdog() {
   # Terminate stuck connections while smart mode is active
-  is_running && ensure_helper "$SK_PIDFILE" smartkill smart_active
+  if is_running; then
+    ensure_helper "$SK_PIDFILE" smartkill smart_active
+  fi
   ensure_helper "$WL_PIDFILE" wlwatch wl_wanted
-  watchers_wanted || return 0
+  if ! watchers_wanted; then
+    return 0
+  fi
   ensure_helper "$WD_PIDFILE" watchdog
   ensure_netwatch
 }

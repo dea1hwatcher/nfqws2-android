@@ -358,7 +358,8 @@ async function detectSpawn(){
   const r = await spawnRun("printf 'nfq_a\\n\\nnfq_b\\n'; (exit 3)", 3000);
   spawnOK = r.code === 3 && r.out === 'nfq_a\n\nnfq_b';
 }
-const ctlCmd = a => (LANG === 'en' ? 'NFQWS_LANG=en ' : '') + 'sh ' + q(CTL) + ' ' + a.map(q).join(' ');
+/* NFQWS_WEBUI=1: долгие применения (DNS) модуль делает в фоне, экран не ждёт */
+const ctlCmd = a => 'NFQWS_WEBUI=1 ' + (LANG === 'en' ? 'NFQWS_LANG=en ' : '') + 'sh ' + q(CTL) + ' ' + a.map(q).join(' ');
 /* Split long payloads (>100 KB) into chunks via ctl upload to avoid kernel E2BIG */
 const UPLOAD_CHUNK = 48000;
 async function uploadArgs(a){

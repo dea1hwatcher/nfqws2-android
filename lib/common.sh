@@ -2874,25 +2874,35 @@ smart_net_update() {
   return 0
 }
 
+vpn_ip_rules() { if [ -n "$NFQWS_IPRULE" ]; then cat "$NFQWS_IPRULE" 2>/dev/null; else ip rule 2>/dev/null; fi; }
+
 # ---------------------------------------------------------------- VPN pause
 # Returns 0 if an active VPN interface is up (tun+, wg+, awg+, vpn+, warp+, ppp+, tap+, tailscale+)
 vpn_active() {
-  local dev flags
+  local dev flags i rules="" got=0
   local n="${NFQWS_SYSNET:-/sys/class/net}"
   for dev in "$n"/tun* "$n"/wg* "$n"/awg* "$n"/vpn* "$n"/warp* "$n"/ppp* "$n"/ipsec* "$n"/tap* "$n"/tailscale*; do
     [ -d "$dev" ] || continue
     flags=$(cat "$dev/flags" 2>/dev/null)
-    if [ -n "$flags" ]; then
-      case "$flags" in
-        0x*) [ $(( flags & 1 )) -eq 1 ] && return 0 ;;
-        *)   [ $(( flags & 1 )) -eq 1 ] 2>/dev/null && return 0 ;;
-      esac
-    elif [ -f "$dev/operstate" ] && [ "$(cat "$dev/operstate" 2>/dev/null)" != "down" ]; then
-      return 0
-    fi
+    case "$flags" in
+      0x*) [ $(( flags & 1 )) -eq 1 ] || continue ;;
+      *)   [ $(( flags & 1 )) -eq 1 ] 2>/dev/null || continue ;;
+    esac
+    i=${dev##*/}
+    # VoWiFi (Wi-Fi Calling) creates ipsecX interface with uidrange 0-0 (system only).
+    # Real VPNs route application UIDs (>= 10000). Do not pause on VoWiFi.
+    case "$i" in ipsec*)
+      [ "$got" = 1 ] || { rules=$(vpn_ip_rules); got=1; }
+      printf '%s\n' "$rules" | awk -v i="$i" '
+        $NF == i && $(NF - 1) == "lookup" {
+          for (k = 1; k < NF; k++) if ($k == "uidrange") { split($(k + 1), r, "-"); if (r[2] + 0 >= 10000) f = 1 }
+        }
+        END { exit !f }' || continue ;;
+    esac
+    return 0
   done
   if has_ip; then
-    ip link show 2>/dev/null | grep -Eq ':[[:space:]]*(tun|wg|awg|vpn|warp|ppp|ipsec|tap|tailscale)[0-9]*[ :].*<[A-Z0-9_,]*UP' && return 0
+    ip link show 2>/dev/null | grep -Eq ':[[:space:]]*(tun|wg|awg|vpn|warp|ppp|tap|tailscale)[0-9]*[ :].*<[A-Z0-9_,]*UP' && return 0
   fi
   return 1
 }

@@ -1,7 +1,7 @@
 {
   "about": "Что взято из чужих проектов и до какой версии. Обновляется при каждом переносе изменений; читает трекер обновлений и тесты целостности.",
-  "updated": "2026-11-13",
-  "module": "nfqws2-android v3.0.1",
+  "updated": "2026-11-15",
+  "module": "nfqws2-android v3.0.2",
   "projects": [
     {
       "id": "zapret2",
@@ -9,10 +9,10 @@
       "repo": "bol-van/zapret2",
       "branch": "master",
       "track": "commits",
-      "ref": "47dcf17c91e1d3e8ca79743472097781b4f4c6e9",
-      "label": "master (post-v1.0.7)",
-      "date": "2026-11-12T16:11:53+03:00",
-      "use": "Бинарник nfqws2 (сборка в CI) — оптимизация desync_ctx_singleton, sec.c hardening, netns, darkmagic IPv6 frag fix; lua/zapret-lib.lua (u32add, wsize_rewrite, gzip_file, tls dissect/reconstruct) и lua/zapret-obfs.lua (synhide u32add)"
+      "ref": "3bae3d26d741a8f6e0bc4ea651656b4e1a438375",
+      "label": "master (post-v1.0.7 / 15.11)",
+      "date": "2026-11-14T18:00:00+03:00",
+      "use": "Бинарник nfqws2 (сборка в CI) — conntrack counter reinit, low-level checksum fixes; lua/zapret-lib.lua (u16add ip_id, RFC url dissect, dynamic hlen tls_dissect, get_desync_instance_id) и zapret-auto.lua (repeater instance rollback)"
     },
     {
       "id": "ext",
@@ -20,10 +20,10 @@
       "repo": "SpectaCoolAre/nfqws2-android-ext",
       "branch": "main",
       "track": "tags",
-      "ref": "0de781bbdd3ce888f98e16bb4b19da4570da233a",
-      "label": "v2.3.9-hotfix",
-      "date": "2026-11-12T18:41:00+03:00",
-      "use": "Умный режим SMART_CONF_VER=21 (варианты Google 47-49, pri=1,47,48, first=8), детекция зависания соединений (2с), smartstat телеметрия, ночное обучение, net_kbytes и dpi_ttl"
+      "ref": "433f58f9edbf32f0cab06f8aaadd280b177f74b4",
+      "label": "v2.4.0",
+      "date": "2026-11-14T21:00:00+03:00",
+      "use": "Умный режим SMART_CONF_VER=25 (Google 50, TLS 55-56, YouTube googlevideo SYN wssize 1:1, QUIC drop), VoWiFi/IPsec uidrange 0-0 vs VPN detection, geoblock www.google.com drop"
     },
     {
       "id": "nfqws-menu",
