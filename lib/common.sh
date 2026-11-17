@@ -140,8 +140,9 @@ log_msg() {
 
 sync_lists_and_blobs() {
   # builtin dir check avoids a fork on every netwatch tick and nfqws2-ctl call
-  [ -d "$LISTS_DIR" ] && [ -d "$LOG_DIR" ] && [ -d "$STATE_DIR" ] ||
+  if ! [ -d "$LISTS_DIR" ] || ! [ -d "$LOG_DIR" ] || ! [ -d "$STATE_DIR" ]; then
     mkdir -p "$LISTS_DIR" "$CONFDIR" "$LOG_DIR" "$STATE_DIR" "$CONFDIR/strategy-catalogs" "$CONFDIR/strategies/replaced" 2>/dev/null
+  fi
 
   for sdir in "$MODDIR/lists" "$MODDIR/defaults/lists"; do
     if [ -d "$sdir" ]; then
