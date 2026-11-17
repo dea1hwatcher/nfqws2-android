@@ -493,10 +493,12 @@ function renderStatus(force){
   if(!j || j.running == null){
     if($('stealth-mode')) $('stealth-mode').textContent = t('Скрытие: —');
     if($('stealth-pill')) $('stealth-pill').classList.remove('active');
+    if($('yt_patch')) $('yt_patch').checked = false;
     renderHeroActions(); renderParams({}, force); return;
   }
   const paused = !j.running && !!j.paused;
   if(j.strategy) currentStrategy = j.strategy;
+  if($('yt_patch')) $('yt_patch').checked = (j.youtube_patch === 1);
   if(typeof renderStrategyRow === 'function') renderStrategyRow();
   $('hero-status').className = 'hero' + (j.running ? ' running' : (paused ? ' paused' : ''));
   $('st').textContent = j.running ? t('Служба работает') : (paused ? t('Пауза') : t('Служба остановлена'));

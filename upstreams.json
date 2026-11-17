@@ -92,6 +92,17 @@
       "label": "v2.1.5",
       "date": "2026-08-24T01:43:48Z",
       "use": "Скрытие рут-модуля (SuSFS, KernelSU, APatch ksu_susfs), подмена hosts"
+    },
+    {
+      "id": "nfqws2-keenetic-selector",
+      "name": "nfqws2-keenetic-strategy-selector — автоматизация стратегий",
+      "repo": "Omn1z/nfqws2-keenetic-strategy-selector",
+      "branch": "main",
+      "track": "commits",
+      "ref": "main",
+      "label": "main",
+      "date": "2026-11-17T00:00:00Z",
+      "use": "Алгоритмы автоматического тестирования и сортировки стратегий обхода DPI по скорости и стабильности."
     }
   ]
 }

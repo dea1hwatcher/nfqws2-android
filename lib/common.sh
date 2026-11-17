@@ -857,7 +857,14 @@ get_strategy_packet_limits() { # [conffile]
 collect_capture_ports() { # <proto: tcp|udp> [args_string]
   local proto="${1:-tcp}" args="${2:-}"
   if [ -z "$args" ]; then
-    args="$NFQWS_ARGS $NFQWS_ARGS_QUIC $NFQWS_ARGS_UDP $NFQWS_ARGS_CUSTOM"
+  # YouTube patch args
+YOUTUBE_PATCH_ARGS="--filter-tcp=443 --filter-l7=tls --lua-desync=wssize:wsize=1:scale=1 --lua-desync=multidisorder:pos=midsld"
+
+# ... in arg construction ...
+  args="$NFQWS_ARGS $NFQWS_ARGS_QUIC $NFQWS_ARGS_UDP $NFQWS_ARGS_CUSTOM"
+  if [ "$(cat "$STATE_DIR/youtube_patch" 2>/dev/null)" = "1" ]; then
+      args="$args $YOUTUBE_PATCH_ARGS"
+  fi
   fi
   printf '%s\n' "$args" | awk -v proto="$proto" '
     BEGIN { pat = "--filter-" proto "=" }

@@ -173,6 +173,7 @@ cmd_json_status() {
   # Return only fields read by WebUI; strategy diagnostics handled via separate endpoints.
   local ver cur_strat paused pending f override=""
   ver=$(sed -n '/^version=/{s/^version=//p;q;}' "$MODDIR/module.prop")
+  local yt_patch=0; [ -f "$STATE_DIR/youtube_patch" ] && yt_patch=1
   if [ -f "$HOME_PAUSED_FILE" ]; then
     paused=$(cat "$HOME_PAUSED_FILE" 2>/dev/null)
   fi
@@ -231,7 +232,7 @@ cmd_json_status() {
 {"running":$run,"pid":"$pid","uptime":$uptime,"uptime_ms":$upms,"strategy":"$(json_str "$cur_strat")","version":"$(json_str "$ver")","mode":"$(json_str "$(current_mode)")",
 "limiter":"$(json_str "$(cat "$STATE_DIR/limiter" 2>/dev/null)")","pkt_limit_out":$PKT_LIMIT_OUT,"pkt_limit_in":$PKT_LIMIT_IN,"block_quic":$BLOCK_QUIC,"app_mode":"$(json_str "$APP_MODE")","autostart":$AUTOSTART,"watchdog":$WATCHDOG,"wakelock_on":$WAKELOCK,
 "ipv6":$IPV6_ENABLED,"log_level":$LOG_LEVEL,"qdrop":$qdrop,"queue":$NFQUEUE_NUM,"app_uids":$appn,
-"home_wifi":$HOME_WIFI,"enable_hotspot":$ENABLE_HOTSPOT,"net_strategy":$NET_STRATEGY,"vpn_pause":$VPN_PAUSE,"wl_pause":$WL_PAUSE,"meta_quic":$META_QUIC_REJECT,"calls_bypass":$CALLS_BYPASS,"tcp_mss_clamp":$TCP_MSS_CLAMP,"smart":$(smart_active && echo 1 || echo 0),"paused":"$(json_str "$paused")","home_override":"$(json_str "$override")","pending":"$(json_str "$pending")",
+"home_wifi":$HOME_WIFI,"enable_hotspot":$ENABLE_HOTSPOT,"net_strategy":$NET_STRATEGY,"vpn_pause":$VPN_PAUSE,"wl_pause":$WL_PAUSE,"meta_quic":$META_QUIC_REJECT,"calls_bypass":$CALLS_BYPASS,"tcp_mss_clamp":$TCP_MSS_CLAMP,"smart":$(smart_active && echo 1 || echo 0),"paused":"$(json_str "$paused")","home_override":"$(json_str "$override")","pending":"$(json_str "$pending")","youtube_patch":$yt_patch,
 "has_rollback":$has_rb,"stealth":{"mode":"$(json_str "$stealth_mode")","detail":"$(json_str "$stealth_detail")"},
 "counts":{"user":$cnt_user,"auto":$cnt_auto,"exclude":$cnt_excl,"ipset":$cnt_ipset,"ipset_exclude":$cnt_ipset_excl,"apps":$cnt_apps,"probe_hosts":$cnt_probe},
 "conn":{"ok":$strat_ok,"err":$strat_err}}
@@ -712,6 +713,12 @@ cmd_apply_apps() {
   else
     echo "Фильтр по приложениям ($APP_MODE): $n UID — правила применятся при запуске службы"
   fi
+}
+
+cmd_set_youtube_patch() {
+  [ "$1" = "1" ] && echo "1" > "$STATE_DIR/youtube_patch" || rm -f "$STATE_DIR/youtube_patch"
+  is_running && sh "$SERVICE" firewall_apply >/dev/null 2>&1
+  echo "Патч YouTube: $( [ -f "$STATE_DIR/youtube_patch" ] && echo "включен" || echo "выключен")"
 }
 
 cmd_import_add() { # $1 = name, $2 = path to content file
