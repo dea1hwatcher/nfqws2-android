@@ -2783,23 +2783,42 @@ active_ssid() {
 WL_FOREIGN="github.com www.microsoft.com www.apple.com www.wikipedia.org www.cloudflare.com"
 WL_ALLOWED="ya.ru vk.com www.gosuslugi.ru mail.ru"
 wl_probe() {
-  if ! command -v curl >/dev/null 2>&1; then
-    log_error "wl_probe: curl not found, carrier whitelist detection disabled"
+  local d="$STATE_DIR/wlprobe.$$" h f=0 w=0
+  local fetcher=""
+  
+  if command -v curl >/dev/null 2>&1; then
+    fetcher="curl"
+  elif command -v wget >/dev/null 2>&1; then
+    fetcher="wget"
+  elif command -v busybox >/dev/null 2>&1 && busybox --list | grep -q "wget"; then
+    fetcher="busybox wget"
+  elif command -v openssl >/dev/null 2>&1; then
+    fetcher="openssl"
+  else
+    log_error "wl_probe: No suitable tool (curl/wget/openssl) found, carrier whitelist detection disabled"
     echo unknown
     return 0
   fi
-  local d="$STATE_DIR/wlprobe.$$" h f=0 w=0
+
   rm -rf "$d"; mkdir -p "$d" || { echo unknown; return 0; }
-  for h in $WL_FOREIGN; do
-    ( curl -s -k -o /dev/null -m 6 --connect-timeout 5 -w '%{time_connect}' "https://$h/" > "$d/f.$h" 2>/dev/null ) &
-  done
-  for h in $WL_ALLOWED; do
-    ( curl -s -k -o /dev/null -m 6 --connect-timeout 5 -w '%{time_connect}' "https://$h/" > "$d/w.$h" 2>/dev/null ) &
-  done
+  
+  fetch_url() {
+    local host="$1" outfile="$2"
+    case "$fetcher" in
+      curl) curl -s -k -o /dev/null -m 6 --connect-timeout 5 -w '%{time_connect}' "https://$host/" > "$outfile" 2>/dev/null ;;
+      wget|*wget) wget -q -T 5 -t 1 --no-check-certificate -o /dev/null "https://$host/" && echo "0.1" > "$outfile" ;;
+      openssl) (echo -e "QUIT" | timeout 5 openssl s_client -connect "$host:443" -quiet 2>/dev/null >/dev/null) && echo "0.1" > "$outfile" ;;
+    esac
+  }
+
+  for h in $WL_FOREIGN; do fetch_url "$h" "$d/f.$h" & done
+  for h in $WL_ALLOWED; do fetch_url "$h" "$d/w.$h" & done
   wait
+  
   for h in "$d"/f.*; do awk '{ exit !($1 + 0 > 0) }' "$h" 2>/dev/null && f=$((f + 1)); done
   for h in "$d"/w.*; do awk '{ exit !($1 + 0 > 0) }' "$h" 2>/dev/null && w=$((w + 1)); done
   rm -rf "$d"
+  
   if [ "$f" -ge 2 ]; then echo normal
   elif [ "$f" = 0 ] && [ "$w" -ge 2 ]; then echo whitelist
   elif [ "$f" = 0 ] && [ "$w" = 0 ]; then echo offline
