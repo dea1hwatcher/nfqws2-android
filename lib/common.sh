@@ -2783,7 +2783,11 @@ active_ssid() {
 WL_FOREIGN="github.com www.microsoft.com www.apple.com www.wikipedia.org www.cloudflare.com"
 WL_ALLOWED="ya.ru vk.com www.gosuslugi.ru mail.ru"
 wl_probe() {
-  command -v curl >/dev/null 2>&1 || { echo unknown; return 0; }
+  if ! command -v curl >/dev/null 2>&1; then
+    log_error "wl_probe: curl not found, carrier whitelist detection disabled"
+    echo unknown
+    return 0
+  fi
   local d="$STATE_DIR/wlprobe.$$" h f=0 w=0
   rm -rf "$d"; mkdir -p "$d" || { echo unknown; return 0; }
   for h in $WL_FOREIGN; do
