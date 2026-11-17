@@ -35,7 +35,12 @@ start_failed() {
 # watchdog/netwatch: auto-restart, home Wi-Fi pause, VPN pause, whitelist pause, per-network strategies
 wl_wanted() { [ "$WL_PAUSE" = "1" ] && { [ -f "$DESIRED_FILE" ] || [ -f "$HOME_PAUSED_FILE" ]; }; }
 watchers_wanted() {
-  { [ -f "$DESIRED_FILE" ] && { [ "$WATCHDOG" = "1" ] || smart_active; }; } || [ "$HOME_WIFI" = "1" ] || [ "$NET_STRATEGY" = "1" ] || [ "$VPN_PAUSE" = "1" ] || [ "$WL_PAUSE" = "1" ];
+  if [ -f "$DESIRED_FILE" ]; then
+    if [ "$WATCHDOG" = "1" ] || smart_active; then
+      return 0
+    fi
+  fi
+  [ "$HOME_WIFI" = "1" ] || [ "$NET_STRATEGY" = "1" ] || [ "$VPN_PAUSE" = "1" ] || [ "$WL_PAUSE" = "1" ]
 }
 
 # One start/replace at a time. A lock older than two minutes was left by a

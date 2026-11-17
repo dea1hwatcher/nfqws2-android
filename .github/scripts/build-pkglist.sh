@@ -7,9 +7,14 @@ OUT="${1:-build/pkglist}"
 D8="$(command -v d8 || true)"
 if [ -z "$D8" ]; then
   SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
-  [ -n "$SDK" ] && D8="$(ls -d "$SDK"/build-tools/*/d8 2>/dev/null | sort -V | tail -n 1 || true)"
+  if [ -n "$SDK" ]; then
+    D8="$(ls -d "$SDK"/build-tools/*/d8 2>/dev/null | sort -V | tail -n 1 || true)"
+  fi
 fi
-[ -n "$D8" ] && [ -x "$D8" ] || { echo "d8 not found (Android SDK build-tools required)" >&2; exit 1; }
+if [ -z "$D8" ] || ! [ -x "$D8" ]; then
+  echo "d8 not found (Android SDK build-tools required)" >&2
+  exit 1
+fi
 
 rm -rf "$OUT"
 mkdir -p "$OUT/classes" "$OUT/dex"
