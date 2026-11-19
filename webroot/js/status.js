@@ -437,7 +437,7 @@ function switchRow(k, label, on){
 function ytPatchRow(on){
   const label = t('Патч для YouTube');
   const hint = t('Не включать без необходимости');
-  return '<label class="list-item two-line clickable state">' +
+  return '<label class="list-item two-line clickable state yt-patch-row">' +
     '<span class="li-text">' +
       '<span class="li-primary">' + esc(label) + '</span>' +
       '<span class="li-secondary">' + esc(hint) + '</span>' +

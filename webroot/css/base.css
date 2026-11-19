@@ -626,6 +626,12 @@ html[data-containers="true"] .list > .list-item:active {
   border-end-end-radius: 20px;
 }
 .list-item.two-line { min-height: 72px; }
+/* On narrow screens the YouTube warning must stay visible on one line: with
+   wider system fonts it used to wrap and grow the row to 82px on CI. */
+@media (max-width: 380px) {
+  .list-item.yt-patch-row { gap: 12px; }
+  .list-item.yt-patch-row .li-secondary { font-size: var(--ts-body-small); line-height: var(--lh-body-small); }
+}
 .list-item.clickable, .list-item[role="button"] { cursor: pointer; }
 .list-item .li-icon { width: 40px; height: 40px; flex: none; border-radius: var(--shape-full);
   background: var(--md-sys-color-primary-container); color: var(--md-sys-color-on-primary-container);
