@@ -1,3 +1,17 @@
+### Изменения в v3.1.0:
+
+RU
+
+- Добавлен Патч для YouTube —  отдельный режим обработки при особо тяжелых блокировках. Не включать без  необходимости!
+- 34 новые стратегии (Flowseal 1.10.4,), обновлена alt11 с фиксом для Discord,
+- Прочие исправления и улучшения
+
+EN
+
+- Added YouTube patch: a separate profile for heavy blocks of TSPU. Don`t turn on unnecessary
+- 34 new strategies (Flowseal 1.10.4), updated alt11 with Discord fix.
+- Other fixes and enchantments
+
 ### Изменения в v3.0.3:
 
 RU
