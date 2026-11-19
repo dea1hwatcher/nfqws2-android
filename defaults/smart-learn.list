@@ -1,75 +1,64 @@
-# Фоновое обучение умного режима: раз в две минуты, пока он работает, модуль
-# открывает один случайный сайт отсюда, из «Проверки доступности» и ваших
-# user.list и auto.list. Подобраны популярные сайты, которые в России
-# заблокированы или замедляются, и сайты за Cloudflare, CloudFront, Fastly и
-# на хостингах — чтобы умный режим видел каждый вид блокировки, а не только
-# то, что открываете вы. Формат как у probe_hosts.list: host или host/путь.
-
-# Видео и музыка
-www.youtube.com
+youtube.com
 m.youtube.com
-i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg
+i.ytimg.com
 yt3.ggpht.com
-www.twitch.tv
+twitch.tv
 static-cdn.jtvnw.net
 vimeo.com
-www.dailymotion.com
+dailymotion.com
 soundcloud.com
 a-v2.sndcdn.com
 open.spotify.com
-www.deezer.com
+deezer.com
 bandcamp.com
-www.nicovideo.jp
+nicovideo.jp
 
-# Соцсети и мессенджеры
-www.instagram.com
+instagram.com
 static.cdninstagram.com
-www.facebook.com
+facebook.com
 static.xx.fbcdn.net
-www.messenger.com
-www.threads.net
+messenger.com
+threads.net
 x.com
 abs.twimg.com
 pbs.twimg.com
-www.linkedin.com
+linkedin.com
 static.licdn.com
 discord.com
 cdn.discordapp.com
 media.discordapp.net
-www.reddit.com
-www.redditstatic.com
+reddit.com
+redditstatic.com
 i.redd.it
-www.tumblr.com
-www.pinterest.com
+tumblr.com
+pinterest.com
 i.pinimg.com
 bsky.app
 mastodon.social
 web.telegram.org
 signal.org
-www.viber.com
-www.snapchat.com
+viber.com
+snapchat.com
 
-# Новости и знания
 meduza.io
-www.bbc.com
-www.dw.com
-www.svoboda.org
-www.currenttime.tv
-www.euronews.com
-www.themoscowtimes.com
+bbc.com
+dw.com
+svoboda.org
+currenttime.tv
+euronews.com
+themoscowtimes.com
 novayagazeta.eu
 holod.media
-www.rferl.org
-www.nytimes.com
-www.theguardian.com
-www.wikipedia.org
+rferl.org
+nytimes.com
+theguardian.com
+wikipedia.org
 medium.com
 substack.com
-www.quora.com
+quora.com
 archive.org
-www.patreon.com
+patreon.com
 
-# Разработка и хостинги
 github.com
 raw.githubusercontent.com
 objects.githubusercontent.com
@@ -77,81 +66,77 @@ gitlab.com
 codeberg.org
 hub.docker.com
 registry.npmjs.org
-www.npmjs.com
+npmjs.com
 pypi.org
 files.pythonhosted.org
 stackoverflow.com
-www.jetbrains.com
+jetbrains.com
 developer.android.com
-www.digitalocean.com
-www.linode.com
-www.hetzner.com
-www.ovhcloud.com
-www.vultr.com
-www.netlify.com
+digitalocean.com
+linode.com
+hetzner.com
+ovhcloud.com
+vultr.com
+netlify.com
 vercel.com
 pages.cloudflare.com
-www.fastly.com
+fastly.com
 aws.amazon.com
 d1.awsstatic.com
 
-# Сервисы, ИИ и софт
-www.canva.com
-www.figma.com
-www.notion.so
-www.grammarly.com
-www.deepl.com
+canva.com
+figma.com
+notion.so
+grammarly.com
+deepl.com
 chatgpt.com
 claude.ai
-www.perplexity.ai
-www.intel.com
-www.amd.com
-www.nvidia.com
-www.dell.com
-www.hp.com
-www.microsoft.com
-www.office.com
-www.dropbox.com
+perplexity.ai
+intel.com
+amd.com
+nvidia.com
+dell.com
+hp.com
+microsoft.com
+office.com
+dropbox.com
 mega.io
-www.coursera.org
-www.udemy.com
-www.duolingo.com
-www.apkmirror.com
+coursera.org
+udemy.com
+duolingo.com
+apkmirror.com
 f-droid.org
-www.xda-developers.com
+xda-developers.com
 
-# VPN, приватность и инструменты
-www.torproject.org
+torproject.org
 protonvpn.com
 proton.me
 amnezia.org
 mullvad.net
-www.privateinternetaccess.com
+privateinternetaccess.com
 browserleaks.com
 ntc.party
 
-# Игры
 store.steampowered.com
 steamcommunity.com
-www.epicgames.com
-www.ea.com
-www.roblox.com
-www.chess.com
-www.nexusmods.com
+epicgames.com
+ea.com
+roblox.com
+chess.com
+nexusmods.com
 
-# Покупки и прочее
-www.ebay.com
-www.etsy.com
-www.aliexpress.com
-www.booking.com
-www.airbnb.com
-www.tripadvisor.com
-www.imdb.com
-www.goodreads.com
+ebay.com
+etsy.com
+aliexpress.com
+booking.com
+airbnb.com
+tripadvisor.com
+imdb.com
+goodreads.com
 
-# Части YouTube кроме видео, хостинги с обрывом на 16 КБ и сайты за Cloudflare
+
 returnyoutubedislikeapi.com/votes?videoId=dQw4w9WgXcQ
 sponsor.ajay.app/api/skipSegments?videoID=dQw4w9WgXcQ
 youtubei.googleapis.com
-www.youtube.com/s/desktop/
+youtube.com/s/desktop/
 rutracker.org

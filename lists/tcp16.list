@@ -1,4 +1,3 @@
-# tcp16.list — цели для проверки TCP 16-20KB блокировок (DPI Detector, пункт 3)
 # Формат: provider|ip|port|sni
 Hetzner_HE-01|91.98.156.82|443|
 Hetzner_HE-02|46.62.154.37|443|

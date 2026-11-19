@@ -1,6 +1,5 @@
-# probe_cdn.list — 36 CDN test hosts across 16 providers (Zapret-2-GUI)
 # Akamai
-www.mobil.com.se
+mobil.com.se
 cdn.apple-mapkit.com
 # AWS
 amplifon.com
@@ -21,7 +20,7 @@ app.thecuriositylibrary.com
 admin.survey54.com
 # Fastly
 ssl.p.jwpcdn.com
-www.jetblue.com
+jetblue.com
 # FranTech / BuyVM
 buyvm.net
 dmvideo.download
@@ -44,10 +43,10 @@ store.takeda.com
 sh00065.hostgator.com
 ged.com.sg
 # OVH
-www.adwin.fr
-www.emca.be
+adwin.fr
+emca.be
 # Scaleway
-www.velivole.fr
+velivole.fr
 # Vultr
 askit-app.de
 us.rudder.qntmnet.com

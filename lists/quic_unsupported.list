@@ -1,39 +1,3 @@
-# Hosts a browser never reaches over HTTP/3 — their endpoint advertises none — so
-# test 2 does not probe their QUIC column: the cell prints a dash, the row keeps
-# its TCP verdicts, and the summary counts the QUIC column out of the hosts that
-# can answer it instead of the whole list.
-#
-# The rule is what a browser is told: no `Alt-Svc` naming h3, and no `alpn=h3` in
-# the host's HTTPS record, with http3check.net agreeing on "no HTTP/3"
-# (`scripts/quic/online_h3.py`; run 2026-10-02). A QUIC handshake answering is not
-# support: `intodns.ai` read one as support and was wrong for three hosts that
-# four other checkers and a browser agree serve no HTTP/3, so that column is gone.
-# A host either source is silent about stays probed — silence is not an answer,
-# and the question this column asks is exactly that difference.
-#
-# Note, recorded in scripts/quic/README.md: five of these hosts
-# (aws.amazon.com, soundcloud.com, vk.ru, www.currenttime.tv, www.svoboda.org)
-# do answer a handshake when one is forced on them — they just never advertise
-# HTTP/3, and a browser that is never told does not use it. They stay listed.
-#
-# The declared block below is the RU preset (`domains-ru.txt`) listed whole, and
-# it is a decision rather than a measurement: a host with no HTTP/3 endpoint
-# answers an Initial with silence, the column reads that silence as `TIMEOUT`,
-# and on this preset that answer stopped meaning anything — it is what such a
-# host is supposed to say. Two of the preset's hosts keep their probe
-# (ozon.ru, ya.ru): they do answer QUIC. Two more that did — 4pda.to and
-# ukdevilz.com — left the preset on 2026-10-15 with the hosts reached only behind
-# Cloudflare's edge, and their rows here are simply unused.
-#
-# `python scripts/quic/online_h3.py` regenerates the *measured* block only — it
-# writes target/validation/online-h3.txt, and its rows are what that block was
-# curated from; the declared block is not its output and a fresh run does not
-# replace it.
-#
-# One host per line, `#` starts a comment, the host is matched whole
-# (case-insensitive) against the domain's host part.
-
-# Measured: neither source names h3 for these.
 aws.amazon.com
 browserleaks.com
 gateway.discord.gg
@@ -42,14 +6,14 @@ protonvpn.com
 shikimori.io
 soundcloud.com
 vk.ru
-www.canva.com
-www.cdn77.com
-www.coursera.org
-www.currenttime.tv
-www.linuxserver.io
-www.svoboda.org
-www.themoscowtimes.com
-www.torproject.org
+canva.com
+cdn77.com
+coursera.org
+currenttime.tv
+linuxserver.io
+svoboda.org
+themoscowtimes.com
+torproject.org
 x.com
 
 # Declared: the RU preset, TCP/TLS only (the two that answer QUIC are absent).
@@ -148,5 +112,5 @@ vseinstrumenti.ru
 wildberries.ru
 wink.ru
 woman.ru
-www.detmir.ru
-www.nalog.gov.ru
+detmir.ru
+nalog.gov.ru

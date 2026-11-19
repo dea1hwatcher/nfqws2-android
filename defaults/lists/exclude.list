@@ -265,9 +265,6 @@ telegramusercontent.com
 telesco.pe
 telegram-cdn.org
 instanttelegram.com
-
-# Push-уведомления Android (FCM): соединение с mtalk.google.com живёт часами, и
-# вмешательство обхода его рвёт — уведомления приходят пачкой
 mtalk.google.com
 mtalk4.google.com
 alt1-mtalk.google.com

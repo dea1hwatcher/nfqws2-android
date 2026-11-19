@@ -1,6 +1,4 @@
-# probe_bench.list — контрольные домены для сравнительного автоподбора стратегий
-# Охватывают ключевые типы DPI-фильтрации (YouTube, Discord, X, Instagram, RuTracker, Meduza, Tor, Cloudflare)
-www.youtube.com
+youtube.com
 googlevideo.com
 discord.com
 gateway.discord.gg
@@ -8,5 +6,5 @@ x.com
 instagram.com
 rutracker.org
 meduza.io
-www.torproject.org
+torproject.org
 cloudflare.com

@@ -1,4 +1,3 @@
-# probe_dns.list — DNS-серверы для проверки доступности и перехвата (DPI Detector Rust)
 # Формат: name|ip|doh_url
 AdGuard|94.140.14.14|https://dns.adguard-dns.com/dns-query
 AdGuard|94.140.15.15|https://dns.adguard-dns.com/dns-query
