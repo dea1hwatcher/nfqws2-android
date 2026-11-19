@@ -315,6 +315,23 @@ assert_not_contains "$args" "#" "without the comments of its file"
 pre=${args%%--filter-udp=590-1400*}
 assert_not_contains "$pre" "--new" "before every strategy profile"
 
+section "_startup_args: no list twice in one profile"
+assert_eq "--a=1 --hostlist-exclude=x.list --ipset=i.list --new --hostlist-exclude=x.list" \
+  "$(printf '%s' '--a=1 --hostlist-exclude=x.list --ipset=i.list --hostlist-exclude=x.list --ipset=i.list --new --hostlist-exclude=x.list' | lists_dedup)" \
+  "a repeat inside a profile is dropped, the next profile may list it again"
+{
+  printf 'MODE_LIST="--hostlist=%s/user.list --hostlist-exclude=%s/exclude.list"\n' "$LISTS_DIR" "$LISTS_DIR"
+  printf 'MODE_ALL="--hostlist-exclude=%s/exclude.list"\n' "$LISTS_DIR"
+  printf 'MODE_AUTO="$MODE_LIST --hostlist-auto=%s/auto.list $MODE_ALL"\n' "$LISTS_DIR"
+  printf 'NFQWS_EXTRA_ARGS="$MODE_AUTO"\n'
+} >> "$CONFFILE"
+reload_conf
+dups=$(_startup_args | tr ' ' '\n' | awk '/^--new$/ { for (k in s) delete s[k]; next } /^--(hostlist|hostlist-exclude|hostlist-auto|ipset|ipset-exclude)=/ { if ($0 in s) print; s[$0] = 1 }')
+assert_eq "" "$dups" "a menu-style auto mode: no list appears twice in one profile"
+assert_contains "$(_startup_args)" "--hostlist=$LISTS_DIR/user.list" "the list itself stays"
+conf_reset
+reload_conf
+
 section "port_list_add"
 assert_eq "443,5349,19294:19344,49152:65535,590:1400,3478:3482" \
   "$(port_list_add 443,590:600,1400,3478:3481,5349,19294:19344,49152:65535 590:1400 3478:3482)" \

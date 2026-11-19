@@ -753,6 +753,26 @@ stat_inject() {
   '
 }
 
+# One list twice in the same nfqws2 profile (between --new) is rejected:
+# "failed to register hostlist". Menu-style MODE_AUTO repeats the exclusions
+# from MODE_LIST, and imported configs can add a list that is already there.
+# Drop the repeats; the next profile may list the same files again.
+lists_dedup() {
+  awk '{
+    out = ""
+    for (i = 1; i <= NF; i++) {
+      t = $i
+      if (t == "--new") { for (k in seen) delete seen[k] }
+      else if (t ~ /^--(hostlist|hostlist-exclude|hostlist-auto|ipset|ipset-exclude)=/) {
+        if (t in seen) continue
+        seen[t] = 1
+      }
+      out = out (out == "" ? "" : " ") t
+    }
+    printf "%s%s", (NR > 1 ? "\n" : ""), out
+  }'
+}
+
 _startup_args() {
   local base tcp quic udp extra custom ipset
   base=$(norm_args "$NFQWS_BASE_ARGS")
@@ -805,7 +825,7 @@ _startup_args() {
   [ -n "$ipset" ] && args="$args $tcp $ipset --ipset-ip=0.0.0.0 --new"
   args="$args $tcp $extra"
 
-  printf '%s' "$args" | tr -s ' ' | stat_inject | ttl_inject
+  printf '%s' "$args" | tr -s ' ' | lists_dedup | stat_inject | ttl_inject
 }
 
 dry_run_check() { # <args...>
@@ -2825,7 +2845,9 @@ wl_probe() {
   fetch_url() {
     local host="$1" outfile="$2"
     case "$fetcher" in
-      curl) curl -s -k -o /dev/null -m 6 --connect-timeout 5 -w '%{time_connect}' "https://$host/" > "$outfile" 2>/dev/null ;;
+      # TLS handshake, not TCP connect: some carriers let TCP through to any
+      # host and cut only TLS, so time_connect called a whitelist "normal".
+      curl) curl -s -k -o /dev/null -m 8 --connect-timeout 5 -w '%{time_appconnect}' "https://$host/" > "$outfile" 2>/dev/null ;;
       wget|*wget) wget -q -T 5 -t 1 --no-check-certificate -o /dev/null "https://$host/" && echo "0.1" > "$outfile" ;;
       openssl) (echo -e "QUIT" | timeout 5 openssl s_client -connect "$host:443" -quiet 2>/dev/null >/dev/null) && echo "0.1" > "$outfile" ;;
     esac
@@ -2847,9 +2869,17 @@ wl_probe() {
 
 on_wifi() {
   local d n="${NFQWS_SYSNET:-/sys/class/net}"
+  local s up=0 dev
   for d in "$n"/wlan* "$n"/swlan*; do
-    [ "$(cat "$d/operstate" 2>/dev/null)" = up ] && return 0
+    [ -r "$d/operstate" ] || continue
+    s=$(cat "$d/operstate" 2>/dev/null)
+    [ "$s" = up ] && { up=1; break; }
   done
+  [ "$up" = 1 ] || return 1
+  # A phone sharing mobile data has wlan* up too; Wi-Fi means the traffic
+  # actually leaves through wlan. No route: keep the old interface-based answer.
+  dev=$(ip route get 1.1.1.1 2>/dev/null | awk '{for (i = 1; i < NF; i++) if ($i == "dev") { print $(i + 1); exit }}')
+  case "$dev" in ''|wlan*|swlan*) return 0 ;; esac
   return 1
 }
 

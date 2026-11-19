@@ -525,7 +525,9 @@ wlwatch() {
     net=$(cat "$SMART_NET_FILE" 2>/dev/null)
     [ "$net" != "$last" ] && { last="$net"; next=0; pend=0; }
     [ "$up" -ge "$next" ] || continue
-    if on_wifi || vpn_active; then
+    # VPN tunnels the traffic elsewhere; Wi-Fi still needs the check (a phone
+    # sharing mobile data brings the carrier whitelist onto the Wi-Fi network).
+    if vpn_active; then
       [ -f "$WL_FILE" ] && { rm -f "$WL_FILE"; sh "$MODDIR/service.sh" home_check >/dev/null 2>&1; }
       pend=0; next=$((up + 60)); continue
     fi
@@ -567,6 +569,16 @@ conf_refresh() {
 ensure_netwatch() {
   watchers_wanted || return 0
   ensure_helper "$WN_PIDFILE" netwatch has_ip || return 0
+}
+
+# Watchdog and netwatch revive each other: a killed helper otherwise stayed
+# dead until a manual restart, so leaving home no longer lifted the pause.
+watcher_revive() { # <netwatch|watchdog>
+  case "$1" in
+    netwatch) ensure_helper "$WN_PIDFILE" netwatch has_ip && log_msg "watchdog: netwatch was down, restarted" ;;
+    watchdog) ensure_helper "$WD_PIDFILE" watchdog && log_msg "netwatch: watchdog was down, restarted" ;;
+  esac
+  return 0
 }
 
 # Network signature: outgoing interface dev and VPN/Wi-Fi flags.
@@ -648,6 +660,7 @@ netwatch() {
     fi
     conf_refresh
     watchers_wanted || break
+    watcher_revive watchdog
     if [ "$wake" = 1 ]; then
       while [ "$wake" = 1 ]; do wake=0; sleep 1; done
       netwatch_apply "ip monitor"
@@ -701,6 +714,8 @@ watchdog() {
     load_conf >/dev/null 2>&1
     watchers_wanted || break
     tick=$((tick + 1))
+    # roughly once a minute (every 5 minutes while idle): is netwatch alive?
+    [ $((tick % 3)) -eq 0 ] && watcher_revive netwatch
 
     # спячка: если трафик за тик меньше IDLE_KBPS КБ/с — телефон в простое
     read -r up _ < /proc/uptime; up=${up%.*}
