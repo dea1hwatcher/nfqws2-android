@@ -177,6 +177,21 @@ done
 [ "$missing_blobs" = 0 ] && _ok "every referenced blob exists directly in blobs/"
 [ "$missing_lists" = 0 ] && _ok "every referenced list exists"
 
+# nfqws2 rejects a hostlist registered twice in one profile: RegisterHostlist_
+# checks the profile's collection first. MODE_AUTO used to append $MODE_ALL to
+# $MODE_LIST even when MODE_LIST already carried the same --hostlist-exclude
+# files, so every strategy ported from nfqws-menu-openwrt failed validation
+# with "failed to register hostlist .../exclude.list".
+duplicate_modes=$(awk '
+  FILENAME != prev { if (list && auto) print prev; prev=FILENAME; list=0; auto=0; inlist=0 }
+  /^MODE_LIST="/ { inlist=1 }
+  /^MODE_ALL="/ { inlist=0 }
+  inlist && /--hostlist-exclude=/ { list=1 }
+  /^MODE_AUTO="/ && /\$MODE_ALL/ { auto=1 }
+  END { if (list && auto) print prev }
+' "$REPO_DIR"/strategies/*.conf)
+assert_eq "" "$duplicate_modes" "AUTO mode never repeats a MODE_LIST exclude hostlist"
+
 # ── rewriting keenetic paths has one definition ────────────────────────────────
 section "keenetic path rewriting"
 
