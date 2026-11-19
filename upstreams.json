@@ -1,7 +1,7 @@
 {
   "about": "Что взято из чужих проектов и до какой версии. Обновляется при каждом переносе изменений; читает трекер обновлений и тесты целостности.",
-  "updated": "2026-11-15",
-  "module": "nfqws2-android v3.0.2",
+  "updated": "2026-11-19",
+  "module": "nfqws2-android v3.0.3",
   "projects": [
     {
       "id": "zapret2",
@@ -32,7 +32,7 @@
       "branch": "main",
       "path": "strategies",
       "track": "commits",
-      "ref": "9cf5d00a89d7fafe2d68962ffbf725b8bb896898",
+      "ref": "9cf5d00832bf4960aa88dfb632ada8ebd2ac42d2",
       "label": "PR #36 (12.11)",
       "date": "2026-11-12T20:23:01Z",
       "use": "Свежая ревизия hardcorp74.conf (ozon.ru, wide-youtube.l.google.com со Sochi Park блобом и multidisorder, repeats=6, синхронизация OVH/Vultr)"
@@ -55,7 +55,7 @@
       "branch": "main",
       "path": "files/Zapret2/zapret2",
       "track": "commits",
-      "ref": "743a2b535d2524a87a6d85913e2f5b61eefec11d",
+      "ref": "743a2b515dfef2d6697896818241d483e552db9e",
       "label": "v5.069",
       "date": "2026-11-12T19:22:07Z",
       "use": "Кандидаты умного режима для Google (43-46), списки исключений"
@@ -99,10 +99,22 @@
       "repo": "Omn1z/nfqws2-keenetic-strategy-selector",
       "branch": "main",
       "track": "commits",
-      "ref": "main",
-      "label": "main",
-      "date": "2026-11-17T00:00:00Z",
+      "ref": "bae561b2c15e0f00273827e36fdcf771f93cda0d",
+      "label": "bae561b (18.11)",
+      "date": "2026-11-18T11:44:16+03:00",
       "use": "Алгоритмы автоматического тестирования и сортировки стратегий обхода DPI по скорости и стабильности."
+    },
+    {
+      "id": "nfqws-menu-openwrt",
+      "name": "nfqws-menu-openwrt — стратегии Flowseal / kinlay0 для OpenWrt",
+      "repo": "dea1hwatcher/nfqws-menu-openwrt",
+      "branch": "main",
+      "path": "strategies/nfqws2",
+      "track": "commits",
+      "ref": "415c5f3dcf307725b4358e97472ece964cf8c5ae",
+      "label": "v0.2.4 (18.11)",
+      "date": "2026-11-18T20:44:01Z",
+      "use": "34 новые .conf (Flowseal 1.10.4 и порты kinlay0 v1.1.5), 6 блобов и 4 hostlist-файла. Пути /etc/nfqws2 переведены в переменные модуля; 36 одноимённых конфигов и 8 уже перенесённых ранее стратегий не тронуты."
     }
   ]
 }

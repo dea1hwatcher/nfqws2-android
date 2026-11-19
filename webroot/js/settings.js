@@ -1,5 +1,5 @@
 /* nfqws2 WebUI - settings, home Wi-Fi, backup */
-// Template switch element ids: id="sw-net-strat" id="sw-vpn-pause" id="animations-toggle"
+// Template switch element ids: id="sw-net-strat" id="animations-toggle"
 
 function settingsRow(o){
   if(o.sw){
@@ -26,8 +26,7 @@ function renderSettings(force){
   const groups = [
     ['Работа', [
       {icon: 'home', title: 'Домашняя Wi‑Fi', on: "navigate('wifi')", chevron: true},
-      {icon: 'refresh', title: 'Стратегии по сетям', sw: true, checked: S.net_strategy == 1, id: 'sw-net-strat', on: 'toggleNetStrategy(this.checked)'},
-      {icon: 'shield', title: 'Пауза при VPN', sw: true, checked: S.vpn_pause == 1, id: 'sw-vpn-pause', on: 'toggleVpnPause(this.checked)'}
+      {icon: 'refresh', title: 'Стратегии по сетям', sw: true, checked: S.net_strategy == 1, id: 'sw-net-strat', on: 'toggleNetStrategy(this.checked)'}
     ]],
     ['Инструменты', [
       {icon: 'auto', title: 'Умный режим', on: "navigate('smart')", chevron: true},
@@ -51,9 +50,8 @@ function renderSettings(force){
     ]]
   ];
   const body = $('settings-body');
-  if(!force && body && $('sw-net-strat') && $('sw-vpn-pause')){
+  if(!force && body && $('sw-net-strat')){
     const ns = $('sw-net-strat'); if(ns) ns.checked = (S.net_strategy == 1);
-    const vp = $('sw-vpn-pause'); if(vp) vp.checked = (S.vpn_pause == 1);
     const as = $('animations-toggle'); if(as) as.checked = isAnimationsDisabled();
     return;
   }
@@ -314,19 +312,6 @@ async function toggleNetStrategy(checked){
     if(sw) sw.checked = (S.net_strategy == 1);
   } else {
     S.net_strategy = on ? 1 : 0;
-    stat();
-  }
-}
-
-async function toggleVpnPause(checked){
-  const on = typeof checked === 'boolean' ? checked : (S.vpn_pause != 1);
-  const r = await withBusy(['set', 'VPN_PAUSE', on ? '1' : '0'], 40000);
-  if(r.code){
-    toast(errText(r, 'Не удалось переключить паузу при VPN'));
-    const sw = $('sw-vpn-pause');
-    if(sw) sw.checked = (S.vpn_pause == 1);
-  } else {
-    S.vpn_pause = on ? 1 : 0;
     stat();
   }
 }

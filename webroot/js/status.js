@@ -386,6 +386,7 @@ async function reapplyStealth(){
 /* Toggle rows stay single-line; service switches live in the developer block */
 const SW = [
   ['AUTOSTART', 'Автозапуск при загрузке', 'autostart'],
+  ['VPN_PAUSE', 'Пауза при VPN', 'vpn_pause'],
   ['IPV6_ENABLED', 'Обрабатывать IPv6', 'ipv6'],
   ['BLOCK_QUIC', 'Блокировать QUIC', 'block_quic'],
   ['ENABLE_HOTSPOT', 'Точка доступа с nfqws2', 'enable_hotspot']
@@ -430,6 +431,22 @@ function switchRow(k, label, on){
       (on ? ' checked' : '') + ' onchange="setp(' + jsArg(k) + ', this.checked ? 1 : 0)"></span>' +
   '</label>';
 }
+/* «Патч для YouTube» is a state toggle, not a config key: it appends a profile
+   to NFQWS_ARGS_CUSTOM on the backend. Two-line row by owner's request: the
+   warning is part of the row, not a tooltip. */
+function ytPatchRow(on){
+  const label = t('Патч для YouTube');
+  const hint = t('Не включать без необходимости');
+  return '<label class="list-item two-line clickable state">' +
+    '<span class="li-text">' +
+      '<span class="li-primary">' + esc(label) + '</span>' +
+      '<span class="li-secondary">' + esc(hint) + '</span>' +
+    '</span>' +
+    '<span class="li-trail"><input type="checkbox" id="yt_patch" class="switch" role="switch"' +
+      ' aria-label="' + esc(label + ' — ' + hint) + '"' +
+      (on ? ' checked' : '') + ' onchange="setYtPatch(this.checked)"></span>' +
+  '</label>';
+}
 function renderDevRows(j){
   j = j || {};
   const lim = LIMITS.map(([k, label, jk]) =>
@@ -449,7 +466,7 @@ function renderParams(j, force){
   const swContainer = $('sws');
   if(swContainer){
     const firstSw = $('sw-' + SW[0][0].toLowerCase().replace(/_/g, '-'));
-    if(!force && firstSw && swContainer.children && swContainer.children.length === SW.length){
+    if(!force && firstSw && swContainer.children && swContainer.children.length === (SW.length + 1)){
       for(const [k, label, jk] of SW){
         const el = $('sw-' + k.toLowerCase().replace(/_/g, '-'));
         if(el){
@@ -457,8 +474,14 @@ function renderParams(j, force){
           if(el.checked !== on) el.checked = on;
         }
       }
+      const yt = $('yt_patch');
+      if(yt){
+        const on = (j.youtube_patch == 1);
+        if(yt.checked !== on) yt.checked = on;
+      }
     } else {
-      setHTML('sws', SW.map(([k, label, jk]) => switchRow(k, label, j[jk] == 1)).join(''), false);
+      setHTML('sws', SW.map(([k, label, jk]) => switchRow(k, label, j[jk] == 1)).join('') +
+        ytPatchRow(j.youtube_patch == 1), false);
     }
   }
 
@@ -493,12 +516,10 @@ function renderStatus(force){
   if(!j || j.running == null){
     if($('stealth-mode')) $('stealth-mode').textContent = t('Скрытие: —');
     if($('stealth-pill')) $('stealth-pill').classList.remove('active');
-    if($('yt_patch')) $('yt_patch').checked = false;
     renderHeroActions(); renderParams({}, force); return;
   }
   const paused = !j.running && !!j.paused;
   if(j.strategy) currentStrategy = j.strategy;
-  if($('yt_patch')) $('yt_patch').checked = (j.youtube_patch === 1);
   if(typeof renderStrategyRow === 'function') renderStrategyRow();
   $('hero-status').className = 'hero' + (j.running ? ' running' : (paused ? ' paused' : ''));
   $('st').textContent = j.running ? t('Служба работает') : (paused ? t('Пауза') : t('Служба остановлена'));
@@ -587,6 +608,14 @@ async function setp(k, v){
   toast(r.code ? errText(r, 'Не удалось сохранить') : (needRestart ? t('Применится после перезапуска службы') : t('Сохранено')),
     needRestart ? {label: t('Перезапустить'), fn: restartSvc} : null);
   stat();
+}
+/* The backend restarts the daemon itself when it is running (the patch changes
+   its argument list), so give it the same headroom as an explicit restart. */
+async function setYtPatch(on){
+  const r = await withBusy(['set-youtube-patch', on ? '1' : '0'], 40000);
+  toast(r.code ? errText(r, 'Не удалось сохранить')
+    : t(on ? 'Патч для YouTube включён' : 'Патч для YouTube выключен'));
+  await stat(true);
 }
 async function editLimit(key, title, jk){
   const cur = (S && S[jk] != null) ? +S[jk] : 15;

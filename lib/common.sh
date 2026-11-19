@@ -14,6 +14,11 @@ LUA_DIR="$MODDIR/lua"
 BLOBS_DIR="$MODDIR/blobs"
 NFQWS_BIN="$MODDIR/bin/nfqws2"
 
+# Extra profile behind the WebUI toggle «Патч для YouTube». Small SYN window
+# plus multisplit, appended as its own profile to NFQWS_ARGS_CUSTOM so it never
+# merges into the strategy's last custom block.
+YOUTUBE_PATCH_ARGS="--filter-tcp=443 --filter-l7=tls --lua-desync=wssize:wsize=1:scale=1 --lua-desync=multidisorder:pos=midsld"
+
 PIDFILE="$STATE_DIR/nfqws2.pid"
 WD_PIDFILE="$STATE_DIR/watchdog.pid"
 WN_PIDFILE="$STATE_DIR/netwatch.pid"
@@ -756,6 +761,16 @@ _startup_args() {
   udp=$(norm_args "$NFQWS_ARGS_UDP")
   extra=$(norm_args "$NFQWS_EXTRA_ARGS")
   custom=$(norm_args "$NFQWS_ARGS_CUSTOM")
+  # «Патч для YouTube» is a state toggle, not a config key: add its profile on
+  # top of the strategy's custom block. --new keeps it a separate profile even
+  # when the custom block is non-empty; the caller appends the closing --new.
+  if [ "$(cat "$STATE_DIR/youtube_patch" 2>/dev/null)" = "1" ]; then
+    if [ -n "$custom" ]; then
+      custom="$custom --new $YOUTUBE_PATCH_ARGS"
+    else
+      custom="$YOUTUBE_PATCH_ARGS"
+    fi
+  fi
   ipset=""
   if [ -n "$NFQWS_ARGS_IPSET" ] && [ "$(list_count "$LISTS_DIR/ipset.list")" -gt 0 ]; then
     ipset=$(norm_args "$NFQWS_ARGS_IPSET")
@@ -857,14 +872,12 @@ get_strategy_packet_limits() { # [conffile]
 collect_capture_ports() { # <proto: tcp|udp> [args_string]
   local proto="${1:-tcp}" args="${2:-}"
   if [ -z "$args" ]; then
-  # YouTube patch args
-YOUTUBE_PATCH_ARGS="--filter-tcp=443 --filter-l7=tls --lua-desync=wssize:wsize=1:scale=1 --lua-desync=multidisorder:pos=midsld"
-
-# ... in arg construction ...
-  args="$NFQWS_ARGS $NFQWS_ARGS_QUIC $NFQWS_ARGS_UDP $NFQWS_ARGS_CUSTOM"
-  if [ "$(cat "$STATE_DIR/youtube_patch" 2>/dev/null)" = "1" ]; then
+    args="$NFQWS_ARGS $NFQWS_ARGS_QUIC $NFQWS_ARGS_UDP $NFQWS_ARGS_CUSTOM"
+    # With AUTO_PORTS the capture set is derived from the live profiles, so the
+    # YouTube patch's port must be counted too or its traffic is never queued.
+    if [ "$(cat "$STATE_DIR/youtube_patch" 2>/dev/null)" = "1" ]; then
       args="$args $YOUTUBE_PATCH_ARGS"
-  fi
+    fi
   fi
   printf '%s\n' "$args" | awk -v proto="$proto" '
     BEGIN { pat = "--filter-" proto "=" }

@@ -35,7 +35,8 @@ const HOSTILE_IMPORT = "x');window.__pwned=1;//";
 const STATUS = JSON.stringify({
   running: true, pid: '4710', uptime: 52, strategy: 'alt13', version: 'v1.3.6', mode: 'auto',
   limiter: 'connmark_out', pkt_limit_out: 2, pkt_limit_in: 2, block_quic: 0, app_mode: 'off',
-  autostart: 1, watchdog: 1, wakelock_on: 0, ipv6: 1, log_level: 0, qdrop: 0, queue: 300,
+  autostart: 1, watchdog: 1, wakelock_on: 0, ipv6: 1, vpn_pause: 1, youtube_patch: 0,
+  log_level: 0, qdrop: 0, queue: 300,
   app_uids: 1, stealth: { mode: 'none', detail: '' },
   counts: { user: 381, auto: 25, exclude: 2839, ipset: 28420, ipset_exclude: 637, apps: 1 },
 });
@@ -157,9 +158,16 @@ const VIEWPORTS = [
         // conventions are about the switches, so count them separately instead of
         // asking whether *any* row has a description — the limits have one.
         out.swsSwitchRows = sws.filter(r => r.querySelector('input.switch')).length;
+        out.swsSwitchIds = sws.map(r => {
+          const sw = r.querySelector('input.switch');
+          return sw ? sw.id : '';
+        });
         out.swsSwitchWithSecondary = sws.filter(r => r.querySelector('input.switch') && r.querySelector('.li-secondary')).length;
+        const vpnSw = document.getElementById('sw-vpn-pause');
+        out.swsVpnChecked = vpnSw ? vpnSw.checked : null;
         out.swsHasIcons = sws.some(r => r.querySelector('.li-icon'));
         out.swsHeight = box(sws[0]).height;
+        out.swsLastHeight = box(sws[sws.length - 1]).height;
 
         // The strategy row renders into #strategy-current; the doctor moved to the
         // diagnostics page and is not on this screen any more.
@@ -224,12 +232,19 @@ const VIEWPORTS = [
       eq('16,16,4,4', geo.swsFirstRadius.join(','), 'the first list row has 16dp outer corners');
       eq('4,4,16,16', geo.swsLastRadius.join(','), 'the last list row has 16dp outer corners');
       eq('4,4,4,4', geo.swsMiddleRadius.join(','), 'the middle list rows use 4dp inner corners');
-      // #sws holds the four switches. The conventions are about the switches.
-      eq(4, geo.swsRows, 'the list holds the four switches');
-      eq(4, geo.swsSwitchRows, 'all four of those rows are switches');
+      // #sws holds six switch rows: five service toggles (VPN pause moved here
+      // from Settings, between autostart and IPv6) plus the YouTube patch.
+      eq(6, geo.swsRows, 'the list holds six switch rows');
+      eq(6, geo.swsSwitchRows, 'all six of those rows are switches');
+      eq('sw-autostart,sw-vpn-pause,sw-ipv6-enabled', geo.swsSwitchIds.slice(0, 3).join(','),
+        'VPN pause sits between autostart and IPv6 on the main page');
+      eq(true, geo.swsVpnChecked, 'the VPN pause row reads vpn_pause from json-status');
       eq(false, geo.swsHasIcons, 'switch rows carry no leading icons');
-      eq(0, geo.swsSwitchWithSecondary, 'switch rows carry no descriptions');
-      eq(56, geo.swsHeight, 'switch rows are single-line (56dp)');
+      // Only the YouTube patch carries a description, by the owner's request;
+      // the five service toggles stay single-line.
+      eq(1, geo.swsSwitchWithSecondary, 'only the YouTube patch row has a description');
+      eq(56, geo.swsHeight, 'service switch rows are single-line (56dp)');
+      eq(72, geo.swsLastHeight, 'the two-line YouTube patch row is 72dp');
 
       // ── fields, segmented ──
       // The only text field on this screen is the search bar: 56dp tall and a pill,

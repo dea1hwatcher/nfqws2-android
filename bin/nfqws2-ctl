@@ -715,10 +715,26 @@ cmd_apply_apps() {
   fi
 }
 
-cmd_set_youtube_patch() {
-  [ "$1" = "1" ] && echo "1" > "$STATE_DIR/youtube_patch" || rm -f "$STATE_DIR/youtube_patch"
-  is_running && sh "$SERVICE" firewall_apply >/dev/null 2>&1
-  echo "Патч YouTube: $( [ -f "$STATE_DIR/youtube_patch" ] && echo "включен" || echo "выключен")"
+cmd_set_youtube_patch() { # $1 = 0|1
+  case "$1" in
+    0|1) ;;
+    *) echo "Допустимо 0 или 1" >&2; return 1 ;;
+  esac
+  if [ "$1" = "1" ]; then
+    echo 1 > "$STATE_DIR/youtube_patch"
+  else
+    rm -f "$STATE_DIR/youtube_patch"
+  fi
+  # The patch changes the daemon argument list, so a running service has to be
+  # restarted; a firewall refresh alone would not touch the new profile.
+  if is_running; then
+    sh "$SERVICE" restart >/dev/null 2>&1
+  fi
+  if [ "$1" = "1" ]; then
+    echo "Патч YouTube: включен"
+  else
+    echo "Патч YouTube: выключен"
+  fi
 }
 
 cmd_import_add() { # $1 = name, $2 = path to content file
@@ -3747,6 +3763,7 @@ user_action() { # <command> [args] -> description | empty if not action
     clear-auto) echo "auto.list cleared" ;;
     reset-lists) echo "lists reset to defaults" ;;
     set) echo "setting $2=$3" ;;
+    set-youtube-patch) echo "YouTube patch: ${2:-toggle}" ;;
     set-mode) echo "list mode: $2" ;;
     home-pause) echo "home Wi-Fi pause: ${2:-toggle}" ;;
     net-recheck) echo "network recheck" ;;
@@ -3788,6 +3805,7 @@ case "$1" in
   tg-affinity) cmd_tg_affinity ;;
   stealth) cmd_stealth ;;
   doctor) cmd_doctor ;;
+  set-youtube-patch) cmd_set_youtube_patch "$2" ;;
 
   check|dry-run)
     target="${2:-$CONFFILE}"

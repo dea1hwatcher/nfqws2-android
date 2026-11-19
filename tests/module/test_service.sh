@@ -680,17 +680,19 @@ assert_rc 0 $? "a flapping connection ends on the network it ended on"
 NFQWS_SYSNET="$SANDBOX/sysnet2"; export NFQWS_SYSNET
 mkdir -p "$NFQWS_SYSNET/wlan0"; echo up > "$NFQWS_SYSNET/wlan0/operstate"
 echo wlan0 > "$MOCK_DIR/route"; ev UP
-net_is wifi 10
+# A firewall rebuild from the preceding flap can still be in flight; under
+# MSYS2 each iptables stub costs a few hundred ms, so a full pass takes ~9 s.
+net_is wifi 40
 assert_rc 0 $? "switching to Wi-Fi switches the network"
 : > "$MOCK_DIR/route"; echo down > "$NFQWS_SYSNET/wlan0/operstate"; ev DOWN
-net_is offline 10
+net_is offline 40
 assert_rc 0 $? "Wi-Fi gone with no mobile: no network"
 echo up > "$NFQWS_SYSNET/wlan0/operstate"; ev UP; sleep 0.5; echo wlan0 > "$MOCK_DIR/route"
-net_is wifi 10
+net_is wifi 40
 assert_rc 0 $? "Wi-Fi back after its event: the recheck finds it"
 assert_eq "wifi" "$(cat "$STATE_DIR/smart_net_last")" "and it becomes the last real network"
 # 5. Smart status without connection
-: > "$MOCK_DIR/route"; ev DOWN; net_is offline 10
+: > "$MOCK_DIR/route"; ev DOWN; net_is offline 40
 ctl_out=$(sh "$MODDIR/bin/nfqws2-ctl" smart-status 2>&1)
 assert_contains "$ctl_out" '"offline":1' "the screen knows there is no connection"
 assert_contains "$ctl_out" '"view":"wifi"' "and shows the last real network, not an empty «no connection» profile"

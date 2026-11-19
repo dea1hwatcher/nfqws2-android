@@ -587,14 +587,24 @@ netwatch_apply() { # <reason for log>
     log_msg "netwatch: connection returned ($1)" ;; esac ;; esac
   netsig="$sig"
   smart_net_update
-  if [ -f "$DESIRED_FILE" ] && is_running; then
-    if [ -n "$ISP_INTERFACE" ] || [ "$ENABLE_HOTSPOT" = "1" ] || ! firewall_ok; then
-      log_msg "netwatch: network changed ($1) — rebuilding rules"
-      firewall_start
-    else
-      log_msg "netwatch: network changed ($1) — rules intact"
-    fi
-  fi
+  # No default route: there is nothing for the rules to act on, and rebuilding
+  # them inline would block the event loop for a full iptables pass (~9 s under
+  # slow process spawns). A connection returning during that window would only
+  # be noticed after the rebuild, leaving smart mode reporting "offline" long
+  # after the route was back. Keep the rules; the return event rebuilds them.
+  case "$sig" in
+    '|'*) ;;
+    *)
+      if [ -f "$DESIRED_FILE" ] && is_running; then
+        if [ -n "$ISP_INTERFACE" ] || [ "$ENABLE_HOTSPOT" = "1" ] || ! firewall_ok; then
+          log_msg "netwatch: network changed ($1) — rebuilding rules"
+          firewall_start
+        else
+          log_msg "netwatch: network changed ($1) — rules intact"
+        fi
+      fi
+      ;;
+  esac
   home_check
   network_strategy_check
 }
