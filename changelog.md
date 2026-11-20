@@ -1,3 +1,13 @@
+### Изменения в v3.1.1:
+
+RU
+
+- Оптимизация листов и файлов стратегий
+
+EN
+
+- Lists and strategies files optimization
+
 ### Изменения в v3.1.0:
 
 RU
