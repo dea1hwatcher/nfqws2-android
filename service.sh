@@ -798,6 +798,16 @@ watchdog() {
       firewall_start
     fi
     [ $((tick % 25)) -eq 0 ] && rotate_logs
+
+    # periodic background updates for smart mode (every ~5 min when active)
+    if [ "$per" = 20 ] && [ $((tick % 15)) -eq 0 ] && is_running && smart_active; then
+      if dpi_ttl_due; then
+        ( sh "$MODDIR/bin/nfqws2-ctl" dpi-distance </dev/null >/dev/null 2>&1 & )
+      fi
+      if [ ! -f "$STATE_DIR/tgws_updated" ] || [ $(( $(date +%s) - $(cat "$STATE_DIR/tgws_updated" 2>/dev/null || echo 0) )) -ge 86400 ]; then
+        ( sh "$MODDIR/bin/nfqws2-ctl" tgws-update </dev/null >/dev/null 2>&1 & )
+      fi
+    fi
   done
   rm -f "$WD_PIDFILE" "$IDLE_FILE"
 }

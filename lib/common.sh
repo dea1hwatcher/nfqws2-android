@@ -706,17 +706,6 @@ net_kbytes() {
     split(substr($0, i + 1), f, " "); s += f[1] + f[9] } END { printf "%d\n", s / 1024 }' /proc/net/dev 2>/dev/null
 }
 
-exclude_profiles() {
-  local p=""
-  if [ "$(list_count "$LISTS_DIR/exclude.list" 2>/dev/null)" -gt 0 ] 2>/dev/null; then
-    p="--hostlist=$LISTS_DIR/exclude.list --new"
-  fi
-  if [ "$(list_count "$LISTS_DIR/ipset_exclude.list" 2>/dev/null)" -gt 0 ] 2>/dev/null; then
-    p="$p --ipset=$LISTS_DIR/ipset_exclude.list --new"
-  fi
-  printf '%s' "$p"
-}
-
 stat_inject() {
   local name
   name=$(head -n 1 "$ACTIVE_FILE" 2>/dev/null | tr -d '\r\n')
@@ -2835,7 +2824,7 @@ wl_probe() {
   elif command -v openssl >/dev/null 2>&1; then
     fetcher="openssl"
   else
-    log_error "wl_probe: No suitable tool (curl/wget/openssl) found, carrier whitelist detection disabled"
+    log_msg "wl_probe: No suitable tool (curl/wget/openssl) found, carrier whitelist detection disabled"
     echo unknown
     return 0
   fi

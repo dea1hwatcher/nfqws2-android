@@ -1,6 +1,6 @@
 {
   "about": "Что взято из чужих проектов и до какой версии. Обновляется при каждом переносе изменений; читает трекер обновлений и тесты целостности.",
-  "updated": "2026-11-19",
+  "updated": "2026-11-21",
   "module": "nfqws2-android v3.1.1",
   "projects": [
     {
@@ -9,10 +9,10 @@
       "repo": "bol-van/zapret2",
       "branch": "master",
       "track": "commits",
-      "ref": "3bae3d26d741a8f6e0bc4ea651656b4e1a438375",
-      "label": "master (post-v1.0.7 / 15.11)",
-      "date": "2026-11-14T18:00:00+03:00",
-      "use": "Бинарник nfqws2 (сборка в CI) — conntrack counter reinit, low-level checksum fixes; lua/zapret-lib.lua (u16add ip_id, RFC url dissect, dynamic hlen tls_dissect, get_desync_instance_id) и zapret-auto.lua (repeater instance rollback)"
+      "ref": "de41f11eee6e3b8afb27d4c702a8c250b82179d1",
+      "label": "master (post-v1.0.7 / 21.11)",
+      "date": "2026-11-21T21:00:00+03:00",
+      "use": "Бинарник nfqws2 (сборка в CI); lua/zapret-lib.lua (исправление discopy URG flag, поддержка IPv6-литералов с портами в URL) и zapret-auto.lua (регистронезависимый is_dpi_redirect и обработка без SLD)"
     },
     {
       "id": "ext",
@@ -20,10 +20,10 @@
       "repo": "SpectaCoolAre/nfqws2-android-ext",
       "branch": "main",
       "track": "tags",
-      "ref": "433f58f9edbf32f0cab06f8aaadd280b177f74b4",
-      "label": "v2.4.0",
-      "date": "2026-11-14T21:00:00+03:00",
-      "use": "Умный режим SMART_CONF_VER=25 (Google 50, TLS 55-56, YouTube googlevideo SYN wssize 1:1, QUIC drop), VoWiFi/IPsec uidrange 0-0 vs VPN detection, geoblock www.google.com drop"
+      "ref": "4bdf1a7cf2424acf3125984243264697078355bd",
+      "label": "v2.4.4 (19.11)",
+      "date": "2026-11-19T14:00:32Z",
+      "use": "Обход Telegram WebSocket через Cloudflare (lists/telegram_ws.list, slot tls_tg, key=telegram-ws, ctl tgws-update, автообновление в service.sh), окно r.recent для обнаружения обрыва параллельных соединений на 16 КБ, SMART_CONF_VER=26"
     },
     {
       "id": "nfqws-menu",
@@ -99,10 +99,10 @@
       "repo": "Omn1z/nfqws2-keenetic-strategy-selector",
       "branch": "main",
       "track": "commits",
-      "ref": "bae561b2c15e0f00273827e36fdcf771f93cda0d",
-      "label": "bae561b (18.11)",
-      "date": "2026-11-18T11:44:16+03:00",
-      "use": "Алгоритмы автоматического тестирования и сортировки стратегий обхода DPI по скорости и стабильности."
+      "ref": "de6d7f62c0b05c56d7df1cf05dbb430c51325769",
+      "label": "de6d7f6 (21.11)",
+      "date": "2026-11-21T16:00:00+03:00",
+      "use": "Алгоритмы автотестирования и сортировки стратегий обхода DPI; аудит AmneziaWG fw4 dual-tunnel (роутерные правила)."
     },
     {
       "id": "nfqws-menu-openwrt",

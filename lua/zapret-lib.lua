@@ -1245,8 +1245,8 @@ function rawsend_dissect_segmented(desync, dis, mss, options)
 		local extra_len = l3l4_extra_len(discopy)
 		if extra_len >= mss then return false end
 		local max_data = mss - extra_len
-		local urp = dis.tcp.th_urp
-		local oob = bitand(dis.tcp.th_flags, TH_URG)~=0
+		local urp = discopy.tcp.th_urp
+		local oob = bitand(discopy.tcp.th_flags, TH_URG)~=0
 		if #discopy.payload > max_data then
 			local pos=1
 			local len
@@ -1883,10 +1883,22 @@ function dissect_url(url)
 		domain = string.sub(url,p1)
 	end
 	if domain then
-		pstart,pend = string.find(domain,':',1,true)
-		if pend then
-			port = string.sub(domain, pend+1)
-			domain = string.sub(domain, 1, pend-1)
+		if string.sub(domain,1,1)=='[' then
+			-- ipv6 literal with possible port [2a05:3910::82:1]:581
+			pstart = string.find(domain,']',2,true)
+			if pstart then
+				if pstart<#domain and string.sub(domain,pstart+1,pstart+1)==':' then
+					pstart = pstart+1
+				else
+					pstart = nil
+				end
+			end
+		else
+			pstart = string.find(domain,':',1,true)
+		end
+		if pstart then
+			port = string.sub(domain, pstart+1)
+			domain = string.sub(domain, 1, pstart-1)
 		end
 	end
 	return { proto = proto, creds = creds, domain = domain, port = port, uri = uri }
