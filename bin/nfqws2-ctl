@@ -1337,13 +1337,44 @@ probe_attempt() { # <kind> <bin_path> <host[/path]> [proto 1=http, 2=tls1.2, 3=t
     return
   fi
 
+  local body_sz=0
+  if [ -f "$tmp_body" ]; then
+    body_sz=$(wc -c < "$tmp_body" 2>/dev/null | tr -d ' ')
+    case "$body_sz" in
+      ''|*[!0-9]*) body_sz=0 ;;
+    esac
+  fi
   rm -f "$tmp_body" "$jar"
   if [ "$rc" = 0 ]; then echo "ok $(( (t1 - t0) * 10 ))"; return; fi
   # Followed maximum redirects (bot cookie protection loop, e.g. Cloudflare / mi.com)
   # Server answered repeatedly over HTTP/TLS, so DPI did not block it: site is reachable
-  [ "$kind:$rc" = "curl:47" ] && { echo "ok $(( (t1 - t0) * 10 ))"; return; }
+  if [ "$kind:$rc" = "curl:47" ]; then
+    echo "ok $(( (t1 - t0) * 10 ))"
+    return
+  fi
   case "$kind:$rc:$out" in
-    wget:*"server returned error"*|curl:22:*) echo "ok $(( (t1 - t0) * 10 ))" ;;
+    wget:*"server returned error"*|curl:22:*)
+      echo "ok $(( (t1 - t0) * 10 ))"
+      return
+      ;;
+  esac
+
+  if [ "$body_sz" -gt 0 ]; then
+    case "$kind:$rc" in
+      curl:18|curl:28|curl:52|curl:56|*:124|*:143)
+        if [ "$body_sz" -le 17408 ]; then
+          echo "fail freeze"
+          return
+        fi
+        if [ "$body_sz" -le 30000 ]; then
+          echo "fail late_freeze"
+          return
+        fi
+        ;;
+    esac
+  fi
+
+  case "$kind:$rc:$out" in
     curl:35:*)
       case "$out" in
         *alert*|*Alert*|*unrecognized_name*|*handshake_failure*) echo "fail tls_alert" ;;

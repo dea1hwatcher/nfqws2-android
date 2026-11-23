@@ -593,6 +593,7 @@ function analyzeProbeResults(webRes, tcp16Res, dnsRes){
   let rstCount = 0;
   let alertCount = 0;
   let dropCount = 0;
+  let freezeCount = 0;
   let otherFailWeb = 0;
 
   webKeys.forEach(k => {
@@ -602,14 +603,15 @@ function analyzeProbeResults(webRes, tcp16Res, dnsRes){
       okWeb++;
     } else {
       const reasons = list.filter(x => !x.ok).map(x => x.reason);
-      if(reasons.some(r => r === 'tls_alert')) alertCount++;
+      if(reasons.some(r => r === 'freeze' || r === 'late_freeze')) freezeCount++;
+      else if(reasons.some(r => r === 'tls_alert')) alertCount++;
       else if(reasons.some(r => r === 'tls_rst' || r === 'reset')) rstCount++;
       else if(reasons.some(r => r === 'drop' || r === 'timeout')) dropCount++;
       else otherFailWeb++;
     }
   });
 
-  let tcp16Detected = 0;
+  let tcp16Detected = freezeCount;
   let tcp16Clean = 0;
   tcpKeys.forEach(k => {
     const st = tcp16Res[k].status;

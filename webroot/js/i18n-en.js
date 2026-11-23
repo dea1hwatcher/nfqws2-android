@@ -426,6 +426,8 @@ EN = {
  "Блокировка протокола TLS": "TLS protocol blocked",
  "Несовместимость параметров TLS": "TLS parameter incompatibility",
  "QUIC не поддерживается": "QUIC not supported",
+ "TCP Freeze (16-20KB)": "TCP Freeze (16-20KB)",
+ "Late Freeze (26KB Cloudflare)": "Late Freeze (26KB Cloudflare)",
  "Соединение установлено": "Connection established",
  "Нет ответа (таймаут / сброс)": "No response (timeout / reset)",
  "Медиа: сбой": "Media: failed",
