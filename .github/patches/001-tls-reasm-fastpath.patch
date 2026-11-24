@@ -151,7 +151,7 @@ index 3e89e6c886acd44fe326c6553d19ab0282f54366..6afce4db71c00b541e20b5234435b516
 +						reasm_client_cancel_discard(ps.ctrack);
 +						rdata_payload = dis->data_payload;
 +						rlen_payload = dis->len_payload;
-+						ps.bHaveHost = TLSHelloExtractHost(rdata_payload, rlen_payload, ps.host, sizeof(ps.host), true);
++						TLSHelloExtractHost(rdata_payload, rlen_payload, ps.host, sizeof(ps.host), true);
 +						goto rediscover;
 +					}
 +

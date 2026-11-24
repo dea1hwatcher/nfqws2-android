@@ -30,7 +30,7 @@ OUTPUT_DIR="${OUTPUT_DIR:-$REPO_DIR}"
 
 ZAPRET2_REPO="${ZAPRET2_REPO:-https://github.com/bol-van/zapret2.git}"
 ZAPRET2_TAG="${ZAPRET2_TAG:-master}"
-ZAPRET2_SHA="${ZAPRET2_SHA:-de41f11eee6e3b8afb27d4c702a8c250b82179d1}" # master: conntrack counters reinit, repeater instance rollback, checksum fixes, RFC url & tls disreasm, discopy URG & IPv6 literals
+ZAPRET2_SHA="${ZAPRET2_SHA:-da8abd32b7e834a58a7055ef594df8def9dd4fcf}" # master: post-v1.0.7 / 22.11
 
 LUAJIT_RELEASE="${LUAJIT_RELEASE:-2.1-20250826}"
 LUAJIT_VER="2.1"
