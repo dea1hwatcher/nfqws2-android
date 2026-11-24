@@ -1,3 +1,15 @@
+### Изменения в v3.1.2:
+
+RU
+
+- Синхронизация с исходниками zapret2
+- Исправления и улучшения
+
+EN
+
+- Synchronized with latest zapret2 sources
+- Fixes and improvements
+
 ### Изменения в v3.1.1:
 
 RU
