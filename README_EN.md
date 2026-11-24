@@ -4,7 +4,7 @@
 
 <img align='right' src='icon.png' width='220px' alt="nfqws2-android Icon">
 
-Full-featured Android port of **nfqws2** ([zapret2](https://github.com/bol-van/zapret) by bol-van) with Keenetic strategy syntax support.
+Full-featured Android port of **nfqws2** ([zapret2](https://github.com/bol-van/zapret2) by bol-van) with Keenetic strategy syntax support.
 
 [![KernelSU](https://img.shields.io/badge/KernelSU-Supported-brightgreen.svg)](https://github.com/tiann/KernelSU)
 [![Magisk](https://img.shields.io/badge/Magisk-Supported-blue.svg)](https://github.com/topjohnwu/Magisk)
