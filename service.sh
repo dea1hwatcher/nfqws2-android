@@ -10,7 +10,11 @@ STARTED_FILE="$STATE_DIR/started_at"
 STARTED_CS_FILE="$STATE_DIR/started_cs"
 
 wait_for_process() { # <pid> <expected state: up|down> <timeout in 50 ms ticks>
-  local pid="$1" want="$2" ticks="${3:-24}" i=0 alive
+  local pid="$1"
+  local want="$2"
+  local ticks="${3:-24}"
+  local i=0
+  local alive
   while [ "$i" -lt "$ticks" ]; do
     kill -0 "$pid" 2>/dev/null
     alive=$?
@@ -390,7 +394,9 @@ reload_lists() {
 # Start a helper unless it already runs. Returns 0 when it was just started,
 # 1 when it is running or the precondition failed.
 ensure_helper() {
-  local pf="$1" sub="$2"; shift 2
+  local pf="$1"
+  local sub="$2"
+  shift 2
   # bare "$@" is a no-op with no args in dash, but be explicit about it
   [ $# -eq 0 ] || { "$@" || return 1; }
   if [ -f "$pf" ] && kill -0 "$(cat "$pf" 2>/dev/null)" 2>/dev/null; then
@@ -626,7 +632,18 @@ netwatch() {
   echo $$ > "$WN_PIDFILE"
   protect_process
 
-  local wake=0 mon="" reader="" sp="" netsig rq="" base=0 d backoff=2 started up me=$$
+  local wake=0
+  local mon=""
+  local reader=""
+  local sp=""
+  local netsig
+  local rq=""
+  local base=0
+  local d
+  local backoff=2
+  local started
+  local up
+  local me=$$
   local fifo="$STATE_DIR/netwatch.fifo"
   netsig=$(net_signature)
   trap 'wake=1' USR1
@@ -688,7 +705,10 @@ netwatch() {
 # not reset a failing loop into fast retries. A streak older than an hour counts
 # as a fresh problem.
 watchdog_fail_count() {
-  local f="$STATE_DIR/watchdog_fails" n=0 t=0 now
+  local f="$STATE_DIR/watchdog_fails"
+  local n=0
+  local t=0
+  local now
   now=$(date +%s 2>/dev/null || echo 0)
   if [ -f "$f" ]; then
     read -r n t < "$f" 2>/dev/null
@@ -707,7 +727,16 @@ watchdog() {
   echo $$ > "$WD_PIDFILE"
   trap 'rm -f "$WD_PIDFILE" "$IDLE_FILE"; exit 0' INT TERM EXIT
   protect_process
-  local fails=0 tick=0 dpid per=20 kb lkb="" act=0 up slept=0 sm=0
+  local fails=0
+  local tick=0
+  local dpid
+  local per=20
+  local kb
+  local lkb=""
+  local act=0
+  local up
+  local slept=0
+  local sm=0
   rm -f "$IDLE_FILE" "$NIGHT_FILE"
   while :; do
     sleep "$per"
@@ -749,9 +778,15 @@ watchdog() {
       fi
     fi
 
-    { [ "$HOME_WIFI" = "1" ] || [ "$VPN_PAUSE" = "1" ]; } && [ $((tick % 3)) -eq 0 ] && home_check
-    [ "$NET_STRATEGY" = "1" ] && [ $((tick % 3)) -eq 0 ] && network_strategy_check
-    [ $((tick % 3)) -eq 0 ] && is_running && smart_net_update
+    if { [ "$HOME_WIFI" = "1" ] || [ "$VPN_PAUSE" = "1" ]; } && [ $((tick % 3)) -eq 0 ]; then
+      home_check
+    fi
+    if [ "$NET_STRATEGY" = "1" ] && [ $((tick % 3)) -eq 0 ]; then
+      network_strategy_check
+    fi
+    if [ $((tick % 3)) -eq 0 ] && is_running; then
+      smart_net_update
+    fi
     [ "$WATCHDOG" = "1" ] || continue
     [ -f "$DESIRED_FILE" ] || continue
 
@@ -818,7 +853,11 @@ home_check() {
   [ -n "$(find "$STATE_DIR/home.lock" -maxdepth 0 -mmin +2 2>/dev/null)" ] && rmdir "$STATE_DIR/home.lock" 2>/dev/null
   mkdir "$STATE_DIR/home.lock" 2>/dev/null || return 0
 
-  local ssid="" vpn=0 wl=0 ovr="" want=""
+  local ssid=""
+  local vpn=0
+  local wl=0
+  local ovr=""
+  local want=""
   [ "$HOME_WIFI" = "1" ] && ssid=$(current_ssid)
   [ "$VPN_PAUSE" = "1" ] && vpn_active && vpn=1
   [ "$WL_PAUSE" = "1" ] && [ -f "$WL_FILE" ] && wl=1

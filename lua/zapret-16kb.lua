@@ -10,19 +10,6 @@ Usage:
 
 ]]
 
--- Send a single fake with the specified options
-local function send_one_fake(desync, payload, opts)
-    local dis = deepcopy(desync.dis)
-    dis.payload = payload
-    if opts.fooling then
-        for k,v in pairs(opts.fooling) do
-            dis[k] = v
-        end
-    end
-    apply_fooling(desync, dis)
-    return rawsend_dissect(dis, opts)
-end
-
 -- Create payload with white SNI
 local function make_white_payload(desync)
     local white = blob(desync, desync.arg.blob or desync.arg.white_blob)

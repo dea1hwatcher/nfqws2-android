@@ -602,7 +602,6 @@ USAGE_LONG=10800
 USAGE_KEEP=14
 USAGE_MIN=3
 NIGHT_FILE="$STATE_DIR/night_learn"   # есть — идёт ночное обучение
-PREP_FILE="$STATE_DIR/wake_prep"      # день последней подготовки (ГГГГММДД)
 # минута суток сейчас (08 и 09 — не восьмеричные)
 mod_now() { local h m; h=$(date +%H 2>/dev/null); m=$(date +%M 2>/dev/null); echo $(( ${h#0} * 60 + ${m#0} )); }
 usage_add() { # <sleep|wake> <минута суток>
@@ -642,15 +641,6 @@ night_now() {
   [ "$n" -ge "$s" ] && [ "$n" -lt "$w" ]
 }
 night_learn_ok() { dev_idle && on_charger && night_now; }
-# пора подготовки к пробуждению: за 30–20 минут до обычного, раз в сутки
-wake_prep_due() {
-  local w n d
-  w=$(usage_pred wake); [ -n "$w" ] || return 1
-  d=$(date +%Y%m%d 2>/dev/null); [ "$(cat "$PREP_FILE" 2>/dev/null)" = "$d" ] && return 1
-  n=$(mod_now)
-  n=$(( (w - n + 1440) % 1440 ))
-  [ "$n" -le 30 ] && [ "$n" -gt 20 ]
-}
 
 # Расстояние до фильтра (nfqws2-helper -ttltrace, замер — nfqws2-ctl
 # dpi-distance): «сеть узлов-до-сервера узел-фильтра время». Вариант умного

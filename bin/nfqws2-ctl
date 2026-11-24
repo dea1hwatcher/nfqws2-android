@@ -57,7 +57,9 @@ list_file() {
 }
 
 set_conf_param() {   # single-line values only
-  local key="$1" val="$2" tmp="$CONFFILE.tmp.$$"
+  local key="$1"
+  local val="$2"
+  local tmp="$CONFFILE.tmp.$$"
   awk -v k="$key" -v v="$val" '
     BEGIN { d = 0 }
     $0 ~ "^" k "=" { if (!d) { print k "=\"" v "\""; d = 1 } ; next }
@@ -79,7 +81,10 @@ need_restart_note() { if is_running; then echo "Изменения примен�
 
 # Format: name <TAB> type (builtin|user|import) <TAB> modified (1 if edited builtin differs from original)
 list_strategies() {
-  local f n kind mod
+  local f
+  local n
+  local kind
+  local mod
   for f in "$STRATEGIES_DIR"/*.conf "$USER_STRATEGIES_DIR"/*.conf; do
     [ -f "$f" ] || continue
     basename "$f" .conf
@@ -112,7 +117,8 @@ build_strategy_conf() { # <name> <output_file>
 }
 
 set_strategy() {
-  local name="${1:-default}" tmp="$STATE_DIR/strat_apply.$$.tmp"
+  local name="${1:-default}"
+  local tmp="$STATE_DIR/strat_apply.$$.tmp"
   case "$name" in default) ;; imp:*) strategy_name_ok "${name#imp:}" || { echo "Некорректное имя" >&2; return 1; } ;;
     *) strategy_name_ok "$name" || { echo "Некорректное имя" >&2; return 1; } ;; esac
   if [ "$name" != "default" ] && ! strategy_file "$name" >/dev/null; then
@@ -140,14 +146,20 @@ set_strategy() {
 
 # 1: active config differs from default strategy installation; 0: matches.
 conf_modified() {
-  local tmp="$STATE_DIR/conf_cmp.$$" r=1
+  local tmp="$STATE_DIR/conf_cmp.$$"
+  local r=1
   if build_strategy_conf "$(get_current_strategy)" "$tmp" && cmp -s "$tmp" "$CONFFILE"; then r=0; fi
   rm -f "$tmp"
   echo "$r"
 }
 
 cmd_json_status() {
-  local run=false pid="" uptime=0 upms=0 cs st
+  local run=false
+  local pid=""
+  local uptime=0
+  local upms=0
+  local cs
+  local st
   if is_running; then
     run=true
     pid=$(cat "$PIDFILE" 2>/dev/null)
@@ -159,7 +171,8 @@ cmd_json_status() {
       *) [ "$cs" -ge "$st" ] && { upms=$(( (cs - st) * 10 )); uptime=$(( upms / 1000 )); } ;;
     esac
     if [ "$upms" = 0 ] && [ -f "$STATE_DIR/started_at" ]; then
-      local now st
+      local now
+      local st
       now=$(date +%s)
       st=$(cat "$STATE_DIR/started_at" 2>/dev/null)
       case "$st" in
@@ -171,7 +184,12 @@ cmd_json_status() {
     fi
   fi
   # Return only fields read by WebUI; strategy diagnostics handled via separate endpoints.
-  local ver cur_strat paused pending f override=""
+  local ver
+  local cur_strat
+  local paused
+  local pending
+  local f
+  local override=""
   ver=$(sed -n '/^version=/{s/^version=//p;q;}' "$MODDIR/module.prop")
   local yt_patch=0; [ -f "$STATE_DIR/youtube_patch" ] && yt_patch=1
   if [ -f "$HOME_PAUSED_FILE" ]; then
@@ -186,7 +204,15 @@ cmd_json_status() {
   cur_strat=$(get_current_strategy)
   local qdrop
   qdrop=$(awk -v q="$NFQUEUE_NUM" '$1 == q { print $6 + $7; f = 1 } END { if (!f) print 0 }' /proc/net/netfilter/nfnetlink_queue 2>/dev/null)
-  local appn cnt_user cnt_auto cnt_excl cnt_ipset cnt_ipset_excl cnt_apps cnt_probe v
+  local appn
+  local cnt_user
+  local cnt_auto
+  local cnt_excl
+  local cnt_ipset
+  local cnt_ipset_excl
+  local cnt_apps
+  local cnt_probe
+  local v
   appn=$(app_uid_count 2>/dev/null)
   set -- $(list_counts "$LISTS_DIR/user.list" "$LISTS_DIR/auto.list" "$LISTS_DIR/exclude.list" \
                       "$LISTS_DIR/ipset.list" "$LISTS_DIR/ipset_exclude.list" "$CONFDIR/apps.list" \
@@ -194,7 +220,8 @@ cmd_json_status() {
   cnt_user="$1" cnt_auto="$2" cnt_excl="$3" cnt_ipset="$4" cnt_ipset_excl="$5" cnt_apps="$6" cnt_probe="$7"
   local has_rb
   if [ -f "$SNAPSHOT_DIR/nfqws2.conf" ]; then has_rb=1; else has_rb=0; fi
-  local strat_ok=0 strat_err=0
+  local strat_ok=0
+  local strat_err=0
   if [ -f "$STATE_DIR/strat_stat" ]; then
     local skey
     skey=$(printf '%s' "$cur_strat" | sed 's/[^A-Za-z0-9._-]/_/g')
@@ -202,7 +229,9 @@ cmd_json_status() {
     strat_ok=${1:-0}
     strat_err=${2:-0}
   fi
-  local stealth_cap stealth_mode="none" stealth_detail=""
+  local stealth_cap
+  local stealth_mode="none"
+  local stealth_detail=""
   stealth_cap=$(detect_stealth_capabilities 2>/dev/null)
   case "$stealth_cap" in
     susfs:*)
@@ -257,7 +286,9 @@ cmd_status() {
 
 # Prints findings as <severity>\t<where>\t<message>; returns the error count.
 lint_config() { # <conffile>
-  local target="$1" args d
+  local target="$1"
+  local args
+  local d
   [ -f "$target" ] || { echo "Файл не найден: $target" >&2; return 1; }
   args=$( ( export CONFDIR MODDIR; . "$target" >/dev/null 2>&1 || exit 1; set_defaults; _startup_args ) 2>/dev/null ) || {
     echo "Конфиг не читается: $target" >&2; return 1; }
@@ -408,7 +439,8 @@ lint_config() { # <conffile>
 }
 
 cmd_lint() {
-  local out rc
+  local out
+  local rc
   out=$(lint_config "${1:-$CONFFILE}")
   rc=$?
   [ -n "$out" ] && printf '%s\n' "$out"
@@ -471,7 +503,10 @@ cmd_doctor() {
   row ok quota "$(M "квоты пакетов: исх. $PKT_LIMIT_OUT / вх. $PKT_LIMIT_IN ($lim)" "packet quotas: out $PKT_LIMIT_OUT / in $PKT_LIMIT_IN ($lim)")"
 
   # the classes of mistake --dry-run cannot see (it never starts Lua)
-  local lint_out lrc lerr lwarn
+  local lint_out
+  local lrc
+  local lerr
+  local lwarn
   lint_out=$(lint_config "$CONFFILE" 2>/dev/null); lrc=$?
   lerr=$(printf '%s\n' "$lint_out" | grep -c '^error' 2>/dev/null || true)
   lwarn=$(printf '%s\n' "$lint_out" | grep -c '^warn' 2>/dev/null || true)
@@ -486,7 +521,9 @@ cmd_doctor() {
   fi
 
   # same idea for the lists: entries the engine would ignore or read differently
-  local ll_out llerr llwarn
+  local ll_out
+  local llerr
+  local llwarn
   ll_out=$(lint_lists 2>/dev/null)
   llerr=$(printf '%s' "$ll_out" | grep -c '^error' 2>/dev/null || true)
   llwarn=$(printf '%s' "$ll_out" | grep -c '^warn' 2>/dev/null || true)
@@ -545,7 +582,9 @@ cmd_doctor() {
   else
     row info apps "$(M 'фильтр по приложениям выключен' 'app filter is off')"
   fi
-  local stealth_cap sbin dhandler
+  local stealth_cap
+  local sbin
+  local dhandler
   stealth_cap=$(detect_stealth_capabilities 2>/dev/null)
   case "$stealth_cap" in
     susfs:*)
@@ -564,7 +603,9 @@ cmd_doctor() {
       ;;
   esac
   if [ -e /proc/sys/net/netfilter/nf_conntrack_checksum ]; then
-    local est cnt mx
+    local est
+    local cnt
+    local mx
     est=$(sysctl -n net.netfilter.nf_conntrack_tcp_timeout_established 2>/dev/null)
     cnt=$(sysctl -n net.netfilter.nf_conntrack_count 2>/dev/null)
     mx=$(sysctl -n net.netfilter.nf_conntrack_max 2>/dev/null)
@@ -589,7 +630,8 @@ cmd_doctor() {
   esac
   if [ "$ENABLE_HOTSPOT" = "1" ]; then
     if command -v settings >/dev/null 2>&1; then
-      local to_val bpf_val=""
+      local to_val
+      local bpf_val=""
       to_val=$(settings get global tether_offload_disabled 2>/dev/null)
       if command -v device_config >/dev/null 2>&1; then
         bpf_val=$(device_config get tethering override_bpf_offload 2>/dev/null)
@@ -610,7 +652,11 @@ cmd_doctor() {
     row info hotspot "$(M 'обход для точки доступа выключен' 'hotspot bypass disabled')"
   fi
   if is_running; then
-    local _pid _cg _rss _hwm _ram_text
+    local _pid
+    local _cg
+    local _rss
+    local _hwm
+    local _ram_text
     _pid=$(cat "$PIDFILE" 2>/dev/null)
     row ok process "nfqws2 PID $_pid"
     if [ -n "$_pid" ] && [ -d "/proc/$_pid" ]; then
@@ -738,7 +784,9 @@ cmd_set_youtube_patch() { # $1 = 0|1
 }
 
 cmd_import_add() { # $1 = name, $2 = path to content file
-  local name="$1" src="$2" safe
+  local name="$1"
+  local src="$2"
+  local safe
   [ -f "$src" ] || { echo "Нет данных для импорта" >&2; return 1; }
   tr -d '\r' < "$src" > "$src.n" && mv -f "$src.n" "$src"
 
@@ -754,7 +802,8 @@ cmd_import_add() { # $1 = name, $2 = path to content file
   [ -n "$name" ] || name="import-$(date '+%Y%m%d-%H%M%S' 2>/dev/null)"
   safe=$(import_safe_name "$name")
   [ -n "$safe" ] || safe="import-$(date '+%Y%m%d-%H%M%S' 2>/dev/null)"
-  local dst="$IMPORTS_DIR/$safe.conf" n=1
+  local dst="$IMPORTS_DIR/$safe.conf"
+  local n=1
   while [ -f "$dst" ]; do dst="$IMPORTS_DIR/${safe}_$n.conf"; n=$((n + 1)); done
   # Imported strategy normalized to builtin format (see normalize_import);
   if ! normalize_import "$src" > "$dst" || ! grep -q '^NFQWS_ARGS=' "$dst" || ! validate_conf "$dst" >/dev/null 2>&1; then
@@ -777,7 +826,8 @@ cmd_import_add() { # $1 = name, $2 = path to content file
 ERR_RE='ошибк|не удал|не запуст|упал|не активен|отсутству|отклон|error|fail|fatal|denied|refused|cannot|could not|unable'
 
 cmd_get_logs() { # <source> <lines> [errors]
-  local n="${2:-100}" f
+  local n="${2:-100}"
+  local f
   case "$n" in ''|*[!0-9]*) n=100 ;; esac
   [ "$1" = "summary" ] && { cmd_log_summary; return; }
   case "$1" in
@@ -794,7 +844,8 @@ cmd_get_logs() { # <source> <lines> [errors]
 
 # Summary statistics table: type (ok|warn|fail|info) <TAB> title <TAB> details
 cmd_log_summary() {
-  local svc="$SERVICE_LOG" auto="$LOG_DIR/auto.log"
+  local svc="$SERVICE_LOG"
+  local auto="$LOG_DIR/auto.log"
   local L="${NFQWS_LANG:-ru}"
   if [ -s "$svc" ]; then
     awk -v L="$L" '
@@ -1005,7 +1056,11 @@ cmd_list_apps() {
   local PM=pm
   command -v pm >/dev/null 2>&1 || PM=/system/bin/pm
   if command -v "$PM" >/dev/null 2>&1; then
-    local users u p pkgs n=0
+    local users
+    local u
+    local p
+    local pkgs
+    local n=0
     users=$("$PM" list users 2>/dev/null | awk -F'[{:]' '/UserInfo/ { print $2 }')
     [ -n "$users" ] || users=0
     printf '[\n'
@@ -1034,7 +1089,8 @@ cmd_list_apps() {
 # Download archive: config, user lists, apps.list, home nets, strategy edits, imports, ui.json
 BACKUP_LISTS="user exclude ipset ipset_exclude auto probe_hosts probe_ru tcp16 probe_dns probe_tg probe_bench"
 cmd_backup_create() { # [ui.json in base64] [target_dir]
-  local ui_data="" dest_dir=""
+  local ui_data=""
+  local dest_dir=""
   if [ -n "${1:-}" ]; then
     case "$1" in
       /*) dest_dir="$1" ;;
@@ -1078,7 +1134,8 @@ cmd_backup_list() { # [target_dir]
   done
 }
 _apply_restored_backup() { # <tmp dir>
-  local tmp="$1" f
+  local tmp="$1"
+  local f
   if [ -f "$tmp/nfqws2.conf" ]; then
     if ! validate_conf "$tmp/nfqws2.conf" >/dev/null 2>&1; then
       rm -rf "$tmp"; echo "Конфиг в архиве не прошёл проверку" >&2; return 1
@@ -1103,7 +1160,8 @@ _apply_restored_backup() { # <tmp dir>
   return 0
 }
 cmd_backup_restore() { # <filename in Download> -> stdout: ui.json in base64 (if present)
-  local name="$1" tmp="$STATE_DIR/restore.$$"
+  local name="$1"
+  local tmp="$STATE_DIR/restore.$$"
   case "$name" in nfqws2-backup-*.tar) ;; *) echo "Некорректное имя архива" >&2; return 1 ;; esac
   case "$name" in */*) echo "Некорректное имя архива" >&2; return 1 ;; esac
   [ -f "$BACKUP_DIR/$name" ] || { echo "Архив не найден" >&2; return 1; }
@@ -1129,7 +1187,7 @@ probe_tool() {
   local b
   if command -v curl >/dev/null 2>&1; then echo "curl $(command -v curl)"; return 0; fi
   for b in /data/adb/ksu/bin/busybox /data/adb/ap/bin/busybox /data/adb/magisk/busybox "$(command -v busybox 2>/dev/null)"; do
-    [ -n "$b" ] && [ -x "$b" ] || continue
+    if [ -z "$b" ] || [ ! -x "$b" ]; then continue; fi
     "$b" wget --help 2>&1 | grep -q 'no-check-certificate' && { echo "wget $b"; return 0; }
   done
   echo "none"
@@ -1172,7 +1230,7 @@ resolve_probe_target() { # <host[/path]> -> resolved target
 
 is_block_notice() { # <body_file> -> return 0 if block page/stub, 1 otherwise
   local f="$1"
-  [ -f "$f" ] && [ -s "$f" ] || return 1
+  if [ ! -f "$f" ] || [ ! -s "$f" ]; then return 1; fi
   local title
   title=$(head -c 8192 "$f" 2>/dev/null | tr '\n\r' '  ' | sed -n 's/.*<title[^>]*>\(.*\)<\/title>.*/\1/ip' 2>/dev/null)
   if [ -n "$title" ]; then
@@ -1224,9 +1282,18 @@ detect_pq_curve() {
 }
 
 probe_attempt() { # <kind> <bin_path> <host[/path]> [proto 1=http, 2=tls1.2, 3=tls1.3, 4=quic] -> "ok <ms>" | "fail <reason>" | "skip <reason>"
-  local kind="$1" bin="$2" target="$3" proto="${4:-3}" t0 t1 out rc to=""
+  local kind="$1"
+  local bin="$2"
+  local target="$3"
+  local proto="${4:-3}"
+  local t0
+  local t1
+  local out
+  local rc
+  local to=""
   target=$(resolve_probe_target "$target")
-  local host="${target%%/*}" path="${target#*/}"
+  local host="${target%%/*}"
+  local path="${target#*/}"
   if [ "$host" = "$path" ]; then path=""; else path="/$path"; fi
   command -v timeout >/dev/null 2>&1 && to="timeout 10"
   # Parallel bench restricts slot probe to dedicated local port range to isolate traffic
@@ -1234,7 +1301,8 @@ probe_attempt() { # <kind> <bin_path> <host[/path]> [proto 1=http, 2=tls1.2, 3=t
   [ -n "${PROBE_LOCAL_PORT:-}" ] && lp="--local-port $PROBE_LOCAL_PORT"
   [ "${PROBE_FORCE_IPV4:-0}" = "1" ] && lp="$lp -4"
   t0=$(uptime_cs)
-  local tmp_body jar
+  local tmp_body
+  local jar
   # $RANDOM is empty in busybox ash, and $$ is shared by every probe subshell,
   # so the fallback borrows entropy that exists on Android
   tmp_body=$(mktemp "${TMPDIR:-/tmp}/probe_body.XXXXXX" 2>/dev/null || echo "$STATE_DIR/probe_body.$$.$(rand_hex).tmp")
@@ -1311,7 +1379,8 @@ probe_attempt() { # <kind> <bin_path> <host[/path]> [proto 1=http, 2=tls1.2, 3=t
   esac
 
   t1=$(uptime_cs)
-  local redir http_code
+  local redir
+  local http_code
   redir=$(printf '%s\n' "$out" | sed -n 's/^REDIRECT_URL://p')
   http_code=$(printf '%s\n' "$out" | sed -n 's/^HTTP_CODE://p')
   case "$redir" in
@@ -1407,7 +1476,12 @@ probe_attempt() { # <kind> <bin_path> <host[/path]> [proto 1=http, 2=tls1.2, 3=t
 
 # Retry request on same connection: detects mid-stream DPI freeze
 probe_keepalive() { # <curl_path> <host[/path]>
-  local bin="$1" url="https://$2" out rc to="" rate="--rate 30/m"
+  local bin="$1"
+  local url="https://$2"
+  local out
+  local rc
+  local to=""
+  local rate="--rate 30/m"
   command -v timeout >/dev/null 2>&1 && to="timeout 25"
   while :; do
 # 2s rate limit between requests (--rate)
@@ -1424,8 +1498,18 @@ probe_keepalive() { # <curl_path> <host[/path]>
 }
 
 cmd_net_info() {
-  local ip="" loc="" isp="" asn="" iface="" gw="" dns1="" dns2=""
-  local tool kind bin to=""
+  local ip=""
+  local loc=""
+  local isp=""
+  local asn=""
+  local iface=""
+  local gw=""
+  local dns1=""
+  local dns2=""
+  local tool
+  local kind
+  local bin
+  local to=""
   tool=$(probe_tool); kind="${tool%% *}"; bin="${tool#* }"
   command -v timeout >/dev/null 2>&1 && to="timeout 6"
 
@@ -1458,7 +1542,14 @@ cmd_net_info() {
 }
 
 cmd_probe_all_inner() {
-  local kind="$1" bin="$2" target="${3:-}" custom_list="${4:-$LISTS_DIR/probe_hosts.list}" i=0 h batch=0 probe_hosts_file="$STATE_DIR/probe.hosts.$$"
+  local kind="$1"
+  local bin="$2"
+  local target="${3:-}"
+  local custom_list="${4:-$LISTS_DIR/probe_hosts.list}"
+  local i=0
+  local h
+  local batch=0
+  local probe_hosts_file="$STATE_DIR/probe.hosts.$$"
   rm -f "$probe_hosts_file"
   if [ -n "$target" ]; then
     printf '%s\n' "$(resolve_probe_target "$target")" > "$probe_hosts_file"
@@ -1476,7 +1567,12 @@ cmd_probe_all_inner() {
   while IFS= read -r h; do
     [ -z "$h" ] && continue
     (
-      local k=1 r="" r1="" r2="" r3="" r4=""
+      local k=1
+      local r=""
+      local r1=""
+      local r2=""
+      local r3=""
+      local r4=""
       while [ "$k" -le 4 ]; do
         r=$(probe_attempt "$kind" "$bin" "$h" "$k")
         printf 'R\t%s\t%s\t%s\n' "$i" "$k" "$r"
@@ -1490,7 +1586,8 @@ cmd_probe_all_inner() {
       done
 
 # Differential report TLS 1.2 vs TLS 1.3
-      local st2="${r2%% *}" st3="${r3%% *}"
+      local st2="${r2%% *}"
+      local st3="${r3%% *}"
       if [ "$st2" = "ok" ] && [ "$st3" != "ok" ]; then
         printf 'TLS_DIFF\t%s\t%s\ttls13_blocked\tTLS 1.3 заблокирован ТСПУ, TLS 1.2 доступен\n' "$i" "$h"
       elif [ "$st3" = "ok" ] && [ "$st2" != "ok" ]; then
@@ -1498,7 +1595,8 @@ cmd_probe_all_inner() {
       elif [ "$st2" = "ok" ] && [ "$st3" = "ok" ]; then
         printf 'TLS_DIFF\t%s\t%s\tboth_ok\tОба протокола (TLS 1.2 и 1.3) доступны\n' "$i" "$h"
       elif [ "$st2" != "ok" ] && [ "$st3" != "ok" ]; then
-        local upper_h r_upper
+        local upper_h
+        local r_upper
         upper_h=$(printf '%s' "$h" | tr 'a-z' 'A-Z')
         r_upper=$(probe_attempt "$kind" "$bin" "$upper_h" 3)
         if [ "${r_upper%% *}" = "ok" ]; then
@@ -1528,7 +1626,9 @@ cmd_probe_all_inner() {
 }
 
 cmd_tcp16_status() {
-  local asns="none" nets=0 snis=0
+  local asns="none"
+  local nets=0
+  local snis=0
   if [ -f "$STATE_DIR/tcp16_asn.txt" ]; then
     asns=$(tr '\n' ' ' < "$STATE_DIR/tcp16_asn.txt" 2>/dev/null | sed 's/[[:space:]]*$//')
     [ -z "$asns" ] && asns="none"
@@ -1541,7 +1641,10 @@ cmd_tcp16_status() {
 }
 
 cmd_probe_tcp16() {
-  local tool kind bin to=""
+  local tool
+  local kind
+  local bin
+  local to=""
   tool=$(probe_tool); kind="${tool%% *}"; bin="${tool#* }"
   [ "$kind" = "curl" ] || return 0
   command -v timeout >/dev/null 2>&1 && to="timeout 8"
@@ -1564,16 +1667,19 @@ Google_Cloud_GC-01|147.189.239.240|443|
 Oracle_Cloud_OR-01|153.72.114.110|443|
 OVH_OVH-01|5.196.63.68|443|"
 
-  local pad16 pad24 pad32
+  local pad16
+  local pad24
+  local pad32
   pad16=$(printf '%*s' 16384 '' | tr ' ' 'a')
   pad24=$(printf '%*s' 24576 '' | tr ' ' 'b')
   pad32=$(printf '%*s' 32768 '' | tr ' ' 'c')
 
   local idx=0
   printf '%s\n' "$targets" | while IFS='|' read -r provider ip port sni; do
-    [ -z "$provider" ] || [ -z "$ip" ] && continue
+    if [ -z "$provider" ] || [ -z "$ip" ]; then continue; fi
     [ -z "$port" ] && port=443
-    local proto="https" url
+    local proto="https"
+    local url
     [ "$port" = "80" ] && proto="http"
     set -- -s -k -o /dev/null
     if [ -n "$sni" ]; then
@@ -1584,7 +1690,8 @@ OVH_OVH-01|5.196.63.68|443|"
     fi
 
     # Step 1: 0KB probe
-    local out0 rc0
+    local out0
+    local rc0
     out0=$($to "$bin" "$@" -m 5 --connect-timeout 4 -w "%{time_total}" "$url" 2>&1); rc0=$?
     if [ "$rc0" != 0 ] && [ "$rc0" != 22 ]; then
       printf 'T16\t%s\t%s\t%s\t%s\tunreachable\t%s\n' "$idx" "$provider" "$ip" "$port" "0KB"
@@ -1593,7 +1700,11 @@ OVH_OVH-01|5.196.63.68|443|"
     fi
 
     # Steps 2-4: 16KB / 24KB / 32KB probes
-    local detected="" sz pad outp rcp
+    local detected=""
+    local sz
+    local pad
+    local outp
+    local rcp
     for sz in 16KB 24KB 32KB; do
       case "$sz" in 16KB) pad="$pad16" ;; 24KB) pad="$pad24" ;; 32KB) pad="$pad32" ;; esac
       outp=$($to "$bin" "$@" -m 6 --connect-timeout 4 -H "X-Pad: $pad" "$url" 2>&1); rcp=$?
@@ -1620,7 +1731,12 @@ OVH_OVH-01|5.196.63.68|443|"
 }
 
 cmd_probe_dns() {
-  local tool kind bin to="" ns_cmd="" b
+  local tool
+  local kind
+  local bin
+  local to=""
+  local ns_cmd=""
+  local b
   tool=$(probe_tool); kind="${tool%% *}"; bin="${tool#* }"
   [ "$kind" = "none" ] && return 0
   command -v timeout >/dev/null 2>&1 && to="timeout 6"
@@ -1645,8 +1761,11 @@ Yandex|77.88.8.8|https://common.dot.dns.yandex.net/dns-query"
 
   local idx=0
   printf '%s\n' "$servers" | while IFS='|' read -r name ip doh; do
-    [ -z "$name" ] || [ -z "$ip" ] && continue
-    local udp_status="skip" doh_status="none" hijacked="no" detail="OK"
+    if [ -z "$name" ] || [ -z "$ip" ]; then continue; fi
+    local udp_status="skip"
+    local doh_status="none"
+    local hijacked="no"
+    local detail="OK"
 
     if [ -n "$ns_cmd" ]; then
       local ns_out
@@ -1657,7 +1776,8 @@ Yandex|77.88.8.8|https://common.dot.dns.yandex.net/dns-query"
         udp_status="ok"
       fi
 
-      local ns_chk blocked_ip
+      local ns_chk
+      local blocked_ip
       ns_chk=$($to $ns_cmd rutracker.org "$ip" 2>&1)
       blocked_ip=$(printf '%s\n' "$ns_chk" | awk '/^Name:/ {seen=1} seen && /^Address( 1)?: / {ip=$NF} END {print ip}')
       case "$blocked_ip" in
@@ -1672,7 +1792,8 @@ Yandex|77.88.8.8|https://common.dot.dns.yandex.net/dns-query"
     fi
 
     if [ -n "$doh" ] && [ "$kind" = "curl" ]; then
-      local doh_out rc
+      local doh_out
+      local rc
       doh_out=$($to "$bin" -s -m 5 -H 'accept: application/dns-json' "$doh?name=vk.ru&type=A" 2>&1); rc=$?
       if [ "$rc" = 0 ] && printf '%s' "$doh_out" | grep -q '"Status"'; then
         doh_status="ok"
@@ -1681,7 +1802,8 @@ Yandex|77.88.8.8|https://common.dot.dns.yandex.net/dns-query"
       fi
     elif [ -z "$doh" ] && [ "$kind" = "curl" ]; then
 # DoT probe (TLS port 853)
-      local dot_out rc_dot
+      local dot_out
+      local rc_dot
       dot_out=$($to "$bin" -s -k -m 4 --connect-timeout 3 -o /dev/null "https://$ip:853/" 2>&1); rc_dot=$?
       if [ "$rc_dot" = 0 ] || [ "$rc_dot" = 35 ] || [ "$rc_dot" = 52 ] || [ "$rc_dot" = 56 ]; then
         doh_status="ok"
@@ -1694,7 +1816,10 @@ Yandex|77.88.8.8|https://common.dot.dns.yandex.net/dns-query"
 }
 
 cmd_probe_tg() {
-  local tool kind bin to=""
+  local tool
+  local kind
+  local bin
+  local to=""
   tool=$(probe_tool); kind="${tool%% *}"; bin="${tool#* }"
   [ "$kind" = "none" ] && return 0
   command -v timeout >/dev/null 2>&1 && to="timeout 6"
@@ -1709,15 +1834,21 @@ DC3|149.154.175.100|443
 DC4|149.154.167.91|443
 DC5|91.108.56.130|443"
 
-  local idx=0 best_media_dc="DC4" best_media_ip="149.154.167.91" min_latency=99999
+  local idx=0
+  local best_media_dc="DC4"
+  local best_media_ip="149.154.167.91"
+  local min_latency=99999
   local affinity_tmp="$STATE_DIR/tg_aff.$$.tmp"
   : > "$affinity_tmp"
 
   printf '%s\n' "$dcs" | while IFS='|' read -r name ip port; do
-    [ -z "$name" ] || [ -z "$ip" ] && continue
+    if [ -z "$name" ] || [ -z "$ip" ]; then continue; fi
     [ -z "$port" ] && port=443
 
-    local out rc t_ms="0" status="fail"
+    local out
+    local rc
+    local t_ms="0"
+    local status="fail"
     if [ "$kind" = "curl" ]; then
       out=$($to "$bin" -s -k -m 5 --connect-timeout 3 -o /dev/null -w "%{time_connect}" "https://$ip:$port/" 2>&1); rc=$?
       if [ "$rc" = 0 ] || [ "$rc" = 52 ] || [ "$rc" = 56 ] || [ "$rc" = 22 ]; then
@@ -1725,7 +1856,8 @@ DC5|91.108.56.130|443"
         status="ok"
       fi
     else
-      local t0 t1
+      local t0
+      local t1
       t0=$(uptime_cs)
       out=$($to "$bin" wget -q -T 4 -O /dev/null --no-check-certificate "https://$ip:$port/" 2>&1); rc=$?
       t1=$(uptime_cs)
@@ -1783,7 +1915,13 @@ DC5|91.108.56.130|443"
 }
 
 kill_descendants() { # <pid> — curl runs under subshell probe process
-  local p="$1" stat cpid comm st ppid rest
+  local p="$1"
+  local stat
+  local cpid
+  local comm
+  local st
+  local ppid
+  local rest
   for stat in /proc/[0-9]*/stat; do
     [ -r "$stat" ] || continue
     read -r cpid comm st ppid rest < "$stat" 2>/dev/null || continue
@@ -1807,7 +1945,8 @@ cmd_probe_cancel() {
 }
 
 cmd_check_domain() {
-  local raw="$1" d
+  local raw="$1"
+  local d
   d=$(domain_norm "$raw")
   d="${d#www.}"
   case "$d" in
@@ -1818,7 +1957,9 @@ cmd_check_domain() {
   esac
 
   local found_lists=""
-  local list_name f d_esc
+  local list_name
+  local f
+  local d_esc
   d_esc=$(printf '%s' "$d" | sed 's/\./\\./g')
   for list_name in user exclude auto probe_bench probe_hosts; do
     f="$LISTS_DIR/$list_name.list"
@@ -1871,7 +2012,9 @@ share_file_ok() {
 # Copies file to $BACKUP_DIR/.share, scans via MediaStore, and grants read intent.
 share_mime() { case "$1" in *.tar) echo application/x-tar ;; *.zip) echo application/zip ;; *.txt|*.log|*.conf|*.tsv|*.list) echo text/plain ;; *) echo application/octet-stream ;; esac; }
 share_uri() { # <path in /storage/emulated/0> <mime> -> content://... and method separated by TAB
-  local rf="$1" u rel
+  local rf="$1"
+  local u
+  local rel
   u=$(content call --uri content://media --method scan_file --arg "$rf" 2>/dev/null | grep -o 'content://[^ ,}]*' | head -n 1)
   [ -n "$u" ] && { printf '%s\tscan\n' "$u"; return 0; }
   am broadcast -a android.intent.action.MEDIA_SCANNER_SCAN_FILE -d "file://$rf" >/dev/null 2>&1
@@ -1888,7 +2031,13 @@ share_uri() { # <path in /storage/emulated/0> <mime> -> content://... and method
   printf 'file://%s\tfile\n' "$rf"
 }
 share_stream() { # <file> <name>
-  local f="$1" rf u how out mime dir
+  local f="$1"
+  local rf
+  local u
+  local how
+  local out
+  local mime
+  local dir
   case "$f" in
     /sdcard/*) rf="/storage/emulated/0/${f#/sdcard/}" ;;
     /storage/emulated/0/*) rf="$f" ;;
@@ -1907,7 +2056,9 @@ share_stream() { # <file> <name>
   set -- am start -a android.intent.action.SEND --user 0 -d "$u" -t "$mime" --eu android.intent.extra.STREAM "$u" \
     --es android.intent.extra.SUBJECT "$nm" --es android.intent.extra.TITLE "$nm" -f 0x10000001
   # Run am as shell (uid 2000) so Android allows Uri permission grants (0x1)
-  local who=root cmd a
+  local who=root
+  local cmd
+  local a
   if [ "$(su 2000 -c 'id -u' 2>/dev/null)" = 2000 ]; then
     cmd=""; for a; do cmd="$cmd '$(printf '%s' "$a" | sed "s/'/'\\\\''/g")'"; done
     out=$(su 2000 -c "$cmd" 2>&1); who=shell
@@ -1947,7 +2098,8 @@ domain_norm() {
   printf '%s' "$1" | tr 'A-Z' 'a-z' | sed 's#^[a-z]*://##; s#[/?:].*##; s/^\*\.//; s/^\.//; s/\.$//'
 }
 ip_in_ipsets() { # <ip> <file>... -> files containing subnet matching IP (IPv4)
-  local ip="$1"; shift
+  local ip="$1"
+  shift
   awk -v ip="$ip" '
     function n(a,   p) { split(a, p, "."); return ((p[1] * 256 + p[2]) * 256 + p[3]) * 256 + p[4] }
     BEGIN { x = n(ip) }
@@ -1962,7 +2114,18 @@ ip_in_ipsets() { # <ip> <file>... -> files containing subnet matching IP (IPv4)
     }' "$@" 2>/dev/null
 }
 cmd_domain_check() {
-  local d cand f role used args entry tool kind bin ip="" k
+  local d
+  local cand
+  local f
+  local role
+  local used
+  local args
+  local entry
+  local tool
+  local kind
+  local bin
+  local ip=""
+  local k
   d=$(domain_norm "$1")
   case "$d" in ''|*[!a-z0-9.-]*|*..*) echo "Некорректный домен" >&2; return 1 ;; esac
 # Domain and parent domains: a.b.c -> a.b.c, b.c, c
@@ -2021,7 +2184,11 @@ cmd_domain_check() {
 }
 
 cmd_page_hosts() { # <url_or_domain> — extract external page resources and test reachability
-  local raw="$1" d tool kind bin
+  local raw="$1"
+  local d
+  local tool
+  local kind
+  local bin
   d=$(domain_norm "$raw")
   d="${d#www.}"
   case "$d" in ''|*[!a-z0-9.-]*) echo "INVALID" >&2; return 1 ;; esac
@@ -2077,7 +2244,12 @@ cmd_page_hosts() { # <url_or_domain> — extract external page resources and tes
 
   rm -f "$tmp_html"
 
-  local total_cands=0 blocked_cands=0 cand r r_st r_ms
+  local total_cands=0
+  local blocked_cands=0
+  local cand
+  local r
+  local r_st
+  local r_ms
   while IFS= read -r cand; do
     [ -z "$cand" ] && continue
     total_cands=$((total_cands + 1))
@@ -2103,7 +2275,10 @@ cmd_page_hosts() { # <url_or_domain> — extract external page resources and tes
 smart_valid_net() { case "$1" in ''|*[!a-z0-9-]*) return 1 ;; esac; return 0; }
 # Network file format (v4): slot host cur ok err cool seen flags; ok/err are variant:weight
 cmd_smart_status() { # [network — whose stats to display; defaults to active network]
-  local act=0 net off=0 view
+  local act=0
+  local net
+  local off=0
+  local view
   smart_active && act=1
   net=$(cat "$SMART_NET_FILE" 2>/dev/null)
   [ "$net" = offline ] && off=1
@@ -2120,7 +2295,10 @@ cmd_smart_status() { # [network — whose stats to display; defaults to active n
   [ -f "$SMART_LEARN_FILE" ] && awk -F= 'NF >= 2 { k = $1; sub(/^[^=]*=/, ""); gsub(/["\\]/, "", k); gsub(/["\\]/, ""); printf "%s\"%s\":\"%s\"", (n++ ? "," : ""), k, $0 }' "$SMART_LEARN_FILE"
   printf '},"nets":['
 # Networks: signature, host count, total successes and errors
-  local first=1 id label f
+  local first=1
+  local id
+  local label
+  local f
   if [ -f "$SMART_DIR/nets.tsv" ]; then
     while IFS='	' read -r id label; do
       smart_valid_net "$id" || continue
@@ -2210,7 +2388,8 @@ cmd_smart_reset() {
 }
 # Import foreign learned network: merge new hosts without overwriting existing entries
 cmd_smart_sites() {
-  local f="$SMART_DIR/$1.tsv" grp="${2:-all}"
+  local f="$SMART_DIR/$1.tsv"
+  local grp="${2:-all}"
   smart_valid_net "$1" || { echo "Неверная сеть" >&2; return 1; }
   case "$grp" in tls|google|quic|problems|nodpi|all) ;; *) echo "tls|google|quic|problems|nodpi|all" >&2; return 1 ;; esac
   if ! { [ -f "$f" ] && head -n 1 "$f" | grep -q '^#v4'; }; then echo '[]'; return 0; fi
@@ -2241,7 +2420,10 @@ cmd_smart_sites() {
       # Legacy formats: prune unreliable non-DPI cool flags
 cmd_smart_export() { # <network> [path|target_dir] [target_dir]
   local f="$SMART_DIR/$1.tsv"
-  local name out dest_dir="$BACKUP_DIR" only_path=0
+  local name
+  local out
+  local dest_dir="$BACKUP_DIR"
+  local only_path=0
   smart_valid_net "$1" && [ -f "$f" ] || { echo "$(M 'В этой сети ещё ничего не выучено' 'Nothing learned on this network yet')" >&2; return 1; }
   if [ "${2:-}" = "path" ]; then
     only_path=1
@@ -2259,7 +2441,11 @@ cmd_smart_export() { # <network> [path|target_dir] [target_dir]
 }
 # Restart service to avoid in-memory state overwriting imported file
 cmd_smart_import_b64() { # <base64 file data> -> added host count
-  local net f tmp src n
+  local net
+  local f
+  local tmp
+  local src
+  local n
   net=$(cat "$SMART_NET_FILE" 2>/dev/null)
   smart_valid_net "$net" || { echo "$(M 'Сеть ещё не определена — подключитесь к сети' 'The network is not known yet — connect first')" >&2; return 1; }
   mkdir -p "$SMART_DIR" "$STATE_DIR" || return 1
@@ -2324,7 +2510,13 @@ cmd_smart_import_b64() { # <base64 file data> -> added host count
 # smart-apply-variant <slot> <v> [host]
 # Pin variant for host or set as starting variant for current network
 cmd_smart_learn_once() {
-  local tool kind bin h r n=0 ok=0
+  local tool
+  local kind
+  local bin
+  local h
+  local r
+  local n=0
+  local ok=0
   [ "$(cat "$SMART_NET_FILE" 2>/dev/null)" = offline ] && return 0
   tool=$(probe_tool); kind="${tool%% *}"; bin="${tool#* }"
   [ "$kind" = none ] && return 0
@@ -2345,7 +2537,9 @@ cmd_smart_learn_once() {
 }
 
 smart_variant_name() { # <slot> <v> -> variant name
-  local slot="$1" v="$2" name=""
+  local slot="$1"
+  local v="$2"
+  local name=""
   name=$(sed -n "s/^#@${slot}[[:space:]]\+${v}[[:space:]]\+//p" "$STRATEGIES_DIR/smart.conf" 2>/dev/null | tr -d '\r')
   [ -z "$name" ] && name="Вариант #$v"
   printf '%s' "$name"
@@ -2376,7 +2570,9 @@ smart_site_key() {
 # Parallel benchmark spawns private nfqws2 instances on isolated queues, measuring
 # multiple strategies concurrently without restarting service or dropping user connections.
 cmd_smart_apply_variant() {
-  local slot="${1:-tls}" v="$2" host="${3:-}"
+  local slot="${1:-tls}"
+  local v="$2"
+  local host="${3:-}"
   case "$slot" in ''|*[!a-z0-9_]*) echo "Неверный слот" >&2; return 1 ;; esac
   case "$v" in ''|*[!0-9]*) echo "Неверный вариант" >&2; return 1 ;; esac
   local net
@@ -2449,8 +2645,11 @@ cmd_smart_apply_variant() {
 
 # <128 MB RAM: avoid spawning extra instances to prevent OOM
 cmd_smart_bench() {
-  local target_domain="${1:-}" slot_arg="${2:-}"
-  local tool kind bin
+  local target_domain="${1:-}"
+  local slot_arg="${2:-}"
+  local tool
+  local kind
+  local bin
   tool=$(probe_tool); kind="${tool%% *}"; bin="${tool#* }"
   printf 'tool\t%s\n' "$kind"
   [ "$kind" = "none" ] && { echo done; return 0; }
@@ -2530,7 +2729,12 @@ cmd_smart_bench() {
 
   printf 'SMART_BENCH_START\t%s\t%s\t%s\n' "$total_variants" "$slot" "$(echo $targets | tr ' ' ',')"
 
-  local v_idx=0 best_v="" best_name="" best_ok=0 best_total=0 best_ms=99999
+  local v_idx=0
+  local best_v=""
+  local best_name=""
+  local best_ok=0
+  local best_total=0
+  local best_ms=99999
   local proto=3
   [ "$slot" = "quic" ] && proto=4
 
@@ -2539,7 +2743,10 @@ cmd_smart_bench() {
     v_name=$(smart_variant_name "$slot" "$v")
     printf 'SMART_BENCH_RUN\t%s\t%s\t%s\t%s\n' "$v_idx" "$v" "$v_name" "$total_variants"
 
-    local ok_cnt=0 total_cnt=0 sum_ms=0 fail_reasons=""
+    local ok_cnt=0
+    local total_cnt=0
+    local sum_ms=0
+    local fail_reasons=""
 
     for tgt in $targets; do
       local now_ts; now_ts=$(date +%s)
@@ -2549,7 +2756,8 @@ cmd_smart_bench() {
       total_cnt=$((total_cnt + 1))
       local res
       res=$(probe_attempt "$kind" "$bin" "$tgt" "$proto")
-      local st="${res%% *}" detail="${res#* }"
+      local st="${res%% *}"
+      local detail="${res#* }"
       if [ "$st" = "ok" ]; then
         ok_cnt=$((ok_cnt + 1))
         sum_ms=$((sum_ms + ${detail:-0}))
@@ -2604,7 +2812,8 @@ bench_slot_q() { printf '%s' "$((NFQUEUE_NUM + 1 + $1))"; }
 bench_slot_lo() { printf '%s' "$((BENCH_PORT_BASE + $1 * BENCH_PORT_WIDTH))"; }
 
 bench_slot_count() { # [free KB] -> slot count; BENCH_SLOTS sets explicitly, 0 = sequential
-  local n avail="${1:-}"
+  local n
+  local avail="${1:-}"
   case "${BENCH_SLOTS:-}" in
     ''|*[!0-9]*) ;;
     *)
@@ -2623,7 +2832,8 @@ bench_slot_count() { # [free KB] -> slot count; BENCH_SLOTS sets explicitly, 0 =
 }
 
 bench_ports_free() { # <lo> <hi> -> 0 if no sockets exist in range
-  local f n
+  local f
+  local n
   for f in "${PROC_NET_ROOT:-/proc/net}"/tcp "${PROC_NET_ROOT:-/proc/net}"/tcp6 \
            "${PROC_NET_ROOT:-/proc/net}"/udp "${PROC_NET_ROOT:-/proc/net}"/udp6; do
     [ -r "$f" ] || continue
@@ -2671,7 +2881,8 @@ bench_curl_local_port() { # <curl> -> 0 if --local-port supported
 }
 
 bench_parallel_possible() { # <mode> <curl> -> "<slots> <first port>", else code 1
-  local n base
+  local n
+  local base
   [ "$1" = "curl" ] || return 1
   case "$NFQUEUE_NUM" in ''|*[!0-9]*) return 1 ;; esac
   n=$(bench_slot_count)
@@ -2683,7 +2894,9 @@ bench_parallel_possible() { # <mode> <curl> -> "<slots> <first port>", else code
 }
 
 bench_jumps() { # <cmd> — jumps first: service may have re-applied rules
-  local C="$1" hook chain
+  local C="$1"
+  local hook
+  local chain
   for hook in "POSTROUTING $BENCH_CHAIN_OUT" "PREROUTING $BENCH_CHAIN_IN"; do
     chain="${hook#* }"
     hook="${hook%% *}"
@@ -2707,7 +2920,11 @@ bench_chains_up() {
 }
 
 bench_slot_rules() { # <i> — slot rules, applied only after instance is running
-  local i="$1" q lo hi C
+  local i="$1"
+  local q
+  local lo
+  local hi
+  local C
   q=$(bench_slot_q "$i"); lo=$(bench_slot_lo "$i"); hi=$((lo + BENCH_PORT_WIDTH - 1))
   for C in iptables ip6tables; do
     [ "$C" = "ip6tables" ] && [ "$IPV6_ENABLED" = "0" ] && continue
@@ -2745,7 +2962,8 @@ bench_slot_args() { # <slot_conf> <queue> <log> -> private instance arguments
 }
 
 bench_slot_alive() { # <i>
-  local pidf="$STATE_DIR/bench_slot.$1.pid" pid
+  local pidf="$STATE_DIR/bench_slot.$1.pid"
+  local pid
   [ -f "$pidf" ] || return 1
   pid=$(cat "$pidf" 2>/dev/null)
   case "$pid" in ''|0|*[!0-9]*) return 1 ;; esac
@@ -2755,21 +2973,24 @@ bench_slot_alive() { # <i>
 
 # Private orchestrator state for bench instances
 bench_slot_bound() { # <i>
-  local f=/proc/net/netfilter/nfnetlink_queue q
+  local f=/proc/net/netfilter/nfnetlink_queue
+  local q
   [ -r "$f" ] || return 0
   q=$(bench_slot_q "$1")
   awk -v q="$q" '$1 == q { found = 1 } END { exit !found }' "$f" 2>/dev/null
 }
 
 bench_slot_seq() { # <i> -> slot i queue packet counter (id_sequence)
-  local f=/proc/net/netfilter/nfnetlink_queue q
+  local f=/proc/net/netfilter/nfnetlink_queue
+  local q
   [ -r "$f" ] || return 0
   q=$(bench_slot_q "$1")
   awk -v q="$q" '$1 == q { print $8; exit }' "$f" 2>/dev/null
 }
 
 bench_queue_seq() { # [queue_num] -> queue packet counter
-  local f=/proc/net/netfilter/nfnetlink_queue q="${1:-$NFQUEUE_NUM}"
+  local f=/proc/net/netfilter/nfnetlink_queue
+  local q="${1:-$NFQUEUE_NUM}"
   [ -r "$f" ] || return 0
   awk -v q="$q" '$1 == q { print $8; exit }' "$f" 2>/dev/null
 }
@@ -2790,7 +3011,15 @@ bench_set_mode_all() { # <source> <dest>
 }
 
 bench_slot_start() { # <i> <strategy>
-  local i="$1" st="$2" q conf log pidf args orch w=0
+  local i="$1"
+  local st="$2"
+  local q
+  local conf
+  local log
+  local pidf
+  local args
+  local orch
+  local w=0
   q=$(bench_slot_q "$i")
   conf="$STATE_DIR/bench_slot.$i.conf"
   log="$STATE_DIR/bench_slot.$i.log"
@@ -2832,7 +3061,12 @@ bench_slot_start() { # <i> <strategy>
 }
 
 bench_screen() { # <mode> <curl> <res> <tag> -> 0 if strategy passes filter
-  local kind="$1" bin="$2" res="$3" f="$STATE_DIR/bench_screen.$4.$$.tmp" r_yt r_dc
+  local kind="$1"
+  local bin="$2"
+  local res="$3"
+  local f="$STATE_DIR/bench_screen.$4.$$.tmp"
+  local r_yt
+  local r_dc
 # Candidate leaders: highest ok count, then lowest latency
   ( probe_attempt "$kind" "$bin" "redirector.googlevideo.com" 3 > "$f.yt" ) &
   ( probe_attempt "$kind" "$bin" "gateway.discord.gg" 3 > "$f.dc" ) &
@@ -2849,12 +3083,18 @@ bench_screen() { # <mode> <curl> <res> <tag> -> 0 if strategy passes filter
 }
 
 bench_hosts_probe() { # <mode> <curl> <hostlist> <res>
-  local kind="$1" bin="$2" hosts="$3" res="$4" h batch=0
+  local kind="$1"
+  local bin="$2"
+  local hosts="$3"
+  local res="$4"
+  local h
+  local batch=0
   while IFS= read -r h; do
     [ -z "$h" ] && continue
     case "$h" in \#*) continue ;; esac
     (
-      local k=1 r
+      local k=1
+      local r
       while [ "$k" -le 3 ]; do
         r=$(probe_attempt "$kind" "$bin" "$h" "$k")
         printf '%s\t%s\t%s\n' "$h" "$k" "$r" >> "$res"
@@ -2871,16 +3111,35 @@ bench_hosts_probe() { # <mode> <curl> <hostlist> <res>
 }
 
 bench_failed() { # <idx> <strategy> <reason> [total]
-  local idx="$1" st="$2" reason="$3" total="${4:-0}"
+  local idx="$1"
+  local st="$2"
+  local reason="$3"
+  local total="${4:-0}"
   printf 'BENCH_RES\t%s\t%s\t0\t%s\t0\t%s\t0\t0\n' "$idx" "$st" "$total" "$reason"
   printf '%s\t%s\t0\t%s\t0\t%s\t0\t0\t99999\t99999\n' "$idx" "$st" "$total" "$reason" >> "$BENCH_STATS"
 }
 
 bench_aggregate() { # <res> <idx> <strategy> — prints BENCH_RES and aggregates stats
-  local res="$1" idx="$2" st="$3" h_val k r_val r_st r_detail
-  local ok_cnt=0 total_cnt=0 sum_ms=0 fail_reasons="" is_yt is_dc
-  local yt_ok=0 yt_sum=0 dc_ok=0 dc_sum=0
-  local broken_cnt=0 base_f="$STATE_DIR/bench_baseline_res.$$.tmp"
+  local res="$1"
+  local idx="$2"
+  local st="$3"
+  local h_val
+  local k
+  local r_val
+  local r_st
+  local r_detail
+  local ok_cnt=0
+  local total_cnt=0
+  local sum_ms=0
+  local fail_reasons=""
+  local is_yt
+  local is_dc
+  local yt_ok=0
+  local yt_sum=0
+  local dc_ok=0
+  local dc_sum=0
+  local broken_cnt=0
+  local base_f="$STATE_DIR/bench_baseline_res.$$.tmp"
   while IFS="$(printf '\t')" read -r h_val k r_val; do
     [ -z "$r_val" ] && continue
     r_st="${r_val%% *}"; r_detail="${r_val#* }"
@@ -2907,7 +3166,10 @@ bench_aggregate() { # <res> <idx> <strategy> — prints BENCH_RES and aggregates
       fi
     done < "$base_f"
   fi
-  local avg_ms=0 yt_avg=99999 dc_avg=99999 top_fail="-"
+  local avg_ms=0
+  local yt_avg=99999
+  local dc_avg=99999
+  local top_fail="-"
   [ "$ok_cnt" -gt 0 ] && avg_ms=$((sum_ms / ok_cnt))
   [ "$yt_ok" -gt 0 ] && yt_avg=$((yt_sum / yt_ok))
   [ "$dc_ok" -gt 0 ] && dc_avg=$((dc_sum / dc_ok))
@@ -2983,8 +3245,16 @@ bench_top_indices() { # <count> -> space-separated idx
 }
 
 bench_measure_serial() { # <idx> <strategy> <hosts> <domain> <mode> <curl> <res> — via service restart
-  local idx="$1" st="$2" hosts="$3" target="$4" kind="$5" bin="$6" res="$7"
-  local patched="$STATE_DIR/strat_bench.$$.tmp" ready=false wait_i=0
+  local idx="$1"
+  local st="$2"
+  local hosts="$3"
+  local target="$4"
+  local kind="$5"
+  local bin="$6"
+  local res="$7"
+  local patched="$STATE_DIR/strat_bench.$$.tmp"
+  local ready=false
+  local wait_i=0
   if build_strategy_conf "$st" "$patched" && bench_set_mode_all "$patched" "$CONFFILE"; then
     rm -f "$patched"
     echo "$st" > "$ACTIVE_FILE" 2>/dev/null
@@ -3003,7 +3273,8 @@ bench_measure_serial() { # <idx> <strategy> <hosts> <domain> <mode> <curl> <res>
   [ "$ready" = "true" ] || return 1
 
   setup_probe_app_rule
-  local sb="" sa=""
+  local sb=""
+  local sa=""
   sb=$(bench_queue_seq "$NFQUEUE_NUM")
   : > "$res"
   if [ -z "$target" ]; then
@@ -3025,7 +3296,12 @@ bench_slot_probe() { # <ports> <idx> <res> <hosts> <domain> <mode> <curl>
   PROBE_FORCE_IPV4=0
   # Match rule output both with and without leading space
   [ "$IPV6_ENABLED" = "0" ] && PROBE_FORCE_IPV4=1
-  local idx="$2" res="$3" hosts="$4" target="$5" kind="$6" bin="$7"
+  local idx="$2"
+  local res="$3"
+  local hosts="$4"
+  local target="$5"
+  local kind="$6"
+  local bin="$7"
   : > "$res"
   if [ -z "$target" ]; then
     bench_screen "$kind" "$bin" "$res" "$idx" || return 0
@@ -3035,7 +3311,10 @@ bench_slot_probe() { # <ports> <idx> <res> <hosts> <domain> <mode> <curl>
 
 # Invalidate measurements if service rules displaced benchmark jumps
 bench_jump_first() { # <cmd> -> 0 if our jump precedes service jump
-  local C="$1" out n_bench n_post
+  local C="$1"
+  local out
+  local n_bench
+  local n_post
   out=$($C -w -t mangle -S POSTROUTING 2>/dev/null)
 # Drop results if bench instance crashed
   n_bench=$(printf '%s\n' "$out" | grep -n -- "-j $BENCH_CHAIN_OUT" | head -1 | cut -d: -f1)
@@ -3055,7 +3334,10 @@ bench_jumps_in_order() {
 }
 
 bench_round_contaminated() { # round failed twice: discard stats and terminate slots
-  local i idx st res
+  local i
+  local idx
+  local st
+  local res
   while IFS="$(printf '\t')" read -r i idx st res; do
     [ -z "$res" ] && continue
     case " $BENCH_ACTIVE " in *" $i "*) ;; *) continue ;; esac
@@ -3069,7 +3351,17 @@ bench_round_contaminated() { # round failed twice: discard stats and terminate s
 }
 
 bench_round_run() { # <hosts> <domain> <mode> <curl> — round slot probes and parse
-  local hosts="$1" target="$2" kind="$3" bin="$4" C i idx st res lo hi
+  local hosts="$1"
+  local target="$2"
+  local kind="$3"
+  local bin="$4"
+  local C
+  local i
+  local idx
+  local st
+  local res
+  local lo
+  local hi
   for C in iptables ip6tables; do
     [ "$C" = "ip6tables" ] && [ "$IPV6_ENABLED" = "0" ] && continue
     bench_jumps "$C"
@@ -3099,7 +3391,8 @@ bench_round_run() { # <hosts> <domain> <mode> <curl> — round slot probes and p
     if bench_slot_alive "$i"; then
       local bypass=0
       if [ -s "$seq_file" ]; then
-        local sb sa
+        local sb
+        local sa
         sb=$(awk -v slot="$i" '$1 == slot { print $2; exit }' "$seq_file" 2>/dev/null)
         sa=$(bench_slot_seq "$i")
         if [ -n "$sb" ] && [ -n "$sa" ] && [ "$sa" -le "$sb" ]; then
@@ -3123,7 +3416,10 @@ bench_round_run() { # <hosts> <domain> <mode> <curl> — round slot probes and p
 }
 
 bench_round_finish() { # <hosts> <domain> <mode> <curl> — round with single retry
-  local hosts="$1" target="$2" kind="$3" bin="$4"
+  local hosts="$1"
+  local target="$2"
+  local kind="$3"
+  local bin="$4"
   if bench_round_run "$hosts" "$target" "$kind" "$bin"; then
     return 0
   fi
@@ -3138,8 +3434,16 @@ bench_round_finish() { # <hosts> <domain> <mode> <curl> — round with single re
 }
 
 bench_parallel_run() { # <slots> <strat_list> <hosts> <domain> <mode> <curl>
-  local nslots="$1" list="$2" hosts="$3" target="$4" kind="$5" bin="$6"
-  local i=0 idx st res
+  local nslots="$1"
+  local list="$2"
+  local hosts="$3"
+  local target="$4"
+  local kind="$5"
+  local bin="$6"
+  local i=0
+  local idx
+  local st
+  local res
   bench_chains_up || return 1
   while IFS="$(printf '\t')" read -r idx st; do
     [ -z "$st" ] && continue
@@ -3166,7 +3470,11 @@ bench_parallel_run() { # <slots> <strat_list> <hosts> <domain> <mode> <curl>
 
 cmd_bench_strategies() {
   local target_domain="$1"
-  local tool kind bin orig_strat orig_running=false
+  local tool
+  local kind
+  local bin
+  local orig_strat
+  local orig_running=false
   tool=$(probe_tool); kind="${tool%% *}"; bin="${tool#* }"
   printf 'tool\t%s\n' "$kind"
   [ "$kind" = "none" ] && { echo done; return 0; }
@@ -3241,7 +3549,8 @@ cmd_bench_strategies() {
 
   printf 'BENCH_START\t%s\n' "$BENCH_TOTAL"
 
-  local nslots=0 p
+  local nslots=0
+  local p
   p=$(bench_parallel_possible "$kind" "$bin") || p=""
   nslots="${p%% *}"; BENCH_PORT_BASE="${p#* }"
   case "$nslots" in ''|*[!0-9]*) nslots=0 ;; esac
@@ -3256,7 +3565,8 @@ cmd_bench_strategies() {
 
   if [ "$nslots" = "0" ]; then
     printf 'BENCH_MODE\tserial\n'
-    local idx res
+    local idx
+    local res
     while IFS="$(printf '\t')" read -r idx st; do
       [ -z "$st" ] && continue
       printf 'BENCH_RUN\t%s\t%s\t%s\n' "$idx" "$st" "$BENCH_TOTAL"
@@ -3270,11 +3580,19 @@ cmd_bench_strategies() {
     done < "$strat_list"
   fi
 
-  local b_idx b_name b_ok b_total b_avg b_yt b_dc
+  local b_idx
+  local b_name
+  local b_ok
+  local b_total
+  local b_avg
+  local b_yt
+  local b_dc
   bench_best_read
 # Verified re-check runs sequentially through main service
   if [ "$nslots" -gt 0 ] && [ "$b_idx" != "-" ]; then
-    local vi vname vres
+    local vi
+    local vname
+    local vres
     BENCH_VERIFIED=""
     for vi in $(bench_top_indices "$BENCH_VERIFY_MAX"); do
       vname=$(awk -F'\t' -v i="$vi" '$1 == i { print $2; exit }' "$BENCH_STATS")
@@ -3312,7 +3630,11 @@ cmd_bench_strategies() {
 }
 
 cmd_probe_dpi() {
-  local mode="${1:-all}" target_domain="${2:-}" tool kind bin
+  local mode="${1:-all}"
+  local target_domain="${2:-}"
+  local tool
+  local kind
+  local bin
   tool=$(probe_tool); kind="${tool%% *}"; bin="${tool#* }"
   printf 'tool\t%s\n' "$kind"
   [ "$kind" = "none" ] && { echo done; return 0; }
@@ -3345,7 +3667,10 @@ cmd_probe_dpi() {
 }
 
 cmd_dpi_distance() {
-  local ip net r rule
+  local ip
+  local net
+  local r
+  local rule
   [ -x "$HELPER_BIN" ] || { echo skip; return 0; }
   date +%s > "$DPI_TTL_FILE.try"
   ip=$(ping -c 1 -W 2 www.youtube.com 2>/dev/null | sed -n '1s/^PING [^(]*(\([0-9.]*\)).*/\1/p')
@@ -3395,7 +3720,14 @@ tgws_decode() { # stdin: строки списка -> имена .co.uk
 }
 cmd_tgws_update() {
   local f="$LISTS_DIR/telegram_ws.list"
-  local tool kind bin tmp u n=0 got=0 add
+  local tool
+  local kind
+  local bin
+  local tmp
+  local u
+  local n=0
+  local got=0
+  local add
   [ -f "$f" ] || { echo "Нет списка telegram_ws.list" >&2; return 1; }
   [ "$(cat "$SMART_NET_FILE" 2>/dev/null)" = offline ] && { echo "Нет сети" >&2; return 1; }
   tool=$(probe_tool); kind="${tool%% *}"; bin="${tool#* }"
@@ -3426,7 +3758,8 @@ cmd_tgws_update() {
 # ---------------------------------------------------------------- list updates
 # Pending updates from module installer for user-modified lists
 cmd_list_update() { # <list_name>
-  local f p
+  local f
+  local p
   f=$(list_file "$1") || { echo "Неизвестный список" >&2; return 1; }
   p="$LISTS_PENDING_DIR/${f##*/}"
   [ -f "$p" ] || { echo "Обновления для ${f##*/} нет" >&2; return 1; }
@@ -3443,7 +3776,12 @@ cmd_list_update() { # <list_name>
 # covered by a parent entry, or a domain that sits in an include and an exclude
 # list at once.
 lint_lists() { # prints <severity>\t<list>\t<message>; returns the error count
-  local l f payload out="" errn=0 allowpath
+  local l
+  local f
+  local payload
+  local out=""
+  local errn=0
+  local allowpath
   for l in user exclude auto probe_hosts; do
     f="$LISTS_DIR/$l.list"
     [ -s "$f" ] || continue
@@ -3483,7 +3821,8 @@ lint_lists() { # prints <severity>\t<list>\t<message>; returns the error count
   done
 
   # the same domain in an include and an exclude list cancels out
-  local u="$LISTS_DIR/user.list" e="$LISTS_DIR/exclude.list"
+  local u="$LISTS_DIR/user.list"
+  local e="$LISTS_DIR/exclude.list"
   if [ -s "$u" ] && [ -s "$e" ]; then
     payload=$(awk '
       NR == FNR { gsub(/^[ \t]+|[ \t]+$/, ""); if ($0 != "" && $0 !~ /^#/) inc[tolower($0)] = 1; next }
@@ -3501,7 +3840,8 @@ lint_lists() { # prints <severity>\t<list>\t<message>; returns the error count
 }
 
 cmd_lint_lists() {
-  local out rc
+  local out
+  local rc
   out=$(lint_lists)
   rc=$?
   [ -n "$out" ] && printf '%s\n' "$out"
@@ -3516,7 +3856,8 @@ reload_after_change() {
 }
 
 cmd_googlevideo_discovery() {
-  local force="${1:-}" cdn
+  local force="${1:-}"
+  local cdn
   cdn=$(resolve_googlevideo_cdn "$force")
   printf 'GOOGLEVIDEO_CDN\t%s\n' "$cdn"
 }
@@ -3555,7 +3896,10 @@ cmd_orchestra_clear() {
 }
 
 cmd_list_catalogs() {
-  local cat label file cnt
+  local cat
+  local label
+  local file
+  local cnt
   for cat in tcp_tls tcp_http udp_quic udp_voice; do
     case "$cat" in
       tcp_tls) label="TCP TLS (HTTPS)" ;;
@@ -3574,7 +3918,10 @@ cmd_list_catalogs() {
 }
 
 cmd_get_catalog() {
-  local cat="$1" file idx=0 line
+  local cat="$1"
+  local file
+  local idx=0
+  local line
   file=$(catalog_file "$cat" 2>/dev/null)
   if [ -z "$file" ] || [ ! -f "$file" ]; then
     echo "Каталог '$cat' не найден" >&2
@@ -3590,7 +3937,11 @@ cmd_get_catalog() {
 }
 
 cmd_catalog_apply_module() {
-  local cat="$1" idx="$2" file line cur_idx=0
+  local cat="$1"
+  local idx="$2"
+  local file
+  local line
+  local cur_idx=0
   file=$(catalog_file "$cat" 2>/dev/null)
   if [ -z "$file" ] || [ ! -f "$file" ]; then
     echo "Каталог '$cat' не найден" >&2
@@ -3718,7 +4069,11 @@ cmd_catalog_apply_module() {
 }
 
 cmd_list_replaced_strategies() {
-  local rep_dir="$CONFDIR/strategies/replaced" f bname dt sz
+  local rep_dir="$CONFDIR/strategies/replaced"
+  local f
+  local bname
+  local dt
+  local sz
   if [ ! -d "$rep_dir" ]; then
     return 0
   fi
@@ -3737,7 +4092,8 @@ cmd_list_replaced_strategies() {
 }
 
 cmd_restore_replaced_strategy() {
-  local name="$1" f
+  local name="$1"
+  local f
   case "$name" in
     ''|*/*|*\\*|..*) echo "Некорректное имя файла" >&2; return 1 ;;
   esac
@@ -3775,7 +4131,16 @@ cmd_tg_affinity() {
 MONET_ROLES="primary on_primary primary_container on_primary_container secondary on_secondary secondary_container on_secondary_container tertiary on_tertiary tertiary_container on_tertiary_container error on_error error_container on_error_container background on_background surface on_surface surface_variant on_surface_variant surface_dim surface_bright surface_container_lowest surface_container_low surface_container surface_container_high surface_container_highest outline outline_variant"
 MONET_FIXED="primary_fixed primary_fixed_dim on_primary_fixed on_primary_fixed_variant secondary_fixed secondary_fixed_dim on_secondary_fixed on_secondary_fixed_variant tertiary_fixed tertiary_fixed_dim on_tertiary_fixed on_tertiary_fixed_variant"
 cmd_monet_system() {
-  local key cache="$STATE_DIR/monet.cache" tmp style seed n=0 r m name f
+  local key
+  local cache="$STATE_DIR/monet.cache"
+  local tmp
+  local style
+  local seed
+  local n=0
+  local r
+  local m
+  local name
+  local f
   key=$(settings get secure theme_customization_overlay_packages 2>/dev/null | tr -d '\r\n')
   case "$key" in ''|null) key="" ;; esac
   if [ -f "$cache" ] && [ "$(head -n 1 "$cache")" = "key $key" ]; then
@@ -3811,7 +4176,9 @@ cmd_monet_system() {
 
 cmd_stealth() {
   apply_stealth_hiding
-  local cap sbin dhandler
+  local cap
+  local sbin
+  local dhandler
   cap=$(detect_stealth_capabilities 2>/dev/null)
   case "$cap" in
     susfs:*)
