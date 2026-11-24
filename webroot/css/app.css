@@ -194,29 +194,28 @@ html.scroll-locked, html.scroll-locked body { overflow: hidden; }
   background: var(--md-sys-color-surface-container-high); color: var(--md-sys-color-primary);
 }
 
-/* Adjacent selected apps merge into one rounded M3 card */
-#pk .list-item.selected { border-radius: 0; margin-bottom: 0; }
+/* Selected apps group: keep M3 container dividers and rounded bounds */
+#pk .list-item.selected { border-radius: var(--shape-extra-small); margin-bottom: 0; }
 #pk .list-item.sel-single { border-radius: var(--shape-large); margin-bottom: 12px; }
 #pk .list-item.sel-first {
-  border-radius: var(--shape-large) var(--shape-large) 0 0;
+  border-radius: var(--shape-large) var(--shape-large) var(--shape-extra-small) var(--shape-extra-small);
   border-start-start-radius: var(--shape-large);
   border-start-end-radius: var(--shape-large);
-  border-end-start-radius: 0;
-  border-end-end-radius: 0;
+  border-end-start-radius: var(--shape-extra-small);
+  border-end-end-radius: var(--shape-extra-small);
   margin-bottom: 0;
 }
-#pk .list-item.sel-mid { border-radius: 0; margin-bottom: 0; }
+#pk .list-item.sel-mid { border-radius: var(--shape-extra-small); margin-bottom: 0; }
 #pk .list-item.sel-last {
-  border-radius: 0 0 var(--shape-large) var(--shape-large);
-  border-start-start-radius: 0;
-  border-start-end-radius: 0;
+  border-radius: var(--shape-extra-small) var(--shape-extra-small) var(--shape-large) var(--shape-large);
+  border-start-start-radius: var(--shape-extra-small);
+  border-start-end-radius: var(--shape-extra-small);
   border-end-start-radius: var(--shape-large);
   border-end-end-radius: var(--shape-large);
   margin-bottom: 12px;
 }
 #pk .list-item.sel-single:last-child,
 #pk .list-item.sel-last:last-child { margin-bottom: 0; }
-html[data-containers="true"] #pk .list-item.selected + .list-item.selected { margin-top: -3px; }
 html[data-containers="true"] #pk .list-item.selected + .list-item:not(.selected) {
   border-start-start-radius: var(--shape-large);
   border-start-end-radius: var(--shape-large);

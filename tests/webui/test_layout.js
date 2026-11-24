@@ -321,8 +321,8 @@ const VIEWPORTS = [
       };
       return [...document.querySelectorAll('#pk .list-item.selected')].map(getRadii);
     });
-    eq('16,16,0,0', selRadii[0].join(','), 'first selected app has rounded top corners and flat bottom');
-    eq('0,0,16,16', selRadii[1].join(','), 'last selected app has flat top and rounded bottom corners');
+    eq('16,16,4,4', selRadii[0].join(','), 'first selected app has rounded top corners and container bottom');
+    eq('4,4,16,16', selRadii[1].join(','), 'last selected app has container top and rounded bottom corners');
 
     await page.evaluate(() => { window.__calls = []; });
     await page.evaluate(() => { document.getElementById('pf').value = ''; });
