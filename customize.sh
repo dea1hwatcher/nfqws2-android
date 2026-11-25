@@ -125,9 +125,9 @@ if [ -d "$MODPATH/strategy-catalogs" ]; then
   cp -rf "$MODPATH/strategy-catalogs"/* "$CONF/strategy-catalogs/" 2>/dev/null || true
 fi
 
-# set perms to nfwqws2
-busybox chmod +x "$MODPATH/bin/nfqws2"
-busybox chmod +x "$MODPATH/bin/nfqws2-ctl"
+# set perms to nfqws2
+busybox chmod +x "$MODPATH/bin/nfqws2" 2>/dev/null || chmod +x "$MODPATH/bin/nfqws2" 2>/dev/null || true
+busybox chmod +x "$MODPATH/bin/nfqws2-ctl" 2>/dev/null || chmod +x "$MODPATH/bin/nfqws2-ctl" 2>/dev/null || true
 busybox chmod +x "$MODPATH/service.sh" "$MODPATH/action.sh" "$MODPATH/uninstall.sh" 2>/dev/null || chmod +x "$MODPATH/service.sh" "$MODPATH/action.sh" "$MODPATH/uninstall.sh" 2>/dev/null
 busybox chmod +x "$MODPATH/boot-completed.sh" "$MODPATH/post-fs-data.sh" 2>/dev/null || chmod +x "$MODPATH/boot-completed.sh" "$MODPATH/post-fs-data.sh" 2>/dev/null
 busybox chmod +x "$MODPATH/system/bin/nfqws2-ctl" 2>/dev/null || chmod +x "$MODPATH/system/bin/nfqws2-ctl" 2>/dev/null
@@ -136,7 +136,7 @@ busybox chmod +x "$MODPATH/system/bin/nfqws2-ctl" 2>/dev/null || chmod +x "$MODP
 for p in /data/adb/ap/bin /data/adb/ksu/bin; do
   if [ -d "$p" ]; then
     ln -sf /data/adb/modules/nfqws2-android/bin/nfqws2-ctl "$p/nfqws2-ctl" 2>/dev/null || true
-    ln -sf /data/adb/modules/nfqws2-android/bin/nfqws2-ctl "$p/zapret2-status" 2>/dev/null || true
+    ln -sf /data/adb/modules/nfqws2-android/system/bin/zapret2-status "$p/zapret2-status" 2>/dev/null || true
   fi
 done
 

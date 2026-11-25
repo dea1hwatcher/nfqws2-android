@@ -192,6 +192,15 @@ duplicate_modes=$(awk '
 ' "$REPO_DIR"/strategies/*.conf)
 assert_eq "" "$duplicate_modes" "AUTO mode never repeats a MODE_LIST exclude hostlist"
 
+bad_iface=""
+for f in "$REPO_DIR"/defaults/nfqws2.conf "$REPO_DIR"/strategies/*.conf; do
+  [ -f "$f" ] || continue
+  if grep -q '^IFACE_EXCLUDE=' "$f" && ! grep -qE '^IFACE_EXCLUDE=.*awg\+' "$f"; then
+    bad_iface="$bad_iface ${f##*/}"
+  fi
+done
+assert_eq "" "$(printf '%s' "$bad_iface" | sed 's/^ *//')" "every config declaring IFACE_EXCLUDE includes modern VPN interfaces (awg+)"
+
 # ── rewriting keenetic paths has one definition ────────────────────────────────
 section "keenetic path rewriting"
 

@@ -974,10 +974,10 @@ async function dcAddUser(q){
 
 async function dcDiscoverPageHosts(domain){
   if(!domain || dcPageHostsRunning) return;
-  dcPageHostsRunning = true;
-  dcPageHosts = [];
   const el = $('dc-hosts-box');
   if(!el) return;
+  dcPageHostsRunning = true;
+  dcPageHosts = [];
   el.hidden = false;
   el.innerHTML = '<div class="list-item"><span class="spinner"></span>' +
     '<span class="li-text"><span class="li-primary">' + esc(t('Поиск внешних ресурсов…')) + '</span>' +

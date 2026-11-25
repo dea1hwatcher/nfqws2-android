@@ -1470,6 +1470,7 @@ end
 -- contributors), который сам — по hostfakesplit bol-van (zapret2, MIT).
 -- Порча (tcp_ts, badsum…), repeats и ip_id — только у фейка, как у
 -- hostfakesplit; blob и optional — тоже как у него
+if not hostfakesplit_alt then
 function hostfakesplit_alt(ctx, desync)
 	if not desync.dis.tcp then
 		if not desync.dis.icmp then instance_cutoff_shim(ctx, desync) end
@@ -1502,4 +1503,5 @@ function hostfakesplit_alt(ctx, desync)
 			return desync.arg.nodrop and VERDICT_PASS or VERDICT_DROP
 		end
 	end
+end
 end

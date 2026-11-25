@@ -8,18 +8,19 @@ case "$MODDIR" in /*) ;; *) MODDIR="$(cd "$MODDIR" 2>/dev/null && pwd)" ;; esac
 load_conf >/dev/null 2>&1
 
 # 1. Clean up stale locks, pidfiles and leftover sockets from unexpected shutdown/reboot
-rm -f "$PIDFILE" "$WATCHDOG_PIDFILE" "$NETWATCH_PIDFILE" "$STATE_DIR"/*.lock 2>/dev/null || true
+rm -f "$PIDFILE" "$WD_PIDFILE" "$WN_PIDFILE" "$WL_PIDFILE" "$SK_PIDFILE" "$STATE_DIR/probe.pid" 2>/dev/null || true
+rm -rf "$STATE_DIR"/*.lock 2>/dev/null || true
 rm -f /data/local/tmp/nfqws2* 2>/dev/null || true
 
 # 2. Early carrier tethering check bypass
 # Set net.tethering.noprovisioning before system_server starts TetheringService
+# (tether_dun_required via `settings` is deferred to boot-completed.sh when system_server is up)
 if [ "$ENABLE_HOTSPOT" = "1" ]; then
   for r in /data/adb/ksu/bin/resetprop /data/adb/magisk/resetprop /data/adb/ap/bin/resetprop resetprop; do
     if [ -x "$r" ] || command -v "$r" >/dev/null 2>&1; then
       "$r" -n net.tethering.noprovisioning true >/dev/null 2>&1 && break
     fi
   done
-  settings put global tether_dun_required 0 2>/dev/null || true
 fi
 
 # 3. Early stealth hiding mechanisms (SuSFS, KernelSU ksud umount, SELinux context)

@@ -1346,37 +1346,3 @@ function discord_voice_obfs(ctx, desync)
 	end
 end
 
--- zapret2 : TLS Extension Multi-Split (SNI, ECH & Handshake Header)
--- standard args : direction, rawsend, fooling, repeats
--- arg : split_ext=1 - split at SNI extension boundary
--- arg : seqovl=N - overlap bytes with pattern
-function tls_ext_split(ctx, desync)
-	if not desync.dis.tcp then
-		if not desync.dis.icmp then instance_cutoff_shim(ctx, desync) end
-		return
-	end
-	direction_cutoff_opposite(ctx, desync)
-	local data = desync.reasm_data or desync.dis.payload
-	if #data > 0 and direction_check(desync) and payload_check(desync) then
-		if replay_first(desync) then
-			-- resolve split positions: 1 (after Record Header), midsld (inside SNI)
-			local pos = resolve_multi_pos(data, desync.l7payload, "1,midsld")
-			delete_pos_1(pos)
-			if #pos > 0 then
-				local seqovl
-				if desync.arg.seqovl then
-					seqovl = resolve_pos(data, desync.l7payload, desync.arg.seqovl)
-				end
-				if multidisorder_send(desync, data, seqovl, pos) == VERDICT_PASS then
-					return VERDICT_PASS
-				end
-				replay_drop_set(desync)
-				return desync.arg.nodrop and VERDICT_PASS or VERDICT_DROP
-			end
-		end
-		if replay_drop(desync) then
-			return desync.arg.nodrop and VERDICT_PASS or VERDICT_DROP
-		end
-	end
-end
-

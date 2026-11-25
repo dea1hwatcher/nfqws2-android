@@ -77,11 +77,12 @@ function http_aggressive(ctx, desync)
 
 				-- Add badseq to confuse DPI further
 				if fake_dis.tcp then
-					fake_dis.tcp.th_ack = fake_dis.tcp.th_ack - 66000
+					fake_dis.tcp.th_ack = u32add(fake_dis.tcp.th_ack, -66000)
 				end
+				apply_fooling(desync, fake_dis, opts_fake.fooling)
 
 				if b_debug then DLOG("http_aggressive: sending fake #"..i.." TTL="..ttl) end
-				rawsend_dissect(fake_dis, opts_fake.rawsend)
+				rawsend_dissect(fake_dis, opts_fake.rawsend, opts_fake.reconstruct)
 			end
 
 			-- STEP 2: Split real request into parts
@@ -162,10 +163,11 @@ function http_aggressive(ctx, desync)
 					fake_dis.ip6.ip6_hlim = ttl_start
 				end
 				if fake_dis.tcp then
-					fake_dis.tcp.th_ack = fake_dis.tcp.th_ack - 66000
+					fake_dis.tcp.th_ack = u32add(fake_dis.tcp.th_ack, -66000)
 				end
+				apply_fooling(desync, fake_dis, opts_fake.fooling)
 				if b_debug then DLOG("http_aggressive: sending trailing fake #"..i) end
-				rawsend_dissect(fake_dis, opts_fake.rawsend)
+				rawsend_dissect(fake_dis, opts_fake.rawsend, opts_fake.reconstruct)
 			end
 
 			replay_drop_set(desync)
@@ -351,12 +353,16 @@ function tls_aggressive(ctx, desync)
 				-- Apply fooling based on args
 				if fake_dis.tcp then
 					if desync.arg.badseq then
-						fake_dis.tcp.th_ack = fake_dis.tcp.th_ack - 66000
+						fake_dis.tcp.th_ack = u32add(fake_dis.tcp.th_ack, -66000)
+					end
+					if desync.arg.md5sig and not find_tcp_option(fake_dis.tcp.options, TCP_KIND_MD5) then
+						table.insert(fake_dis.tcp.options, {kind=TCP_KIND_MD5, data=brandom(16)})
 					end
 				end
+				apply_fooling(desync, fake_dis, opts_fake.fooling)
 
 				if b_debug then DLOG("tls_aggressive: sending fake #"..i.." TTL="..ttl.." len="..#fake_data) end
-				rawsend_dissect(fake_dis, opts_fake.rawsend)
+				rawsend_dissect(fake_dis, opts_fake.rawsend, opts_fake.reconstruct)
 			end
 
 			-- STEP 2: Determine split positions for TLS Client Hello
@@ -458,11 +464,17 @@ function tls_aggressive(ctx, desync)
 				if fake_dis.ip6 then
 					fake_dis.ip6.ip6_hlim = ttl_start
 				end
-				if fake_dis.tcp and desync.arg.badseq then
-					fake_dis.tcp.th_ack = fake_dis.tcp.th_ack - 66000
+				if fake_dis.tcp then
+					if desync.arg.badseq then
+						fake_dis.tcp.th_ack = u32add(fake_dis.tcp.th_ack, -66000)
+					end
+					if desync.arg.md5sig and not find_tcp_option(fake_dis.tcp.options, TCP_KIND_MD5) then
+						table.insert(fake_dis.tcp.options, {kind=TCP_KIND_MD5, data=brandom(16)})
+					end
 				end
+				apply_fooling(desync, fake_dis, opts_fake.fooling)
 				if b_debug then DLOG("tls_aggressive: sending trailing fake #"..i) end
-				rawsend_dissect(fake_dis, opts_fake.rawsend)
+				rawsend_dissect(fake_dis, opts_fake.rawsend, opts_fake.reconstruct)
 			end
 
 			replay_drop_set(desync)
@@ -581,15 +593,16 @@ function tls_fake_flood(ctx, desync)
 				-- Apply fooling
 				if fake_dis.tcp then
 					if desync.arg.badseq then
-						fake_dis.tcp.th_ack = fake_dis.tcp.th_ack - 66000
+						fake_dis.tcp.th_ack = u32add(fake_dis.tcp.th_ack, -66000)
 					end
-					if desync.arg.md5sig then
-						-- md5sig applied through reconstruct
+					if desync.arg.md5sig and not find_tcp_option(fake_dis.tcp.options, TCP_KIND_MD5) then
+						table.insert(fake_dis.tcp.options, {kind=TCP_KIND_MD5, data=brandom(16)})
 					end
 				end
+				apply_fooling(desync, fake_dis, desync.arg)
 
 				if b_debug then DLOG("tls_fake_flood: sending fake #"..i.." TTL="..ttl) end
-				rawsend_dissect(fake_dis, opts_fake.rawsend)
+				rawsend_dissect(fake_dis, opts_fake.rawsend, opts_fake.reconstruct)
 			end
 
 			-- Now send real data with multidisorder
@@ -629,8 +642,15 @@ function tls_fake_flood(ctx, desync)
 				fake_dis.payload = fake_data
 				if fake_dis.ip then fake_dis.ip.ip_ttl = 1 end
 				if fake_dis.ip6 then fake_dis.ip6.ip6_hlim = 1 end
+				if fake_dis.tcp then
+					if desync.arg.badseq then fake_dis.tcp.th_ack = u32add(fake_dis.tcp.th_ack, -66000) end
+					if desync.arg.md5sig and not find_tcp_option(fake_dis.tcp.options, TCP_KIND_MD5) then
+						table.insert(fake_dis.tcp.options, {kind=TCP_KIND_MD5, data=brandom(16)})
+					end
+				end
+				apply_fooling(desync, fake_dis, desync.arg)
 				if b_debug then DLOG("tls_fake_flood: sending trailing fake #"..i) end
-				rawsend_dissect(fake_dis, opts_fake.rawsend)
+				rawsend_dissect(fake_dis, opts_fake.rawsend, opts_fake.reconstruct)
 			end
 
 			replay_drop_set(desync)
@@ -681,9 +701,10 @@ function tls_fake_simple(ctx, desync)
 				fake_dis.payload = fake_data
 				if fake_dis.ip then fake_dis.ip.ip_ttl = ttl end
 				if fake_dis.ip6 then fake_dis.ip6.ip6_hlim = ttl end
+				apply_fooling(desync, fake_dis, desync.arg)
 
 				if b_debug then DLOG("tls_fake_simple: sending fake #"..i.." TTL="..ttl) end
-				rawsend_dissect(fake_dis, opts_fake.rawsend)
+				rawsend_dissect(fake_dis, opts_fake.rawsend, opts_fake.reconstruct)
 			end
 
 			-- Send real data as-is (no splitting!)
@@ -792,8 +813,9 @@ function tls_fake_split(ctx, desync)
 				fake_dis.payload = fake_data
 				if fake_dis.ip then fake_dis.ip.ip_ttl = ttl end
 				if fake_dis.ip6 then fake_dis.ip6.ip6_hlim = ttl end
+				apply_fooling(desync, fake_dis, desync.arg)
 				if b_debug then DLOG("tls_fake_split: sending fake #"..i) end
-				rawsend_dissect(fake_dis, opts_fake.rawsend)
+				rawsend_dissect(fake_dis, opts_fake.rawsend, opts_fake.reconstruct)
 			end
 
 			-- Now split at one position
@@ -1316,8 +1338,9 @@ function tls_fake_disorder_gentle(ctx, desync)
 				fake_dis.payload = fake_data
 				if fake_dis.ip then fake_dis.ip.ip_ttl = ttl end
 				if fake_dis.ip6 then fake_dis.ip6.ip6_hlim = ttl end
+				apply_fooling(desync, fake_dis, desync.arg)
 				if b_debug then DLOG("tls_fake_disorder_gentle: sending fake #"..i) end
-				rawsend_dissect(fake_dis, opts_fake.rawsend)
+				rawsend_dissect(fake_dis, opts_fake.rawsend, opts_fake.reconstruct)
 			end
 
 			-- Gentle disorder: split at host and endhost only

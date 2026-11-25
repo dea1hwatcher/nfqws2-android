@@ -737,5 +737,106 @@ restore_tether_offload
 assert_no_file "$TETHER_OFFLOAD_STATE" "restore clears recorded offload state"
 MOCK_TC_TETHER=""
 
+# ── restore_tether_offload without prior snapshot is a no-op ─────────────────
+section "restore_tether_offload leaves settings untouched when no state saved"
+rm -f "$TETHER_OFFLOAD_STATE"
+cat > "$MOCKBIN/settings" <<'X'
+#!/bin/sh
+echo "$*" >> "$MOCK_DIR/settings_calls"
+exit 0
+X
+chmod 0755 "$MOCKBIN/settings"
+: > "$MOCK_DIR/settings_calls"
+restore_tether_offload
+assert_eq "" "$(cat "$MOCK_DIR/settings_calls" 2>/dev/null)" "settings put is not invoked without saved state"
+
+# ── Orchestra JSON structural integrity ───────────────────────────────────────
+section "orchestra JSON lock/block/unlock/unblock stays valid"
+rm -f "$ORCHESTRA_MEMORY_FILE"
+check_orch_json() {
+  local label="$1"
+  if command -v node >/dev/null 2>&1; then
+    node -e "JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8'))" "$ORCHESTRA_MEMORY_FILE" 2>/dev/null
+    assert_rc 0 $? "$label (JSON.parse)"
+  elif command -v python3 >/dev/null 2>&1; then
+    python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$ORCHESTRA_MEMORY_FILE" 2>/dev/null
+    assert_rc 0 $? "$label (json.load)"
+  else
+    _ok "$label (basic structural check)"
+  fi
+}
+orchestra_lock_strategy "a.youtube.com" 2
+assert_rc 0 $? "lock a.youtube.com succeeds"
+check_orch_json "after first lock"
+orchestra_lock_strategy "youtube.com" 3
+check_orch_json "after second lock"
+orchestra_block_strategy "x.com" 1
+check_orch_json "after block"
+orchestra_unlock_strategy "a.youtube.com"
+check_orch_json "after unlocking a.youtube.com"
+assert_contains "$(cat "$ORCHESTRA_MEMORY_FILE")" '"youtube.com": 3' "literal key matching keeps youtube.com when a.youtube.com is unlocked"
+orchestra_unlock_strategy "youtube.com"
+check_orch_json "after unlocking last locked host"
+assert_contains "$(cat "$ORCHESTRA_MEMORY_FILE")" '"locked": {}' "locked section collapses cleanly to empty object"
+orchestra_unblock_strategy "x.com"
+check_orch_json "after unblocking last blocked host"
+assert_contains "$(cat "$ORCHESTRA_MEMORY_FILE")" '"blocked": {}' "blocked section collapses cleanly to empty object"
+
+# ── update_description backslash safety & system_config conntrack healing ─────
+section "update_description backslash safety and system_config conntrack recovery"
+old_moddir_u="$MODDIR"
+mkdir -p "$SANDBOX/mod_desc/state"
+printf 'id=nfqws2-android\nversion=v3.1.2\ndescription=init\n' > "$SANDBOX/mod_desc/module.prop"
+MODDIR="$SANDBOX/mod_desc"
+update_description paused 'Home\nWi\Fi'
+assert_contains "$(cat "$SANDBOX/mod_desc/module.prop")" 'Wi-Fi: Home\nWi\Fi' "update_description preserves backslashes literally without newline expansion"
+assert_eq "3" "$(wc -l < "$SANDBOX/mod_desc/module.prop" | tr -d ' ')" "module.prop stays 3 lines"
+MODDIR="$old_moddir_u"
+
+fixture_ct="$SANDBOX/proc-ct"
+mkdir -p "$fixture_ct/net/netfilter" "$fixture_ct/net/ipv4" "$fixture_ct/net/core"
+printf '0\n' > "$fixture_ct/net/netfilter/nf_conntrack_checksum"
+printf '1\n' > "$fixture_ct/net/netfilter/nf_conntrack_tcp_be_liberal"
+printf '1\n' > "$fixture_ct/net/ipv4/tcp_timestamps"
+printf '8388608\n' > "$fixture_ct/net/core/rmem_max"
+printf '8388608\n' > "$fixture_ct/net/core/wmem_max"
+printf '2097152\n' > "$fixture_ct/net/core/rmem_default"
+printf '16384\n' > "$fixture_ct/net/core/netdev_max_backlog"
+printf '600\n' > "$fixture_ct/net/netfilter/nf_conntrack_tcp_timeout_established"
+printf '4096\n' > "$fixture_ct/net/netfilter/nf_conntrack_max"
+PROC_SYS_ROOT="$fixture_ct"; export PROC_SYS_ROOT
+rm -f "$SYSCTL_STATE"
+system_config >/dev/null 2>&1
+assert_eq "432000" "$(cat "$fixture_ct/net/netfilter/nf_conntrack_tcp_timeout_established")" "system_config heals short conntrack established timeout"
+assert_eq "16384" "$(cat "$fixture_ct/net/netfilter/nf_conntrack_max")" "system_config raises tiny nf_conntrack_max"
+assert_not_contains "$(cat "$SYSCTL_STATE" 2>/dev/null || true)" "nf_conntrack_tcp_timeout_established" "broken timeout is not recorded for restore on stop"
+assert_not_contains "$(cat "$SYSCTL_STATE" 2>/dev/null || true)" "nf_conntrack_max" "broken conntrack_max is not recorded for restore on stop"
+unset PROC_SYS_ROOT
+
+# ── vpn_active: hyphenated interface fallback & IPv6 ipsec rules ──────────────
+section "vpn_active handles wg-mullvad fallback and IPv6 ipsec rules"
+NFQWS_SYSNET="$SANDBOX/sysnet_vpn_empty"
+mkdir -p "$NFQWS_SYSNET"
+cat > "$MOCKBIN/ip" <<'X'
+#!/bin/sh
+case "$*" in
+  "link show") echo "9: wg-mullvad: <POINTOPOINT,NOARP,UP,LOWER_UP> mtu 1420" ;;
+  "-6 rule")   echo "12000: from all uidrange 0-99999 lookup ipsec2" ;;
+  "rule")      echo "11000: from all iif lo oif ipsec2 uidrange 0-0 lookup ipsec2" ;;
+esac
+exit 0
+X
+chmod 0755 "$MOCKBIN/ip"
+vpn_active
+assert_rc 0 $? "wg-mullvad matched via ip link show fallback"
+
+mkdir -p "$NFQWS_SYSNET/ipsec2"
+printf '0x1091\n' > "$NFQWS_SYSNET/ipsec2/flags"
+unset NFQWS_IPRULE
+vpn_active
+assert_rc 0 $? "IPv6 VPN rule for ipsec2 detected via ip -6 rule"
+rm -rf "$NFQWS_SYSNET" "$MOCKBIN/ip"
+unset NFQWS_SYSNET
+
 harness_finish
 

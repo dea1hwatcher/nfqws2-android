@@ -199,26 +199,29 @@ catalog_file() { # <category>
 
 
 rotate_file() {
-  local f="$1" max="$2" sz
+  local f="$1" max="$2" sz tmp
   [ -f "$f" ] || return 0
   sz=$(wc -c < "$f" 2>/dev/null)
   case "$sz" in ''|*[!0-9]*) return 0 ;; esac
   [ "$sz" -gt "$max" ] || return 0
-  tail -c $((max / 2)) "$f" > "$f.tmp" 2>/dev/null && cat "$f.tmp" > "$f" 2>/dev/null
-  rm -f "$f.tmp"
+  tmp="$f.tmp.$$"
+  tail -c $((max / 2)) "$f" > "$tmp" 2>/dev/null && cat "$tmp" > "$f" 2>/dev/null
+  rm -f "$tmp"
 }
 
 rotate_logs() {
   local max=$(( ${LOG_MAX_KB:-512} * 1024 )) f
   for f in "$SERVICE_LOG" "$NFQWS_LOG" "$LOG_DIR/auto.log"; do rotate_file "$f" "$max"; done
+  f="$LOG_DIR/nfqws2-debug.log"
   if [ "$1" = "start" ]; then
-    f="$LOG_DIR/nfqws2-debug.log"
     # truncate when debug on, rotate when off; && ... || would rotate on failed truncate
     if [ "$LOG_LEVEL" = "1" ]; then
       : > "$f" 2>/dev/null
     else
       rotate_file "$f" "$max"
     fi
+  else
+    rotate_file "$f" "$max"
   fi
 }
 
@@ -378,9 +381,9 @@ $f:"}"; c="${c%%[!0-9]*}" ;; esac
         c="${c:-0}"
         if [ -n "$sig" ]; then
           mkdir -p "$STATE_DIR" 2>/dev/null
-          grep -v -F "$f|" "$cache_file" > "$cache_file.tmp" 2>/dev/null || true
-          printf '%s|%s|%s\n' "$f" "$sig" "$c" >> "$cache_file.tmp"
-          mv -f "$cache_file.tmp" "$cache_file" 2>/dev/null
+          grep -v -F "$f|" "$cache_file" > "$cache_file.tmp.$$" 2>/dev/null || true
+          printf '%s|%s|%s\n' "$f" "$sig" "$c" >> "$cache_file.tmp.$$"
+          mv -f "$cache_file.tmp.$$" "$cache_file" 2>/dev/null || rm -f "$cache_file.tmp.$$"
         fi
       fi
     fi
@@ -603,12 +606,23 @@ USAGE_KEEP=14
 USAGE_MIN=3
 NIGHT_FILE="$STATE_DIR/night_learn"   # есть — идёт ночное обучение
 # минута суток сейчас (08 и 09 — не восьмеричные)
-mod_now() { local h m; h=$(date +%H 2>/dev/null); m=$(date +%M 2>/dev/null); echo $(( ${h#0} * 60 + ${m#0} )); }
+mod_now() {
+  local h m
+  h=$(date +%H 2>/dev/null)
+  m=$(date +%M 2>/dev/null)
+  case "$h" in ''|*[!0-9]*) h=0 ;; esac
+  case "$m" in ''|*[!0-9]*) m=0 ;; esac
+  echo $(( ${h#0} * 60 + ${m#0} ))
+}
 usage_add() { # <sleep|wake> <минута суток>
+  local utmp="$USAGE_FILE.tmp.$$"
   mkdir -p "$STATE_DIR"
-  { cat "$USAGE_FILE" 2>/dev/null; echo "$1 $2"; } | awk -v k="$USAGE_KEEP" '
-    { n[$1]++; l[$1, n[$1]] = $2 } END { for (t in n) for (i = (n[t] > k ? n[t] - k + 1 : 1); i <= n[t]; i++) print t, l[t, i] }' > "$USAGE_FILE.tmp" &&
-    mv -f "$USAGE_FILE.tmp" "$USAGE_FILE"
+  if { cat "$USAGE_FILE" 2>/dev/null; echo "$1 $2"; } | awk -v k="$USAGE_KEEP" '
+    { n[$1]++; l[$1, n[$1]] = $2 } END { for (t in n) for (i = (n[t] > k ? n[t] - k + 1 : 1); i <= n[t]; i++) print t, l[t, i] }' > "$utmp"; then
+    mv -f "$utmp" "$USAGE_FILE" || rm -f "$utmp"
+  else
+    rm -f "$utmp"
+  fi
 }
 # Обычное время: медиана, отсчитанная от полудня (сон около полуночи не
 # рвётся на 23:50 и 00:10). -> минута суток | пусто, если данных мало
@@ -700,8 +714,8 @@ stat_inject() {
   local name
   name=$(head -n 1 "$ACTIVE_FILE" 2>/dev/null | tr -d '\r\n')
   awk -v name="${name:-default}" -v home="$CONFDIR" -v lua="$LUA_DIR" '
-    function flush(   i, tcp, lua_any, at) {
-      tcp = 0; lua_any = 0; at = 0
+    function flush(   i, tcp, lua_any, at, is_smart) {
+      tcp = 0; lua_any = 0; at = 0; is_smart = 0
       for (i = 1; i <= n; i++) {
         if (p[i] ~ /^--filter-tcp=/) tcp = 1
         if (p[i] ~ /^--lua-desync=/) {
@@ -1140,6 +1154,17 @@ record_tcp16_detection() { # <provider> <ip> <detected_size>
   fi
 }
 
+probe_tool() {
+  local b
+  if command -v curl >/dev/null 2>&1; then echo "curl $(command -v curl)"; return 0; fi
+  for b in /data/adb/ksu/bin/busybox /data/adb/ap/bin/busybox /data/adb/magisk/busybox "$(command -v busybox 2>/dev/null)"; do
+    if [ -z "$b" ] || [ ! -x "$b" ]; then continue; fi
+    "$b" wget --help 2>&1 | grep -q 'no-check-certificate' && { echo "wget $b"; return 0; }
+  done
+  echo "none"
+  return 1
+}
+
 resolve_googlevideo_cdn() { # [force]
   local force="${1:-}"
   mkdir -p "$STATE_DIR" 2>/dev/null
@@ -1226,58 +1251,109 @@ orchestra_memory_init() {
   fi
 }
 
-_orchestra_rewrite_strategy() { # <host> <idx> <locked|blocked> <value as list>
-  local host="$1" idx="$2" section="$3" as_list="$4"
-  if [ -z "$host" ] || [ -z "$idx" ]; then return 1; fi
+_orchestra_edit_json() { # <host> <section: locked|blocked> <idx_or_empty> <as_list: 0|1>
+  local host="$1" section="$2" val="$3" as_list="${4:-0}"
+  case "$host" in
+    ''|*\"*|*\\*) return 1 ;;
+  esac
+  if [ -n "$val" ]; then
+    case "$val" in
+      ''|*[!0-9,]*) return 1 ;;
+    esac
+  fi
+  if [ -z "$section" ]; then
+    _orchestra_edit_json "$host" locked "" 0 || return 1
+    _orchestra_edit_json "$host" blocked "" 0
+    return $?
+  fi
+  case "$section" in
+    locked|blocked) ;;
+    *) return 1 ;;
+  esac
   orchestra_memory_init
   command -v awk >/dev/null 2>&1 || return 0
-  awk -v h="$host" -v idx="$idx" -v sec="$section" -v lst="$as_list" '
-    BEGIN { in_s = 0 }
-    {
-      if ($0 ~ ("\"" sec "\": \{")) {
-        print $0
-        in_s = 1
-        if (lst) printf "    \"%s\": [%s],\n", h, idx
-        else printf "    \"%s\": %s,\n", h, idx
+  local tmp="$ORCHESTRA_MEMORY_FILE.tmp.$$"
+  NFQWS_ORCH_H="$host" awk -v sec="$section" -v val="$val" -v lst="$as_list" '
+    function emit_sec(   i, total) {
+      total = cnt + (val != "" ? 1 : 0)
+      if (total == 0) {
+        printf "  \"%s\": {}%s\n", sec, trail
+        return
+      }
+      printf "  \"%s\": {\n", sec
+      if (val != "") {
+        if (lst) printf "    \"%s\": [%s]%s\n", h, val, (cnt > 0 ? "," : "")
+        else     printf "    \"%s\": %s%s\n", h, val, (cnt > 0 ? "," : "")
+      }
+      for (i = 1; i <= cnt; i++) {
+        printf "    \"%s\": %s%s\n", keys[i], vals[i], (i < cnt ? "," : "")
+      }
+      printf "  }%s\n", trail
+    }
+    function parse_kv(s,   rest, q2, k) {
+      sub(/^[[:space:]]+/, "", s)
+      if (substr(s, 1, 1) != "\"") return
+      rest = substr(s, 2)
+      q2 = index(rest, "\"")
+      if (q2 <= 1) return
+      k = substr(rest, 1, q2 - 1)
+      rest = substr(rest, q2 + 1)
+      sub(/^[[:space:]]*:[[:space:]]*/, "", rest)
+      sub(/,[[:space:]]*$/, "", rest)
+      sub(/[[:space:]]+$/, "", rest)
+      if (k == "" || rest == "" || k == h) return
+      keys[++cnt] = k
+      vals[cnt] = rest
+    }
+    BEGIN { h = ENVIRON["NFQWS_ORCH_H"]; in_s = 0; cnt = 0; trail = "" }
+    !in_s && $0 ~ ("^[[:space:]]*\"" sec "\":[[:space:]]*\\{") {
+      if ($0 ~ /\}[[:space:]]*,?[[:space:]]*$/) {
+        trail = ($0 ~ /,[[:space:]]*$/) ? "," : ""
+        inner = $0
+        sub(/^[^{]*\{/, "", inner)
+        sub(/\}[[:space:]]*,?[[:space:]]*$/, "", inner)
+        if (inner ~ /[^[:space:]]/) {
+          gsub(/,[[:space:]]*"/, "\n\"", inner)
+          n = split(inner, parts, "\n")
+          for (i = 1; i <= n; i++) parse_kv(parts[i])
+        }
+        emit_sec()
         next
       }
-      if (in_s && $0 ~ /^[[:space:]]*\},?/) in_s = 0
-      if (in_s && $0 ~ ("\"" h "\":")) next
-      print
-    }' "$ORCHESTRA_MEMORY_FILE" > "$ORCHESTRA_MEMORY_FILE.tmp"
-  if [ -s "$ORCHESTRA_MEMORY_FILE.tmp" ]; then
-    mv -f "$ORCHESTRA_MEMORY_FILE.tmp" "$ORCHESTRA_MEMORY_FILE"
+      in_s = 1
+      next
+    }
+    in_s {
+      if ($0 ~ /^[[:space:]]*\}[[:space:]]*,?[[:space:]]*$/) {
+        trail = ($0 ~ /,[[:space:]]*$/) ? "," : ""
+        in_s = 0
+        emit_sec()
+        next
+      }
+      parse_kv($0)
+      next
+    }
+    { print }' "$ORCHESTRA_MEMORY_FILE" > "$tmp"
+  if [ -s "$tmp" ]; then
+    mv -f "$tmp" "$ORCHESTRA_MEMORY_FILE"
   else
-    rm -f "$ORCHESTRA_MEMORY_FILE.tmp"
+    rm -f "$tmp"
+    return 1
   fi
   return 0
+}
+
+_orchestra_rewrite_strategy() { # <host> <idx> <locked|blocked> <value as list>
+  [ -n "$1" ] || return 1
+  [ -n "$2" ] || return 1
+  _orchestra_edit_json "$1" "$3" "$2" "$4"
 }
 orchestra_lock_strategy()  { _orchestra_rewrite_strategy "$1" "$2" locked 0; }
 orchestra_block_strategy() { _orchestra_rewrite_strategy "$1" "$2" blocked 1; }
 
 _orchestra_drop_strategy() { # <host> [section]
-  local host="$1" section="${2:-}"
-  [ -n "$host" ] || return 1
-  orchestra_memory_init
-  command -v awk >/dev/null 2>&1 || return 0
-  awk -v h="$host" -v sec="$section" '
-    BEGIN { in_s = 0 }
-    {
-      if (sec != "") {
-        if ($0 ~ ("\"" sec "\":[[:space:]]*\\{")) { in_s = 1; print; next }
-        if (in_s && $0 ~ /^[[:space:]]*\},?/) in_s = 0
-        if (in_s && $0 ~ ("\"" h "\":")) next
-      } else {
-        if ($0 ~ ("\"" h "\":")) next
-      }
-      print
-    }' "$ORCHESTRA_MEMORY_FILE" > "$ORCHESTRA_MEMORY_FILE.tmp"
-  if [ -s "$ORCHESTRA_MEMORY_FILE.tmp" ]; then
-    mv -f "$ORCHESTRA_MEMORY_FILE.tmp" "$ORCHESTRA_MEMORY_FILE"
-  else
-    rm -f "$ORCHESTRA_MEMORY_FILE.tmp"
-  fi
-  return 0
+  [ -n "$1" ] || return 1
+  _orchestra_edit_json "$1" "${2:-}" "" 0
 }
 orchestra_unlock_strategy()  { _orchestra_drop_strategy "$1" locked; }
 orchestra_unblock_strategy() { _orchestra_drop_strategy "$1" blocked; }
@@ -1344,7 +1420,7 @@ _ipt_cap_cache_put() { # <command> <probe key> <value>
   kernel=$(uname -r 2>/dev/null) || return 0
   [ -n "$kernel" ] || return 0
   mkdir -p "$STATE_DIR" 2>/dev/null
-  tmp="$IPT_CAP_CACHE.tmp"
+  tmp="$IPT_CAP_CACHE.tmp.$$"
   if [ -f "$IPT_CAP_CACHE" ]; then
     while IFS='|' read -r k c p v; do
       [ "$k" = "$kernel" ] && [ "$c" = "$1" ] && [ "$p" = "$2" ] && continue
@@ -1352,7 +1428,9 @@ _ipt_cap_cache_put() { # <command> <probe key> <value>
     done < "$IPT_CAP_CACHE" > "$tmp"
   fi
   printf '%s|%s|%s|%s\n' "$kernel" "$1" "$2" "$3" >> "$tmp"
-  mv -f "$tmp" "$IPT_CAP_CACHE"
+  if ! mv -f "$tmp" "$IPT_CAP_CACHE"; then
+    rm -f "$tmp"
+  fi
 }
 
 ipt_probe() {
@@ -1367,10 +1445,9 @@ ipt_probe() {
   return $rc
 }
 
-ipt_wait_flag() { # <cmd>
+_ipt_set_wait_flag() { # <cmd> -> sets IPT_WAIT_CHECKED & IPT_WAIT_FLAG in current shell
   local cmd="${1:-iptables}"
   if [ -n "$IPT_WAIT_CHECKED" ]; then
-    printf '%s' "$IPT_WAIT_FLAG"
     return 0
   fi
   IPT_WAIT_CHECKED=1
@@ -1380,6 +1457,10 @@ ipt_wait_flag() { # <cmd>
   elif "$cmd" -w -L -n >/dev/null 2>&1; then
     IPT_WAIT_FLAG="-w"
   fi
+}
+
+ipt_wait_flag() { # <cmd>
+  _ipt_set_wait_flag "${1:-iptables}"
   printf '%s' "$IPT_WAIT_FLAG"
 }
 
@@ -1392,8 +1473,8 @@ ipt_exec() { # <cmd> <args...>
   case "$1" in
     -w) shift ;;
   esac
-  local wflag
-  wflag=$(ipt_wait_flag "$cmd")
+  _ipt_set_wait_flag "$cmd"
+  local wflag="$IPT_WAIT_FLAG"
   local attempt=1 max_attempts=5 delay=0.1
   local err rc
 
@@ -1588,7 +1669,7 @@ _firewall_start_restore() {
   local CMD="$1" rules
   [ -n "$FW_RESTORE_DIR" ] || FW_RESTORE_DIR="$STATE_DIR/firewall-restore"
   mkdir -p "$FW_RESTORE_DIR" 2>/dev/null
-  rules="${FW_RESTORE_DIR}/${CMD}.input"
+  rules="${FW_RESTORE_DIR}/${CMD}.$$.input"
 
   command -v "${CMD}-restore" >/dev/null 2>&1 || return 1
   FW_PROBE_CMD="$CMD"
@@ -1651,6 +1732,22 @@ _firewall_start_restore() {
   return "$rc"
 }
 
+_fw_add_mss_clamp() { # <cmd> <real_cmd> <chain> <out_if> <tcp_ports>
+  local CMD="$1" REAL_CMD="$2" CHAIN="$3" OUT="$4" TP="$5" mss_val
+  if [ -z "$TCP_MSS_CLAMP" ] || [ "$TCP_MSS_CLAMP" = "0" ] || [ -z "$TP" ]; then
+    return 0
+  fi
+  mss_val="$TCP_MSS_CLAMP"
+  case "$mss_val" in ''|*[!0-9]*) return 0 ;; esac
+  [ "$mss_val" = "1" ] && mss_val=536
+  # IPv6 minimum link MTU is 1280 bytes (40 IPv6 + 20 TCP = 1220 max MSS)
+  if [ "$REAL_CMD" = "ip6tables" ] && [ "$mss_val" -lt 1220 ] 2>/dev/null; then
+    mss_val=1220
+  fi
+  has_ipt_feature "$REAL_CMD" -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --set-mss "$mss_val" || return 0
+  _fw_add_rule "$CMD" "$CHAIN" "$OUT" tcp dports "$TP" "--tcp-flags syn,rst syn" "-j TCPMSS --set-mss $mss_val"
+}
+
 _fw_iface_rules() {
   local CMD="$1" REAL_CMD="${FW_PROBE_CMD:-$1}" OUT="$2" IN="$3"
   local UP="$IPT_UDP_EFF" TP="$IPT_TCP_PORTS"
@@ -1658,9 +1755,9 @@ _fw_iface_rules() {
   # don't requeue packets already processed by nfqws2
   $CMD -w -t mangle -A $IPT_GROUP_POST $OUT -m mark --mark $MARK_PROCESSED -j RETURN
   $CMD -w -t mangle -A $IPT_GROUP_PRE $IN -m mark --mark $MARK_PROCESSED -j RETURN
-  if [ -n "$NFQWS_GID" ] && [ "$NFQWS_GID" != "0" ] && [ "$NFQWS_GID" != "root" ]; then
-    $CMD -w -t mangle -A $IPT_GROUP_POST $OUT -m owner --gid-owner "$NFQWS_GID" -j RETURN 2>/dev/null || true
-  fi
+
+  # TCP MSS Clamping must run BEFORE terminal NFQUEUE on SYN (packet #1)
+  _fw_add_mss_clamp "$CMD" "$REAL_CMD" $IPT_GROUP_POST "$OUT" "$TP"
 
   # outgoing (POSTROUTING)
   [ -n "$UP" ] && _fw_add_rule "$CMD" $IPT_GROUP_POST "$OUT" udp dports "$UP" "" "$TARGET_OUT_UDP"
@@ -1670,15 +1767,6 @@ _fw_iface_rules() {
   if [ -n "$TP" ]; then
     _fw_add_rule "$CMD" $IPT_GROUP_POST "$OUT" tcp dports "$TP" "--tcp-flags fin fin" "$JNFQ"
     _fw_add_rule "$CMD" $IPT_GROUP_POST "$OUT" tcp dports "$TP" "--tcp-flags rst rst" "$JNFQ"
-  fi
-
-  # TCP MSS Clamping to mitigate HTTP/2 mid-stream reassembly blocks (TSPU 2026)
-  if [ -n "$TCP_MSS_CLAMP" ] && [ "$TCP_MSS_CLAMP" != "0" ]; then
-    local mss_val="$TCP_MSS_CLAMP"
-    [ "$mss_val" = "1" ] && mss_val=536
-    if [ -n "$TP" ]; then
-      _fw_add_rule "$CMD" $IPT_GROUP_POST "$OUT" tcp dports "$TP" "--tcp-flags syn,rst syn" "-j TCPMSS --set-mss $mss_val"
-    fi
   fi
 
   # NAT fix for UDP (matches the connmark saved in mangle POSTROUTING)
@@ -1696,6 +1784,16 @@ _fw_iface_rules() {
   # Incoming data flow (connbytes or connmark_in)
   [ -n "$UP" ] && _fw_add_rule "$CMD" $IPT_GROUP_PRE "$IN" udp sports "$UP" "" "$TARGET_IN_UDP"
   [ -n "$TP" ] && _fw_add_rule "$CMD" $IPT_GROUP_PRE "$IN" tcp sports "$TP" "" "$TARGET_IN_TCP"
+}
+
+_fw_fwd_rules() { # <cmd> <real_cmd> <out_if> <in_if>
+  local CMD="$1" REAL_CMD="$2" OUT="$3" IN="$4"
+  local UP="$IPT_UDP_EFF" TP="$IPT_TCP_PORTS"
+  _fw_add_mss_clamp "$CMD" "$REAL_CMD" $IPT_GROUP_FWD "$OUT" "$TP"
+  [ -n "$UP" ] && _fw_add_rule "$CMD" $IPT_GROUP_FWD "$OUT" udp dports "$UP" "" "$TARGET_OUT_UDP"
+  [ -n "$TP" ] && _fw_add_rule "$CMD" $IPT_GROUP_FWD "$OUT" tcp dports "$TP" "" "$TARGET_OUT_TCP"
+  [ -n "$UP" ] && _fw_add_rule "$CMD" $IPT_GROUP_FWD "$IN" udp sports "$UP" "" "$TARGET_IN_UDP"
+  [ -n "$TP" ] && _fw_add_rule "$CMD" $IPT_GROUP_FWD "$IN" tcp sports "$TP" "" "$TARGET_IN_TCP"
 }
 
 _firewall_start() {
@@ -1740,16 +1838,12 @@ _firewall_start() {
       TARGET_IN_TCP="-m connbytes --connbytes-dir=reply --connbytes-mode=packets --connbytes 1:$TCP_PKT_IN $JNFQ"
       TARGET_OUT_UDP="-m connbytes --connbytes-dir=original --connbytes-mode=packets --connbytes 1:$UDP_PKT_OUT $JNFQ"
       TARGET_IN_UDP="-m connbytes --connbytes-dir=reply --connbytes-mode=packets --connbytes 1:$UDP_PKT_IN $JNFQ"
-      TARGET_OUT="$TARGET_OUT_TCP"
-      TARGET_IN="$TARGET_IN_TCP"
       ;;
     connmark_out)
       TARGET_OUT_TCP="-j $IPT_GROUP_QOUT"
       TARGET_IN_TCP="-j $IPT_GROUP_QIN"
       TARGET_OUT_UDP="-j $IPT_GROUP_QOUT"
       TARGET_IN_UDP="-j $IPT_GROUP_QIN"
-      TARGET_OUT="$TARGET_OUT_TCP"
-      TARGET_IN="$TARGET_IN_TCP"
       ;;
   esac
 
@@ -1771,10 +1865,20 @@ _firewall_start() {
     _fw_counter_chain "$CMD" $IPT_GROUP_QIN $CNT_IN_MASK $CNT_IN_STEP "$TCP_PKT_IN"
   fi
 
-  if [ "$REAL_CMD" = "iptables" ] && [ "$NAT_FIX" = "1" ]; then
-    $CMD -w -t nat -N $IPT_GROUP_NAT 2>/dev/null
-    $CMD -w -t nat -F $IPT_GROUP_NAT
-    while $CMD -w -t nat -D POSTROUTING -j $IPT_GROUP_NAT 2>/dev/null; do :; done
+  if [ "$REAL_CMD" = "iptables" ]; then
+    if [ "$NAT_FIX" = "1" ]; then
+      $CMD -w -t nat -N $IPT_GROUP_NAT 2>/dev/null
+      $CMD -w -t nat -F $IPT_GROUP_NAT
+      while $CMD -w -t nat -D POSTROUTING -j $IPT_GROUP_NAT 2>/dev/null; do :; done
+    else
+      # Hot-disable NAT_FIX=0: drop previously installed nat chain and CONNMARK rule
+      if "$REAL_CMD" -w -t nat -S $IPT_GROUP_NAT >/dev/null 2>&1; then
+        while "$REAL_CMD" -w -t nat -D POSTROUTING -j $IPT_GROUP_NAT 2>/dev/null; do :; done
+        "$REAL_CMD" -w -t nat -F $IPT_GROUP_NAT 2>/dev/null
+        "$REAL_CMD" -w -t nat -X $IPT_GROUP_NAT 2>/dev/null
+      fi
+      while "$REAL_CMD" -w -t mangle -D POSTROUTING -m mark --mark $MARK_PROCESSED -j CONNMARK --set-xmark $MARK_RENAT 2>/dev/null; do :; done
+    fi
   fi
 
   if [ -z "$ISP_INTERFACE" ]; then
@@ -1784,7 +1888,20 @@ _firewall_start() {
     done
   fi
 
-  app_rules "$CMD"
+  local app_rc=0
+  app_rules "$CMD" || app_rc=$?
+  if [ "$app_rc" -eq 1 ] && [ "$CMD" = "_fw_batch_cmd" ]; then
+    if "$REAL_CMD" -w -t mangle -S $IPT_GROUP_APP >/dev/null 2>&1; then
+      "$REAL_CMD" -w -t mangle -F $IPT_GROUP_APP 2>/dev/null
+      "$REAL_CMD" -w -t mangle -X $IPT_GROUP_APP 2>/dev/null
+    fi
+  elif [ "$app_rc" -eq 2 ] && [ "$APP_MODE" = "include" ]; then
+    # Fail closed for include mode: never route all apps into NFQUEUE when 0 UIDs or xt_owner is missing
+    if [ "$CMD" != "_fw_batch_cmd" ]; then
+      _firewall_stop "$REAL_CMD" >/dev/null 2>&1 || true
+    fi
+    return 2
+  fi
 
   if [ "$BLOCK_QUIC" = "1" ]; then
     $CMD -w -t mangle -A $IPT_GROUP_POST -p udp --dport 443 -j DROP
@@ -1821,16 +1938,24 @@ _firewall_start() {
     while $CMD -w -t mangle -D FORWARD -j $IPT_GROUP_FWD 2>/dev/null; do :; done
 
     $CMD -w -t mangle -A $IPT_GROUP_FWD -m mark --mark $MARK_PROCESSED -j RETURN
+    if [ -z "$ISP_INTERFACE" ]; then
+      for ex in $IFACE_EXCLUDE; do
+        $CMD -w -t mangle -A $IPT_GROUP_FWD -o "$ex" -j RETURN
+        $CMD -w -t mangle -A $IPT_GROUP_FWD -i "$ex" -j RETURN
+      done
+    fi
 
     if [ "$BLOCK_QUIC" = "1" ]; then
       $CMD -w -t mangle -A $IPT_GROUP_FWD -p udp --dport 443 -j DROP
     fi
 
-    local UP="$IPT_UDP_EFF" TP="$IPT_TCP_PORTS"
-    [ -n "$UP" ] && _fw_add_rule "$CMD" $IPT_GROUP_FWD "" udp dports "$UP" "" "$TARGET_OUT_UDP"
-    [ -n "$TP" ] && _fw_add_rule "$CMD" $IPT_GROUP_FWD "" tcp dports "$TP" "" "$TARGET_OUT_TCP"
-    [ -n "$UP" ] && _fw_add_rule "$CMD" $IPT_GROUP_FWD "" udp sports "$UP" "" "$TARGET_IN_UDP"
-    [ -n "$TP" ] && _fw_add_rule "$CMD" $IPT_GROUP_FWD "" tcp sports "$TP" "" "$TARGET_IN_TCP"
+    if [ -n "$ISP_INTERFACE" ]; then
+      for IF in $ISP_INTERFACE; do
+        _fw_fwd_rules "$CMD" "$REAL_CMD" "-o $IF" "-i $IF"
+      done
+    else
+      _fw_fwd_rules "$CMD" "$REAL_CMD" "" ""
+    fi
 
     $CMD -w -t mangle -I FORWARD 1 -j $IPT_GROUP_FWD
   else
@@ -1875,7 +2000,13 @@ _firewall_stop_batch() { # <iptables|ip6tables>
         print "COMMIT"
       }')
     [ -n "$in" ] || continue
-    printf '%s\n' "$in" | "$CMD-restore" --noflush 2>/dev/null || return 1
+    local stop_tmp="${STATE_DIR:-/tmp}/fw_stop.$$.input"
+    mkdir -p "${STATE_DIR:-/tmp}" 2>/dev/null
+    printf '%s\n' "$in" > "$stop_tmp"
+    ipt_restore_exec "$CMD" "$stop_tmp"
+    local r_rc=$?
+    rm -f "$stop_tmp"
+    [ "$r_rc" -eq 0 ] || return 1
   done
   return 0
 }
@@ -1915,7 +2046,9 @@ _meta_quic_chain() { # <iptables|ip6tables> <nets> <reject-with>
     return 0
   }
   $C -w -t filter -I OUTPUT 1 -j $IPT_GROUP_MQ
-  $C -w -t filter -I FORWARD 1 -j $IPT_GROUP_MQ 2>/dev/null
+  if [ "$ENABLE_HOTSPOT" = "1" ]; then
+    $C -w -t filter -I FORWARD 1 -j $IPT_GROUP_MQ 2>/dev/null
+  fi
   return 0
 }
 meta_quic_stop() {
@@ -1932,7 +2065,9 @@ meta_quic_start() {
   meta_quic_stop
   [ "$META_QUIC_REJECT" = "1" ] || return 0
   _meta_quic_chain iptables "$META_NET4" icmp-port-unreachable
-  _meta_quic_chain ip6tables "$META_NET6" icmp6-port-unreachable
+  if [ "$IPV6_ENABLED" != "0" ]; then
+    _meta_quic_chain ip6tables "$META_NET6" icmp6-port-unreachable
+  fi
 }
 
 firewall_iptables()  { _firewall_start iptables; }
@@ -2022,10 +2157,6 @@ restore_tether_offload() {
       esac
     done < "$TETHER_OFFLOAD_STATE"
     rm -f "$TETHER_OFFLOAD_STATE" 2>/dev/null || true
-  else
-    if command -v settings >/dev/null 2>&1; then
-      settings put global tether_offload_disabled 0 2>/dev/null || true
-    fi
   fi
 }
 
@@ -2041,7 +2172,7 @@ firewall_start() {
     firewall_iptables || rc=1
   fi
   if [ "$IPV6_ENABLED" = "0" ]; then
-    :
+    _firewall_stop ip6tables >/dev/null 2>&1 || true
   elif command -v ip6tables-restore >/dev/null 2>&1; then
     firewall_ip6tables_restore || { firewall_ip6tables || rc=1; }
   else
@@ -2077,6 +2208,31 @@ firewall_stop() {
 firewall_ok() {
   _firewall_family_ok iptables || return 1
   [ "$IPV6_ENABLED" = "0" ] || _firewall_family_ok ip6tables
+}
+
+# Logical OR check used by stop(): succeeds (returns 0) if ANY module rule or chain
+# remains in IPv4 or IPv6 mangle/nat/filter tables so partial cleanup is caught.
+firewall_any_active() {
+  local c ch
+  for c in iptables ip6tables; do
+    command -v "$c" >/dev/null 2>&1 || continue
+    "$c" -w -t mangle -C POSTROUTING -j "$IPT_GROUP_POST" 2>/dev/null && return 0
+    "$c" -w -t mangle -C POSTROUTING -m mark --mark "$MARK_PROCESSED" -j CONNMARK --set-xmark "$MARK_RENAT" 2>/dev/null && return 0
+    "$c" -w -t mangle -C POSTROUTING -m mark --mark "$MARK_PROCESSED" -j MARK --set-xmark 0x0/0x40000000 2>/dev/null && return 0
+    "$c" -w -t mangle -C PREROUTING -j "$IPT_GROUP_PRE" 2>/dev/null && return 0
+    "$c" -w -t mangle -C FORWARD -j "$IPT_GROUP_FWD" 2>/dev/null && return 0
+    for ch in "$IPT_GROUP_POST" "$IPT_GROUP_PRE" "$IPT_GROUP_FWD" "$IPT_GROUP_QOUT" "$IPT_GROUP_QIN" "$IPT_GROUP_APP"; do
+      "$c" -w -t mangle -S "$ch" >/dev/null 2>&1 && return 0
+    done
+    if [ "$c" = "iptables" ]; then
+      "$c" -w -t nat -C POSTROUTING -j "$IPT_GROUP_NAT" 2>/dev/null && return 0
+      "$c" -w -t nat -S "$IPT_GROUP_NAT" >/dev/null 2>&1 && return 0
+    fi
+    "$c" -w -t filter -C OUTPUT -j "$IPT_GROUP_MQ" 2>/dev/null && return 0
+    "$c" -w -t filter -C FORWARD -j "$IPT_GROUP_MQ" 2>/dev/null && return 0
+    "$c" -w -t filter -S "$IPT_GROUP_MQ" >/dev/null 2>&1 && return 0
+  done
+  return 1
 }
 
 # ── Parallel strategy bench: naming & cleanup ────────────────────────────
@@ -2207,6 +2363,27 @@ apply_cpu_affinity() { # $1 - PID
   return 0
 }
 
+reset_cpu_affinity() { # $1 - PID: restore affinity across all online CPUs
+  local p="${1:-$$}" online="" max_core=0 mask=""
+  [ -n "$p" ] || return 0
+  [ -d "/proc/$p" ] || return 0
+  command -v taskset >/dev/null 2>&1 || return 0
+  if [ -r /sys/devices/system/cpu/online ]; then
+    online=$(tr -d ' \t\r\n' < /sys/devices/system/cpu/online 2>/dev/null)
+  fi
+  case "$online" in
+    *-*) max_core="${online##*-}" ;;
+    '')  online="0"; max_core=0 ;;
+    *)   max_core="$online" ;;
+  esac
+  if ! taskset -p -c "$online" "$p" >/dev/null 2>&1; then
+    case "$max_core" in ''|*[!0-9]*) max_core=3 ;; esac
+    mask=$(awk -v m="$max_core" 'BEGIN { s = 0; v = 1; for (i = 0; i <= m && i < 31; i++) { s += v; v *= 2 } printf "%x", (s > 0 ? s : 1) }')
+    taskset -p "$mask" "$p" >/dev/null 2>&1 || true
+  fi
+  return 0
+}
+
 # Partition wakelock blocks deep sleep while the service runs; costs battery, so
 # opt-in only (WAKELOCK=1). The name must match the module.prop id exactly or the
 # lock is never released (checked by test_data.sh).
@@ -2226,6 +2403,17 @@ SYSCTL_STATE="$STATE_DIR/sysctls"
 # the tests point this at a fixture tree; on the device it is the real one
 PROC_SYS_ROOT="${PROC_SYS_ROOT:-/proc/sys}"
 
+_sysctl_write_raw() { # <key> <value> (without updating $SYSCTL_STATE)
+  local key="$1" want="$2" node
+  node="$PROC_SYS_ROOT/$(printf '%s' "$key" | tr '.' '/')"
+  if [ -w "$node" ]; then
+    if printf '%s\n' "$want" > "$node" 2>/dev/null; then
+      return 0
+    fi
+  fi
+  sysctl -w "$key=$want" >/dev/null 2>&1
+}
+
 # Apply a kernel setting and remember the previous value once, so stop() can put
 # the phone back the way it was: a stopped module has no business leaving
 # netfilter and socket buffers retuned. The node is read and written directly —
@@ -2241,10 +2429,7 @@ sysctl_apply() { # <key> <value>
     mkdir -p "$STATE_DIR" 2>/dev/null
     grep -q "^$key " "$SYSCTL_STATE" 2>/dev/null || printf '%s %s\n' "$key" "$cur" >> "$SYSCTL_STATE"
   fi
-  if [ -w "$node" ]; then
-    printf '%s\n' "$want" > "$node" 2>/dev/null && return 0
-  fi
-  sysctl -w "$key=$want" >/dev/null 2>&1
+  _sysctl_write_raw "$key" "$want"
   return 0
 }
 
@@ -2312,16 +2497,24 @@ system_config() {
   # Google push notifications (mtalk.google.com) heartbeat is up to 28 minutes.
   # A 20-minute timeout expired idle connections and caused bursty/delayed push notifications.
   # If previously shortened below 7200s, restore to kernel default (432000s).
-  local cur_max cur_est
-  cur_max=$(sysctl -n net.netfilter.nf_conntrack_max 2>/dev/null)
-  cur_est=$(sysctl -n net.netfilter.nf_conntrack_tcp_timeout_established 2>/dev/null)
+  local cur_max="" cur_est=""
+  if [ -r "$PROC_SYS_ROOT/net/netfilter/nf_conntrack_max" ]; then
+    cur_max=$(tr -d ' \t\r\n' < "$PROC_SYS_ROOT/net/netfilter/nf_conntrack_max" 2>/dev/null)
+  else
+    cur_max=$(sysctl -n net.netfilter.nf_conntrack_max 2>/dev/null)
+  fi
+  if [ -r "$PROC_SYS_ROOT/net/netfilter/nf_conntrack_tcp_timeout_established" ]; then
+    cur_est=$(tr -d ' \t\r\n' < "$PROC_SYS_ROOT/net/netfilter/nf_conntrack_tcp_timeout_established" 2>/dev/null)
+  else
+    cur_est=$(sysctl -n net.netfilter.nf_conntrack_tcp_timeout_established 2>/dev/null)
+  fi
   if [ -n "$cur_est" ] && [ "$cur_est" -lt 7200 ] 2>/dev/null; then
     log_msg "conntrack: nf_conntrack_tcp_timeout_established was $cur_est, restoring 432000 (kernel default): short timeout breaks push notifications"
-    sysctl_apply net.netfilter.nf_conntrack_tcp_timeout_established 432000
+    _sysctl_write_raw net.netfilter.nf_conntrack_tcp_timeout_established 432000
   fi
   if [ -n "$cur_max" ] && [ "$cur_max" -lt 16384 ] 2>/dev/null; then
     log_msg "conntrack: nf_conntrack_max was $cur_max, raising to 16384 (reference router value)"
-    sysctl_apply net.netfilter.nf_conntrack_max 16384
+    _sysctl_write_raw net.netfilter.nf_conntrack_max 16384
   fi
   setup_cli_symlinks
   apply_stealth_hiding
@@ -2389,7 +2582,7 @@ setup_cli_symlinks() {
   for p in /data/adb/ap/bin /data/adb/ksu/bin; do
     if [ -d "$p" ]; then
       ln -sf "$MODDIR/bin/nfqws2-ctl" "$p/nfqws2-ctl" 2>/dev/null || true
-      ln -sf "$MODDIR/bin/nfqws2-ctl" "$p/zapret2-status" 2>/dev/null || true
+      ln -sf "$MODDIR/system/bin/zapret2-status" "$p/zapret2-status" 2>/dev/null || true
     fi
   done
   if [ -w /sbin ]; then
@@ -2399,7 +2592,7 @@ setup_cli_symlinks() {
   fi
   if [ -n "$magisktmp" ] && [ -x "$MODDIR/bin/nfqws2-ctl" ]; then
     ln -sf "$MODDIR/bin/nfqws2-ctl" "$magisktmp/nfqws2-ctl" 2>/dev/null || true
-    ln -sf "$MODDIR/bin/nfqws2-ctl" "$magisktmp/zapret2-status" 2>/dev/null || true
+    ln -sf "$MODDIR/system/bin/zapret2-status" "$magisktmp/zapret2-status" 2>/dev/null || true
   fi
   return 0
 }
@@ -2663,8 +2856,10 @@ update_description() { # running | stopped | paused <reason> | failed <msg> | di
 
   tmp="$STATE_DIR/module.prop.$$"
   [ -d "$STATE_DIR" ] || tmp="$prop.tmp.$$"
-  awk -v d="$d" 'BEGIN { done = 0 } /^description=/ { print "description=" d; done = 1; next } { print }
-    END { if (!done) print "description=" d }' "$prop" > "$tmp" 2>/dev/null && cat "$tmp" > "$prop"
+  if NFQWS_DESC="$d" awk 'BEGIN { d = ENVIRON["NFQWS_DESC"]; done = 0 } /^description=/ { print "description=" d; done = 1; next } { print }
+    END { if (!done) print "description=" d }' "$prop" > "$tmp" 2>/dev/null; then
+    cat "$tmp" > "$prop"
+  fi
   rm -f "$tmp"
   return 0
 }
@@ -2827,8 +3022,8 @@ wl_probe() {
       # TLS handshake, not TCP connect: some carriers let TCP through to any
       # host and cut only TLS, so time_connect called a whitelist "normal".
       curl) curl -s -k -o /dev/null -m 8 --connect-timeout 5 -w '%{time_appconnect}' "https://$host/" > "$outfile" 2>/dev/null ;;
-      wget|*wget) wget -q -T 5 -t 1 --no-check-certificate -o /dev/null "https://$host/" && echo "0.1" > "$outfile" ;;
-      openssl) (echo -e "QUIT" | timeout 5 openssl s_client -connect "$host:443" -quiet 2>/dev/null >/dev/null) && echo "0.1" > "$outfile" ;;
+      wget|*wget) wget -q -T 5 -t 1 --no-check-certificate -O /dev/null "https://$host/" && echo "0.1" > "$outfile" ;;
+      openssl) (printf 'QUIT\n' | timeout 5 openssl s_client -connect "$host:443" -quiet 2>/dev/null >/dev/null) && echo "0.1" > "$outfile" ;;
     esac
   }
 
@@ -2927,7 +3122,14 @@ smart_net_update() {
   return 0
 }
 
-vpn_ip_rules() { if [ -n "$NFQWS_IPRULE" ]; then cat "$NFQWS_IPRULE" 2>/dev/null; else ip rule 2>/dev/null; fi; }
+vpn_ip_rules() {
+  if [ -n "$NFQWS_IPRULE" ]; then
+    cat "$NFQWS_IPRULE" 2>/dev/null
+  else
+    ip rule 2>/dev/null
+    ip -6 rule 2>/dev/null
+  fi
+}
 
 # ---------------------------------------------------------------- VPN pause
 # Returns 0 if an active VPN interface is up (tun+, wg+, awg+, vpn+, warp+, ppp+, tap+, tailscale+)
@@ -2955,7 +3157,9 @@ vpn_active() {
     return 0
   done
   if has_ip; then
-    ip link show 2>/dev/null | grep -Eq ':[[:space:]]*(tun|wg|awg|vpn|warp|ppp|tap|tailscale)[0-9]*[ :].*<[A-Z0-9_,]*UP' && return 0
+    if ip link show 2>/dev/null | grep -Eq ':[[:space:]]*(tun|wg|awg|vpn|warp|ppp|tap|tailscale)[A-Za-z0-9_-]*[ :].*<[A-Z0-9_,]*UP'; then
+      return 0
+    fi
   fi
   return 1
 }

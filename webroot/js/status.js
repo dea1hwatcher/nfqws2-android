@@ -19,6 +19,7 @@ function stopUptTimer(){
 }
 function uptTick(){
   if(!uptAnchor) return;
+  if(document.hidden){ uptTimer = null; return; }
   const ms = uptElapsedMs();
   $('upt').textContent = fmtUptime(ms / 1000);
   uptTimer = setTimeout(uptTick, 1000 - (ms % 1000) + 10);
@@ -41,8 +42,8 @@ function strategyGroup(s){
   if(s.kind === 'import' || s.kind === 'user') return 'user';
   if(s.name === 'default') return 'base';
   if(/^alt\d*(_|$)/i.test(s.name)) return 'alt';
-  if(/^fake_tls_auto/i.test(s.name)) return 'fake';
-  if(/^simple_fake/i.test(s.name)) return 'simple';
+  if(/^fake[-_]tls[-_]auto/i.test(s.name)) return 'fake';
+  if(/^simple[-_]fake/i.test(s.name)) return 'simple';
   if(/^tr_/i.test(s.name)) return 'turkey';
   return 'authors';
 }
@@ -599,6 +600,7 @@ const statusPollTimer = setInterval(() => {
   stat(true);
 }, 5000);
 document.addEventListener('visibilitychange', () => {
+  if(!document.hidden && uptAnchor && !uptTimer) uptTick();
   if(document.visibilityState === 'visible' && POLL_PAGES[currentPage]) stat(true);
 });
 

@@ -58,6 +58,9 @@ function flood_white(ctx, desync)
     local white = make_white_payload(desync)
     local count = tonumber(desync.arg.count) or 10
 
+    local opts_fake = {rawsend = {repeats = 1, ifout = desync.ifout, fwmark = desync.fwmark}, reconstruct = reconstruct_opts(desync)}
+    local opts_orig = {rawsend = rawsend_opts_base(desync), reconstruct = {}, ipfrag = {}, ipid = desync.arg, fooling = {tcp_ts_up = desync.arg.tcp_ts_up}}
+
     DLOG("flood_white: sending "..count.." white fakes")
 
     -- Flood with white fakes
@@ -68,7 +71,7 @@ function flood_white(ctx, desync)
         if b_debug then
             DLOG("flood_white: fake #"..i)
         end
-        rawsend_dissect(dis, {repeats = 1})
+        rawsend_dissect(dis, opts_fake.rawsend, opts_fake.reconstruct)
     end
 
     -- Send real packet via multisplit
@@ -92,7 +95,7 @@ function flood_white(ctx, desync)
                 DLOG("flood_white: sending part "..(i+1))
             end
 
-            if not rawsend_payload_segmented(desync, part, pos_start - 1) then
+            if not rawsend_payload_segmented(desync, part, pos_start - 1, opts_orig) then
                 return VERDICT_PASS
             end
         end
@@ -100,7 +103,7 @@ function flood_white(ctx, desync)
         return VERDICT_DROP
     else
         DLOG("flood_white: no split positions, sending as-is")
-        rawsend_payload_segmented(desync)
+        rawsend_payload_segmented(desync, data, 0, opts_orig)
         return VERDICT_DROP
     end
 end
@@ -143,6 +146,9 @@ function ttl_ladder(ctx, desync)
     local ttl_min = tonumber(desync.arg.ttl_min) or 3
     local ttl_max = tonumber(desync.arg.ttl_max) or 12
 
+    local opts_fake = {rawsend = {repeats = 1, ifout = desync.ifout, fwmark = desync.fwmark}, reconstruct = reconstruct_opts(desync)}
+    local opts_orig = {rawsend = rawsend_opts_base(desync), reconstruct = {}, ipfrag = {}, ipid = desync.arg, fooling = {tcp_ts_up = desync.arg.tcp_ts_up}}
+
     DLOG("ttl_ladder: sending fakes with TTL "..ttl_min.."-"..ttl_max)
 
     -- Send fakes with variable TTL
@@ -151,10 +157,11 @@ function ttl_ladder(ctx, desync)
         dis.payload = white
         if dis.ip then dis.ip.ip_ttl = ttl end
         if dis.ip6 then dis.ip6.ip6_hlim = ttl end
+        apply_fooling(desync, dis)
         if b_debug then
             DLOG("ttl_ladder: fake TTL="..ttl)
         end
-        rawsend_dissect(dis, {repeats = 1})
+        rawsend_dissect(dis, opts_fake.rawsend, opts_fake.reconstruct)
     end
 
     -- Send real packet
@@ -168,14 +175,14 @@ function ttl_ladder(ctx, desync)
             local pos_start = pos[i] or 1
             local pos_end = i < #pos and pos[i+1] - 1 or #data
             local part = string.sub(data, pos_start, pos_end)
-            if not rawsend_payload_segmented(desync, part, pos_start - 1) then
+            if not rawsend_payload_segmented(desync, part, pos_start - 1, opts_orig) then
                 return VERDICT_PASS
             end
         end
         replay_drop_set(desync)
         return VERDICT_DROP
     else
-        rawsend_payload_segmented(desync)
+        rawsend_payload_segmented(desync, data, 0, opts_orig)
         return VERDICT_DROP
     end
 end
@@ -224,6 +231,9 @@ function white_sandwich(ctx, desync)
     local pos = resolve_multi_pos(data, desync.l7payload, spos)
     delete_pos_1(pos)
 
+    local opts_fake = {rawsend = {repeats = 1, ifout = desync.ifout, fwmark = desync.fwmark}, reconstruct = reconstruct_opts(desync)}
+    local opts_orig = {rawsend = rawsend_opts_base(desync), reconstruct = {}, ipfrag = {}, ipid = desync.arg, fooling = {tcp_ts_up = desync.arg.tcp_ts_up}}
+
     DLOG("white_sandwich: before="..before..", after="..after)
 
     -- Send fakes helper
@@ -235,7 +245,7 @@ function white_sandwich(ctx, desync)
             if b_debug then
                 DLOG("white_sandwich: "..label.." fake #"..i)
             end
-            rawsend_dissect(dis, {repeats = 1})
+            rawsend_dissect(dis, opts_fake.rawsend, opts_fake.reconstruct)
         end
     end
 
@@ -252,7 +262,7 @@ function white_sandwich(ctx, desync)
             if b_debug then
                 DLOG("white_sandwich: real segment "..(i+1))
             end
-            if not rawsend_payload_segmented(desync, part, pos_start - 1) then
+            if not rawsend_payload_segmented(desync, part, pos_start - 1, opts_orig) then
                 return VERDICT_PASS
             end
 
@@ -263,7 +273,7 @@ function white_sandwich(ctx, desync)
         return VERDICT_DROP
     else
         send_fakes(before, "before")
-        rawsend_payload_segmented(desync)
+        rawsend_payload_segmented(desync, data, 0, opts_orig)
         send_fakes(after, "after")
         return VERDICT_DROP
     end
@@ -312,6 +322,9 @@ function seqovl_white(ctx, desync)
 
     DLOG("seqovl_white: overlap size="..ovl_size)
 
+    local opts_fake = {rawsend = {repeats = 1, ifout = desync.ifout, fwmark = desync.fwmark}, reconstruct = reconstruct_opts(desync)}
+    local opts_orig = {rawsend = rawsend_opts_base(desync), reconstruct = {}, ipfrag = {}, ipid = desync.arg, fooling = {tcp_ts_up = desync.arg.tcp_ts_up}}
+
     -- Send overlap packet with whitelisted content
     local dis_ovl = deepcopy(desync.dis)
     dis_ovl.payload = white_prefix
@@ -323,7 +336,7 @@ function seqovl_white(ctx, desync)
     if b_debug then
         DLOG("seqovl_white: sending white overlap")
     end
-    rawsend_dissect(dis_ovl, {repeats = 1})
+    rawsend_dissect(dis_ovl, opts_fake.rawsend, opts_fake.reconstruct)
 
     -- Send real packet with split
     local spos = desync.arg.pos or "1,midsld"
@@ -340,18 +353,17 @@ function seqovl_white(ctx, desync)
                 DLOG("seqovl_white: sending part "..(i+1))
             end
 
-            if not rawsend_payload_segmented(desync, part, pos_start - 1) then
+            if not rawsend_payload_segmented(desync, part, pos_start - 1, opts_orig) then
                 return VERDICT_PASS
             end
         end
         replay_drop_set(desync)
         return VERDICT_DROP
     else
-        rawsend_payload_segmented(desync)
+        rawsend_payload_segmented(desync, data, 0, opts_orig)
         return VERDICT_DROP
     end
 end
 
 -- Register functions for --lua-desync
-DLOG("zapret-16kb.lua loaded: flood_white, ttl_ladder, white_sandwich, seqovl_white")
 DLOG("zapret-16kb.lua loaded: flood_white, ttl_ladder, white_sandwich, seqovl_white")

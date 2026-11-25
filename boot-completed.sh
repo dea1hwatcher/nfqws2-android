@@ -29,6 +29,10 @@ fi
 # ensure watchdog and netwatch are running
 sh "$MODDIR/service.sh" ensure_watchdog >/dev/null 2>&1
 
+if [ "$ENABLE_HOTSPOT" = "1" ] && command -v settings >/dev/null 2>&1; then
+  settings put global tether_dun_required 0 2>/dev/null || true
+fi
+
 # refresh stealth hiding mechanisms
 apply_stealth_hiding >/dev/null 2>&1 || true
 

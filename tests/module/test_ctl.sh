@@ -526,15 +526,16 @@ section "save-list-b64: a failed write is reported instead of OK"
 # The write was unchecked and followed by `echo OK`, so a failed mv — a full
 # disk, no permission, a directory where the file should be — came back as
 # success. The UI shows the output, so the user read "OK" and lost their edits.
-# Making $f.tmp a directory is the portable way to fail the redirect.
-rm -f "$LISTS_DIR/user.list.tmp"
-mkdir -p "$LISTS_DIR/user.list.tmp"
+# Replacing the list directory temporarily with a regular file makes creating $f.tmp.$$ fail portably.
+mv "$LISTS_DIR" "$LISTS_DIR.orig"
+: > "$LISTS_DIR"
 ctl save-list-b64 user "$(b64 'one
 two')"
 assert_rc 1 "$ctl_rc" "a failed save exits non-zero"
 assert_contains "$ctl_out" "Не удалось сохранить" "and says what failed"
 assert_not_contains "$ctl_out" "OK" "and does not claim success"
-rmdir "$LISTS_DIR/user.list.tmp" 2>/dev/null
+rm -f "$LISTS_DIR"
+mv "$LISTS_DIR.orig" "$LISTS_DIR"
 
 ctl save-list-b64 user "$(b64 'one
 two')"
@@ -1007,5 +1008,39 @@ assert_file "$STATE_DIR/tgws_updated" "the time of the update is kept: once a da
 ctl tgws-update
 assert_eq "0" "$ctl_out" "nothing new the second time"
 rm -f "$MOCKBIN/curl" "$STATE_DIR/tgws_updated"
+
+section "catalog-apply-module preserves quotes, mtproto_initial, and injects lua-init"
+for preset in alt alt11 exp2 hardcorp74 rostelecom; do
+  ctl set-strategy "$preset" >/dev/null 2>&1
+  assert_rc 0 "$ctl_rc" "catalog test: switch to $preset"
+  ctl catalog-apply-module tcp_tls 3 >/dev/null 2>&1
+  assert_rc 0 "$ctl_rc" "catalog test ($preset): apply tcp_tls #3 (hostfakesplit_multi)"
+  sh -n "$CONFFILE" 2>/dev/null
+  assert_rc 0 $? "catalog test ($preset): valid shell quotes after tcp_tls"
+  assert_contains "$(cat "$CONFFILE")" "zapret-multishake.lua" "catalog test ($preset): auto-injected zapret-multishake.lua"
+  if [ "$preset" = "hardcorp74" ]; then
+    assert_contains "$(cat "$CONFFILE")" "--payload=tls_client_hello,mtproto_initial" "catalog test ($preset): preserved mtproto_initial suffix"
+  fi
+  ctl catalog-apply-module tcp_http 28 >/dev/null 2>&1
+  assert_rc 0 "$ctl_rc" "catalog test ($preset): apply tcp_http #28 (http_aggressive)"
+  sh -n "$CONFFILE" 2>/dev/null
+  assert_rc 0 $? "catalog test ($preset): valid shell quotes after tcp_http"
+  assert_contains "$(cat "$CONFFILE")" "custom_funcs.lua" "catalog test ($preset): auto-injected custom_funcs.lua"
+  if [ "$preset" = "alt11" ]; then
+    assert_contains "$(cat "$CONFFILE")" "--payload=tls_client_hello" "catalog test (alt11): preserved TLS block after HTTP-first replacement"
+  fi
+  ctl dry-run >/dev/null 2>&1
+  assert_rc 0 "$ctl_rc" "catalog test ($preset): dry-run passes"
+done
+ctl set-strategy default >/dev/null 2>&1
+
+section "bench-strategies rejects invalid domain before snapshotting or restarting service"
+rm -f "$STATE_DIR/probe.pid" "$STATE_DIR/bench_orig."*
+: > "$SERVICE_LOG"
+ctl bench-strategies 'bad..domain!!'
+assert_rc 1 "$ctl_rc" "bench-strategies rejects invalid domain"
+assert_contains "$ctl_out" "Некорректный домен" "explains invalid domain"
+assert_no_file "$STATE_DIR/probe.pid" "does not leave probe.pid on early rejection"
+assert_not_contains "$(cat "$SERVICE_LOG" 2>/dev/null)" "Restarting nfqws2" "does not trigger service restart"
 
 harness_finish

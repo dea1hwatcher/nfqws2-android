@@ -23,8 +23,11 @@ wait_for_process() { # <pid> <expected state: up|down> <timeout in 50 ms ticks>
     sleep 0.05
     i=$((i + 1))
   done
-  [ "$want" = "up" ] && kill -0 "$pid" 2>/dev/null
-  [ "$want" = "down" ] && ! kill -0 "$pid" 2>/dev/null
+  case "$want" in
+    up) kill -0 "$pid" 2>/dev/null ;;
+    down) ! kill -0 "$pid" 2>/dev/null ;;
+    *) return 1 ;;
+  esac
 }
 
 # both start() failures end with the log tail; keep it in one place
@@ -86,6 +89,9 @@ start() {
     echo "Служба nfqws2 уже запущена (PID $(cat "$PIDFILE" 2>/dev/null))"
     return 0
   fi
+  if [ "$own_lock" = "1" ]; then
+    trap 'svc_lock_release; exit 130' INT TERM
+  fi
 
   _start_internal() {
     if [ ! -x "$NFQWS_BIN" ]; then
@@ -131,6 +137,12 @@ start() {
 
     save_strategy_receipt "$CONFFILE" 2>/dev/null || true
     export Z2K_ORCHESTRA_FILE="$ORCHESTRA_MEMORY_FILE"
+    export Z2K_TCP16_ASN="$STATE_DIR/tcp16_asn.txt"
+    export Z2K_TCP16_NETS="$LISTS_DIR/tcp16_nets.txt"
+    export Z2K_TCP16_SNI="$STATE_DIR/tcp16_sni.txt"
+    export Z2K_SNI_PIN="$LISTS_DIR/sni_wl_pin.txt"
+    export Z2K_STATE_DIR_OVERRIDE="$STATE_DIR/autocircular"
+    export Z2K_AUTOCIRCULAR_FALLBACK_OVERRIDE="$STATE_DIR"
     cd "$MODDIR/bin" || return 1
     set -f
 
@@ -145,10 +157,15 @@ start() {
       return 1
     fi
 
-    local pid=""
-    [ -f "$PIDFILE" ] && pid=$(cat "$PIDFILE" 2>/dev/null)
-    # a stray nfqws2 of another module must not be adopted as ours
-    [ -n "$pid" ] || pid=$(our_pids | head -n 1)
+    local pid="" _pw=0
+    while [ "$_pw" -lt 10 ]; do
+      if [ -s "$PIDFILE" ]; then
+        pid=$(cat "$PIDFILE" 2>/dev/null)
+        [ -n "$pid" ] && break
+      fi
+      sleep 0.05
+      _pw=$((_pw + 1))
+    done
 
     if [ -z "$pid" ] || ! wait_for_process "$pid" up 24; then
       start_failed "Error: nfqws2 failed to start."
@@ -189,28 +206,61 @@ start() {
   local ret=0
   _start_internal || ret=$?
   if [ "$own_lock" = "1" ]; then
+    trap - INT TERM
     svc_lock_release
   fi
   return $ret
 }
 
-# Restore the last working snapshot and bring the service up on it: used when a
-# restart fails, or when the new configuration comes up but passes no traffic.
-replace_restore_snapshot() {
-  rollback_to_snapshot || return 1
-  load_conf >/dev/null 2>&1 || return 1
+# Shared snapshot restore & restart helper used by both replace_restore_snapshot()
+# (under an existing svc_lock) and rollback() (standalone or 5s Watchdog Gate).
+_snapshot_restore_apply() { # [lock_held=0|1]
+  local lock_held="${1:-0}" own_lock=0 res=0
+  if [ ! -f "$SNAPSHOT_DIR/nfqws2.conf" ]; then
+    log_msg "Rollback: no saved snapshot for rollback"
+    return 1
+  fi
+  if [ "$lock_held" != "1" ]; then
+    if svc_lock_acquire; then
+      own_lock=1
+    else
+      log_msg "Rollback: another start/replace holds $(svc_lock_dir)"
+      return 1
+    fi
+  fi
+  if ! rollback_to_snapshot || ! load_conf >/dev/null 2>&1; then
+    if [ "$own_lock" = "1" ]; then
+      svc_lock_release
+    fi
+    return 1
+  fi
+  if is_running; then
+    SVC_REPLACING=1
+    stop >/dev/null 2>&1 || true
+    SVC_REPLACING=0
+  fi
   SVC_LOCK_HELD=1
-  start
-  local rc=$?
+  SVC_DEFER_SNAPSHOT=1
+  start || res=$?
+  SVC_DEFER_SNAPSHOT=0
   SVC_LOCK_HELD=0
-  if [ "$rc" -eq 0 ]; then
+  if [ "$own_lock" = "1" ]; then
+    svc_lock_release
+  fi
+  if [ "$res" -eq 0 ]; then
     log_msg "Rollback: service successfully restored from working snapshot"
     printf '{"time":%d,"strategy":"%s","status":"restored"}\n' \
       "$(date +%s 2>/dev/null || echo 0)" "$(get_current_strategy)" > "$STATE_DIR/last_rollback.json"
   else
     log_msg "replace: the snapshot did not start either"
   fi
-  return "$rc"
+  return "$res"
+}
+
+# Restore the last working snapshot and bring the service up on it: used when a
+# restart fails, or when the new configuration comes up but passes no traffic.
+replace_restore_snapshot() {
+  _snapshot_restore_apply 1
 }
 
 replace_daemon() {
@@ -224,9 +274,10 @@ replace_daemon() {
     echo "Другой запуск уже выполняется" >&2
     return 1
   fi
+  trap 'svc_lock_release; exit 130' INT TERM
 
   _replace_internal() {
-    local old_pid err args dry_err start_rc
+    local old_pid err args dry_err start_rc caller_defer="${SVC_DEFER_SNAPSHOT:-0}"
     old_pid=$(cat "$PIDFILE" 2>/dev/null)
     if [ -z "$old_pid" ]; then
       log_msg "replace: no pidfile — restart skipped"
@@ -258,13 +309,15 @@ replace_daemon() {
     # always failed and logged a startup error on every restart.
     log_msg "Restarting nfqws2 (NFQUEUE $NFQUEUE_NUM is exclusive, stopping first)"
     rotate_logs start
+    SVC_REPLACING=1
     stop >/dev/null 2>&1 || log_msg "replace: stop reported leftover rules — start will rebuild them"
+    SVC_REPLACING=0
 
     SVC_LOCK_HELD=1
     SVC_DEFER_SNAPSHOT=1
     start
     start_rc=$?
-    SVC_DEFER_SNAPSHOT=0
+    SVC_DEFER_SNAPSHOT="$caller_defer"
     SVC_LOCK_HELD=0
     if [ "$start_rc" -ne 0 ]; then
       # the new configuration cannot come up: put the last working one back so
@@ -289,33 +342,38 @@ replace_daemon() {
       fi
     fi
 
-    # Past the verdict — good, or with no baseline to judge against — this
-    # configuration is what the phone should fall back to.
-    save_working_snapshot
+    # When benchmarking temporary candidates (SVC_DEFER_SNAPSHOT=1), never seed/overwrite
+    # the user's working snapshot or arm the asynchronous 5s gate.
+    if [ "$caller_defer" != "1" ]; then
+      # Preserve the previous working snapshot until the 5s Watchdog Gate verifies stability;
+      # seed an initial snapshot only if none exists yet.
+      [ -f "$SNAPSHOT_DIR/nfqws2.conf" ] || save_working_snapshot
 
-    touch "$STATE_DIR/rollback_armed"
-    (
-      sleep 5
-      if [ -f "$STATE_DIR/rollback_armed" ] && [ -f "$DESIRED_FILE" ]; then
-        if is_running; then
-          rm -f "$STATE_DIR/rollback_armed" 2>/dev/null
-          save_working_snapshot
-          log_msg "Watchdog Gate: new configuration successfully stabilized (5s)"
+      touch "$STATE_DIR/rollback_armed"
+      (
+        sleep 5
+        if [ -f "$STATE_DIR/rollback_armed" ] && [ -f "$DESIRED_FILE" ]; then
+          if is_running; then
+            rm -f "$STATE_DIR/rollback_armed" 2>/dev/null
+            save_working_snapshot
+            log_msg "Watchdog Gate: new configuration successfully stabilized (5s)"
+          else
+            log_msg "Watchdog Gate: new process crashed within 5s — triggering auto-rollback!"
+            rm -f "$STATE_DIR/rollback_armed" 2>/dev/null
+            rollback
+          fi
         else
-          log_msg "Watchdog Gate: new process crashed within 5s — triggering auto-rollback!"
           rm -f "$STATE_DIR/rollback_armed" 2>/dev/null
-          rollback
         fi
-      else
-        rm -f "$STATE_DIR/rollback_armed" 2>/dev/null
-      fi
-    ) >/dev/null 2>&1 &
+      ) >/dev/null 2>&1 &
+    fi
 
     return 0
   }
 
   local ret=0
   _replace_internal || ret=$?
+  trap - INT TERM
   svc_lock_release
   return $ret
 }
@@ -326,27 +384,23 @@ rollback() {
     return 1
   fi
   log_msg "WARNING: Guaranteed rollback to previous working configuration started"
-  rollback_to_snapshot || return 1
-  load_conf >/dev/null 2>&1
-  local res=0
-  if is_running; then
-    replace_daemon || { stop; start; res=$?; }
-  else
-    start || res=$?
-  fi
-  if [ "$res" -eq 0 ]; then
-    log_msg "Rollback: service successfully restored from working snapshot"
-    printf '{"time":%d,"strategy":"%s","status":"restored"}\n' \
-      "$(date +%s 2>/dev/null || echo 0)" "$(get_current_strategy)" > "$STATE_DIR/last_rollback.json"
-  fi
-  return $res
+  _snapshot_restore_apply 0
 }
 
 stop() {
-  rm -f "$DESIRED_FILE" "$STARTED_FILE" "$STARTED_CS_FILE" "$STATE_DIR/rollback_armed"
+  if [ "${SVC_REPLACING:-0}" = "1" ]; then
+    rm -f "$STARTED_FILE" "$STARTED_CS_FILE" "$STATE_DIR/rollback_armed"
+  else
+    rm -f "$DESIRED_FILE" "$STARTED_FILE" "$STARTED_CS_FILE" "$STATE_DIR/rollback_armed"
+  fi
   release_wakelock
   if [ -f "$SK_PIDFILE" ]; then
-    kill -KILL "$(cat "$SK_PIDFILE" 2>/dev/null)" 2>/dev/null
+    local skpid
+    skpid=$(cat "$SK_PIDFILE" 2>/dev/null)
+    if [ -n "$skpid" ] && kill -0 "$skpid" 2>/dev/null; then
+      kill -TERM "$skpid" 2>/dev/null
+      wait_for_process "$skpid" down 20 || kill -KILL "$skpid" 2>/dev/null
+    fi
     rm -f "$SK_PIDFILE"
     smartkill_chain del
   fi
@@ -359,7 +413,7 @@ stop() {
   if [ -f "$PIDFILE" ]; then
     local pid
     pid=$(cat "$PIDFILE" 2>/dev/null)
-    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null && pid_is_ours "$pid"; then
       kill -TERM "$pid" 2>/dev/null
       wait_for_process "$pid" down 20 || kill -KILL "$pid" 2>/dev/null
     fi
@@ -372,9 +426,9 @@ stop() {
   for p in $leftover; do kill -9 "$p" 2>/dev/null; done
   sleep 0.1
 
-  # a leftover chain still jumps to NFQUEUE with no listener, so the kernel
-  # drops that traffic: stopped must mean rules gone
-  if firewall_ok; then
+  # Any leftover chain/jump (IPv4 or IPv6, mangle/nat/filter) still routes traffic
+  # without a listener: stopped must guarantee zero active module rules.
+  if firewall_any_active; then
     log_msg "Error: iptables rules remained active — traffic queued to NFQUEUE without listener"
     return 1
   fi
@@ -559,7 +613,7 @@ wlwatch() {
 }
 wlwatch_exit() {
   [ "$(cat "$WL_PIDFILE" 2>/dev/null)" = "$$" ] && rm -f "$WL_PIDFILE"
-  rm -f "$STATE_DIR/conf_seen.$$"
+  rm -rf "$STATE_DIR/conf_seen.$$" "$STATE_DIR/wlprobe.$$" 2>/dev/null
 }
 conf_refresh() {
   local st="$STATE_DIR/conf_seen.$$"
@@ -647,12 +701,13 @@ netwatch() {
   local fifo="$STATE_DIR/netwatch.fifo"
   netsig=$(net_signature)
   trap 'wake=1' USR1
-  trap 'kill -TERM "$mon" "$reader" "$sp" 2>/dev/null; rm -f "$WN_PIDFILE" "$fifo" "$STATE_DIR/conf_seen.$$"; exit 0' TERM INT HUP
+  trap 'kill -TERM "$mon" "$reader" "$sp" 2>/dev/null; wait "$mon" "$reader" "$sp" 2>/dev/null; rm -f "$WN_PIDFILE" "$fifo" "$STATE_DIR/conf_seen.$$"; exit 0' TERM INT HUP
   read -r up _ < /proc/uptime; base=${up%.*}; rq="${NW_RECHECK:-3 10 30}"
   while :; do
     if [ -z "$mon" ] || ! kill -0 "$mon" 2>/dev/null; then
       if [ -n "$mon" ]; then
         kill -TERM "$reader" 2>/dev/null
+        wait "$reader" 2>/dev/null
         read -r up _ < /proc/uptime
         if [ $(( ${up%.*} - started )) -lt 10 ]; then
           sleep "$backoff"; [ "$backoff" -lt 60 ] && backoff=$((backoff * 2))
@@ -673,7 +728,7 @@ netwatch() {
       fi
       sleep "$d" & sp=$!
       [ "$wake" = 1 ] || wait "$sp"
-      kill "$sp" 2>/dev/null; sp=""
+      kill "$sp" 2>/dev/null; wait "$sp" 2>/dev/null; sp=""
     fi
     conf_refresh
     watchers_wanted || break
@@ -827,8 +882,8 @@ watchdog() {
     [ -n "$dpid" ] && protect_process "$dpid"
     protect_process
 
-    # fast iptables recovery after a network switch
-    if ! firewall_ok; then
+    # fast iptables recovery after a network switch; skip while stopped or start/stop lock held
+    if [ -f "$DESIRED_FILE" ] && is_running && [ ! -d "$(svc_lock_dir)" ] && ! firewall_ok; then
       log_msg "watchdog: iptables rules flushed by system — restoring"
       firewall_start
     fi
@@ -839,7 +894,10 @@ watchdog() {
       if dpi_ttl_due; then
         ( sh "$MODDIR/bin/nfqws2-ctl" dpi-distance </dev/null >/dev/null 2>&1 & )
       fi
-      if [ ! -f "$STATE_DIR/tgws_updated" ] || [ $(( $(date +%s) - $(cat "$STATE_DIR/tgws_updated" 2>/dev/null || echo 0) )) -ge 86400 ]; then
+      local tgws_t=0
+      [ -f "$STATE_DIR/tgws_updated" ] && tgws_t=$(cat "$STATE_DIR/tgws_updated" 2>/dev/null)
+      case "$tgws_t" in ''|*[!0-9]*) tgws_t=0 ;; esac
+      if [ ! -f "$STATE_DIR/tgws_updated" ] || [ $(( $(date +%s 2>/dev/null || echo 0) - tgws_t )) -ge 86400 ]; then
         ( sh "$MODDIR/bin/nfqws2-ctl" tgws-update </dev/null >/dev/null 2>&1 & )
       fi
     fi
@@ -852,6 +910,7 @@ watchdog() {
 home_check() {
   [ -n "$(find "$STATE_DIR/home.lock" -maxdepth 0 -mmin +2 2>/dev/null)" ] && rmdir "$STATE_DIR/home.lock" 2>/dev/null
   mkdir "$STATE_DIR/home.lock" 2>/dev/null || return 0
+  trap 'rmdir "$STATE_DIR/home.lock" 2>/dev/null; exit 130' INT TERM
 
   local ssid=""
   local vpn=0
@@ -900,6 +959,7 @@ home_check() {
     rm -f "$HOME_PAUSED_FILE"
     start >/dev/null 2>&1 || log_msg "Failed to resume bypass after pause"
   fi
+  trap - INT TERM
   rmdir "$STATE_DIR/home.lock" 2>/dev/null
   return 0
 }
@@ -910,9 +970,17 @@ network_strategy_check() {
   is_running || return 0
   [ -f "$HOME_PAUSED_FILE" ] && return 0 # keep the strategy during a home, VPN, or whitelist pause
 
+  [ -n "$(find "$STATE_DIR/netcheck.lock" -maxdepth 0 -mmin +2 2>/dev/null)" ] && rmdir "$STATE_DIR/netcheck.lock" 2>/dev/null
+  mkdir "$STATE_DIR/netcheck.lock" 2>/dev/null || return 0
+  trap 'rmdir "$STATE_DIR/netcheck.lock" 2>/dev/null; exit 130' INT TERM
+
   local cur_net last_net saved cur_strat
   cur_net=$(current_network_key 2>/dev/null)
-  [ -n "$cur_net" ] || return 0
+  if [ -z "$cur_net" ]; then
+    trap - INT TERM
+    rmdir "$STATE_DIR/netcheck.lock" 2>/dev/null
+    return 0
+  fi
   last_net=$(cat "$STATE_DIR/last_network" 2>/dev/null)
 
   if [ "$cur_net" != "$last_net" ]; then
@@ -922,11 +990,13 @@ network_strategy_check() {
     if [ -n "$saved" ] && [ "$saved" != "$cur_strat" ]; then
       log_msg "Network changed to $(current_network_title 2>/dev/null || echo "$cur_net") — switching to saved strategy «$saved»"
       if sh "$MODDIR/bin/nfqws2-ctl" set-strategy "$saved" >/dev/null 2>&1; then
-        stop >/dev/null 2>&1
-        start >/dev/null 2>&1
+        load_conf >/dev/null 2>&1 || true
+        replace_daemon >/dev/null 2>&1 || { stop >/dev/null 2>&1; start >/dev/null 2>&1; }
       fi
     fi
   fi
+  trap - INT TERM
+  rmdir "$STATE_DIR/netcheck.lock" 2>/dev/null
   return 0
 }
 
@@ -1005,8 +1075,6 @@ case "$1" in
   firewall_apply)     firewall_start ;;
   firewall_stop)      firewall_stop ;;
   *)
-    # Boot marker for boot-completed.sh
-    rm -f "$STATE_DIR/boot_done"
     # Soft reboot (system_server crash, LSPosed soft restart): kernel is same,
     # boot_id unchanged, but previous processes still hold NFQUEUE. Stop them first.
     bid=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null)

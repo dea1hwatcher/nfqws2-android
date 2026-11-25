@@ -316,11 +316,22 @@ svc stop >/dev/null 2>&1
 section "post-fs-data.sh early boot hook"
 
 assert_file "$MODDIR/post-fs-data.sh" "post-fs-data.sh exists in sandbox"
-touch "$STATE_DIR/stale.lock"
+mkdir -p "$STATE_DIR/service.lock" "$STATE_DIR/home.lock"
 echo "12345" > "$PIDFILE"
+echo "12346" > "$WD_PIDFILE"
+echo "12347" > "$WN_PIDFILE"
+echo "12348" > "$WL_PIDFILE"
+echo "12349" > "$SK_PIDFILE"
+echo "12350" > "$STATE_DIR/probe.pid"
 sh "$MODDIR/post-fs-data.sh" >/dev/null 2>&1
-assert_no_file "$STATE_DIR/stale.lock" "post-fs-data cleans stale locks"
+[ ! -d "$STATE_DIR/service.lock" ] && [ ! -d "$STATE_DIR/home.lock" ]
+assert_rc 0 $? "post-fs-data removes stale lock directories"
 assert_no_file "$PIDFILE" "post-fs-data cleans stale pidfile"
+assert_no_file "$WD_PIDFILE" "post-fs-data cleans stale watchdog pidfile"
+assert_no_file "$WN_PIDFILE" "post-fs-data cleans stale netwatch pidfile"
+assert_no_file "$WL_PIDFILE" "post-fs-data cleans stale wlwatch pidfile"
+assert_no_file "$SK_PIDFILE" "post-fs-data cleans stale smartkill pidfile"
+assert_no_file "$STATE_DIR/probe.pid" "post-fs-data cleans stale probe pidfile"
 
 section "protect_process"
 
@@ -433,8 +444,52 @@ assert_eq "80,443,1984,2053,2083,2087,2096,5222,8443" \
 assert_eq "0" "$(grep -c 'TCP_PORTS="9"' "$SNAPSHOT_DIR/nfqws2.conf" 2>/dev/null || true)" \
   "the configuration that passed no traffic never became the working snapshot"
 assert_file "$PIDFILE" "and the service runs on the old configuration"
+assert_contains "$(ipt_rules nfqws_post)" "80,443,1984" "iptables rules actually reverted to the snapshot ports"
+assert_not_contains "$(ipt_rules nfqws_post)" "--dport 9 " "broken config ports are no longer active in iptables"
 assert_file "$CONFDIR/state/last_rollback.json" "the rollback is recorded"
 rm -f "$MOCKBIN/curl" "$MOCK_DIR/curl_calls"
+
+section "a restart keeps the prior working snapshot during the 5s watchdog gate"
+
+cat > "$MOCKBIN/curl" <<'X'
+#!/bin/sh
+exit 0
+X
+chmod 0755 "$MOCKBIN/curl"
+conf_reset
+printf 'WATCHDOG=0\n' >> "$CONFFILE"
+svc start >/dev/null 2>&1
+save_working_snapshot "$CONFFILE"
+sed -i 's/^TCP_PORTS=.*/TCP_PORTS="80,443,1984"/' "$CONFFILE"
+svc replace >/dev/null 2>&1
+assert_eq "0" "$(grep -c 'TCP_PORTS="80,443,1984"' "$SNAPSHOT_DIR/nfqws2.conf" 2>/dev/null || true)" \
+  "the newly started config does not overwrite the working snapshot before 5s"
+rm -f "$MOCKBIN/curl" "$STATE_DIR/rollback_armed"
+svc stop >/dev/null 2>&1
+
+section "TCP_MSS_CLAMP runs before NFQUEUE, clamps IPv6 to >=1220, and nfqws_fwd excludes VPNs"
+
+conf_reset
+printf 'WATCHDOG=0\nTCP_MSS_CLAMP=1\nENABLE_HOTSPOT=1\nIPV6_ENABLED=1\n' >> "$CONFFILE"
+load_conf >/dev/null 2>&1
+ipt_reset
+firewall_start >/dev/null 2>&1
+v4_post=$(ipt_rules nfqws_post)
+v4_fwd=$(ipt_rules nfqws_fwd)
+v6_post=$(ip6tables -w -t mangle -S nfqws_post 2>/dev/null)
+mss_line=$(printf '%s\n' "$v4_post" | grep -n 'TCPMSS --set-mss 536' | head -n1 | cut -d: -f1)
+nfq_line=$(printf '%s\n' "$v4_post" | grep -n 'NFQUEUE\|nfqws_qout' | grep -v 'tcp-flags fin\|tcp-flags rst' | head -n1 | cut -d: -f1)
+if [ -n "$mss_line" ] && [ -n "$nfq_line" ] && [ "$mss_line" -lt "$nfq_line" ]; then
+  _ok "TCPMSS rule precedes terminal NFQUEUE in IPv4 nfqws_post ($mss_line < $nfq_line)"
+else
+  _fail "TCPMSS must precede NFQUEUE (mss=$mss_line nfq=$nfq_line)"
+fi
+assert_contains "$v6_post" "TCPMSS --set-mss 1220" "IPv6 TCPMSS enforces minimum 1220 MSS"
+assert_contains "$v4_fwd" "-o awg+ -j RETURN" "nfqws_fwd excludes awg+ VPN interface"
+assert_contains "$v4_fwd" "TCPMSS --set-mss 536" "nfqws_fwd also clamps MSS when hotspot bypass is on"
+firewall_stop >/dev/null 2>&1
+conf_reset
+load_conf >/dev/null 2>&1
 
 section "a restart that keeps working traffic alone does not roll back"
 
@@ -475,6 +530,7 @@ svc stop >/dev/null 2>&1
 assert_no_file "$STATE_DIR/sysctls" "stop clears the sysctl snapshot taken at start"
 
 section "the service lock is not stolen"
+printf 'WATCHDOG=0\n' >> "$CONFFILE"
 svc start >/dev/null 2>&1
 svc stop >/dev/null 2>&1
 mkdir "$CONFDIR/state/service.lock"
@@ -540,6 +596,54 @@ ipt_reset
 firewall_start >/dev/null 2>&1
 assert_not_contains "$(ipt_snapshot)" "nfqws_mquic" "off: no reject rules"
 firewall_stop >/dev/null 2>&1
+conf_reset
+printf 'IPV6_ENABLED=0\nENABLE_HOTSPOT=0\nMETA_QUIC_REJECT=1\n' >> "$CONFFILE"
+load_conf >/dev/null 2>&1
+ipt_reset
+firewall_start >/dev/null 2>&1
+assert_eq "1" "$(grep -c nfqws_mquic "$MOCK_IPT_STORE/iptables/filter/OUTPUT" 2>/dev/null)" "meta_quic adds IPv4 OUTPUT jump"
+mq_fwd=$(grep -c nfqws_mquic "$MOCK_IPT_STORE/iptables/filter/FORWARD" 2>/dev/null || :)
+assert_eq "0" "${mq_fwd:-0}" "meta_quic skips FORWARD when ENABLE_HOTSPOT=0"
+assert_no_file "$MOCK_IPT_STORE/ip6tables/filter/nfqws_mquic" "meta_quic skips ip6tables when IPV6_ENABLED=0"
+firewall_stop >/dev/null 2>&1
+conf_reset
+load_conf >/dev/null 2>&1
+
+section "T6: APP_MODE=include fails closed with 0 UIDs and partial stop is detected"
+conf_reset
+: > "$CONFDIR/apps.list"
+printf 'APP_MODE=include\nWATCHDOG=0\n' >> "$CONFFILE"
+load_conf >/dev/null 2>&1
+ipt_reset
+svc firewall_apply
+assert_rc 1 "$svc_rc" "APP_MODE=include with 0 UIDs refuses to expose all traffic"
+assert_no_file "$MOCK_IPT_STORE/iptables/mangle/nfqws_post" "and leaves no unprotected NFQUEUE jump"
+
+conf_reset
+printf 'IPV6_ENABLED=1\nWATCHDOG=0\n' >> "$CONFFILE"
+load_conf >/dev/null 2>&1
+ipt_reset
+svc start >/dev/null 2>&1
+_firewall_stop iptables >/dev/null 2>&1
+firewall_any_active
+assert_rc 0 $? "firewall_any_active detects leftover ip6tables chains after partial v4 cleanup"
+# Wrapper that rejects ip6tables mutations (-D/-F/-X) while keeping read probes (-C/-S).
+# Keep basename "ip6tables" so mock iptables routes state to $MOCK_IPT_STORE/ip6tables.
+mkdir -p "$SANDBOX/real_ip6"
+mv "$MOCKBIN/ip6tables" "$SANDBOX/real_ip6/ip6tables"
+cat > "$MOCKBIN/ip6tables" <<EOF
+#!/bin/sh
+case " \$* " in *" -D "*|*" -F "*|*" -X "*) exit 1 ;; esac
+exec "$SANDBOX/real_ip6/ip6tables" "\$@"
+EOF
+chmod 0755 "$MOCKBIN/ip6tables"
+export MOCK_IPT_RESTORE_FAIL=1
+svc stop >/dev/null 2>&1
+unset MOCK_IPT_RESTORE_FAIL
+assert_rc 1 "$svc_rc" "partial stop leaving ip6tables chains fails loudly via firewall_any_active"
+mv "$SANDBOX/real_ip6/ip6tables" "$MOCKBIN/ip6tables"
+rmdir "$SANDBOX/real_ip6" 2>/dev/null || :
+svc stop >/dev/null 2>&1
 conf_reset
 load_conf >/dev/null 2>&1
 

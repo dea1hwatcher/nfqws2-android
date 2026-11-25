@@ -548,7 +548,19 @@ cmd_doctor() {
   else
     row ok bench "$(M 'хвостов подбора нет' 'no bench leftovers')"
   fi
-  row ok auto_ports "$(M "активные порты: TCP: ${TCP_PORTS:-80,443} | UDP: ${UDP_PORTS:-443}" "active ports: TCP: ${TCP_PORTS:-80,443} | UDP: ${UDP_PORTS:-443}")"
+  local tp_disp="${TCP_PORTS:-80,443}"
+  local up_disp="${UDP_PORTS:-443}"
+  if [ "${AUTO_PORTS:-0}" = "1" ] || [ "$TCP_PORTS" = "auto" ]; then
+    tp_disp=$(collect_capture_ports tcp 2>/dev/null)
+    [ -n "$tp_disp" ] || tp_disp="80,443"
+    tp_disp="$tp_disp (auto)"
+  fi
+  if [ "${AUTO_PORTS:-0}" = "1" ] || [ "$UDP_PORTS" = "auto" ]; then
+    up_disp=$(collect_capture_ports udp 2>/dev/null)
+    [ -n "$up_disp" ] || up_disp="none"
+    up_disp="$up_disp (auto)"
+  fi
+  row ok auto_ports "$(M "активные порты: TCP: $tp_disp | UDP: $up_disp" "active ports: TCP: $tp_disp | UDP: $up_disp")"
   if [ "$NAT_FIX" = "1" ]; then
     local nat_hits
     nat_hits=$(iptables -w -t nat -L "$IPT_GROUP_NAT" -n -v -x 2>/dev/null | awk '$1 ~ /^[0-9]+$/ && $3 == "MASQUERADE" { n++; total += $1 } END { if (n) printf "%.0f", total }')
@@ -1182,17 +1194,7 @@ cmd_backup_restore_b64() { # <base64 tar data> -> stdout: ui.json in base64 (if 
 }
 
 # ---------------------------------------------------------------- connectivity check
-# Executed on-device (not in WebView) so each check opens a fresh TLS connection.
-probe_tool() {
-  local b
-  if command -v curl >/dev/null 2>&1; then echo "curl $(command -v curl)"; return 0; fi
-  for b in /data/adb/ksu/bin/busybox /data/adb/ap/bin/busybox /data/adb/magisk/busybox "$(command -v busybox 2>/dev/null)"; do
-    if [ -z "$b" ] || [ ! -x "$b" ]; then continue; fi
-    "$b" wget --help 2>&1 | grep -q 'no-check-certificate' && { echo "wget $b"; return 0; }
-  done
-  echo "none"
-  return 1
-}
+# probe_tool() lives in lib/common.sh; executed on-device so each check opens a fresh TLS connection.
 PROBE_APP_RULE=""
 setup_probe_app_rule() {
   # Avoid duplicate iptables rule insertion during benchmark rounds
@@ -1313,7 +1315,7 @@ probe_attempt() { # <kind> <bin_path> <host[/path]> [proto 1=http, 2=tls1.2, 3=t
       local url="http://${host}:80${path:-/}"
       if [ "$kind" = "curl" ]; then
         out=$($to "$bin" $lp -s -L --max-redirs 5 -m 8 --connect-timeout 5 -o "$tmp_body" -A 'Mozilla/5.0' \
-          -b "$jar" -c "$jar" -w "\nREDIRECT_URL:%{redirect_url}\nHTTP_CODE:%{http_code}\n" "$url" 2>&1); rc=$?
+          -b "$jar" -c "$jar" -w "\nREDIRECT_URL:%{redirect_url}\nEFFECTIVE_URL:%{url_effective}\nHTTP_CODE:%{http_code}\n" "$url" 2>&1); rc=$?
       else
         out=$($to "$bin" wget -q -T 6 -O "$tmp_body" -U 'Mozilla/5.0' "$url" 2>&1); rc=$?
       fi
@@ -1326,10 +1328,10 @@ probe_attempt() { # <kind> <bin_path> <host[/path]> [proto 1=http, 2=tls1.2, 3=t
             -H "Upgrade: websocket" -H "Connection: Upgrade" \
             -H "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==" -H "Sec-WebSocket-Version: 13" \
             -L --max-redirs 5 -m 8 --connect-timeout 5 -o "$tmp_body" -A 'Mozilla/5.0' \
-            -b "$jar" -c "$jar" -w "\nREDIRECT_URL:%{redirect_url}\nHTTP_CODE:%{http_code}\n" "https://gateway.discord.gg/?v=10&encoding=json" 2>&1); rc=$?
+            -b "$jar" -c "$jar" -w "\nREDIRECT_URL:%{redirect_url}\nEFFECTIVE_URL:%{url_effective}\nHTTP_CODE:%{http_code}\n" "https://gateway.discord.gg/?v=10&encoding=json" 2>&1); rc=$?
         else
           out=$($to "$bin" $lp -s -k --tlsv1.2 --tls-max 1.2 -L --max-redirs 5 -m 8 --connect-timeout 5 -o "$tmp_body" -A 'Mozilla/5.0' \
-            -b "$jar" -c "$jar" -w "\nREDIRECT_URL:%{redirect_url}\nHTTP_CODE:%{http_code}\n" "$url" 2>&1); rc=$?
+            -b "$jar" -c "$jar" -w "\nREDIRECT_URL:%{redirect_url}\nEFFECTIVE_URL:%{url_effective}\nHTTP_CODE:%{http_code}\n" "$url" 2>&1); rc=$?
         fi
       else
         out=$($to "$bin" wget -q -T 6 -O "$tmp_body" -U 'Mozilla/5.0' --no-check-certificate "$url" 2>&1); rc=$?
@@ -1348,10 +1350,10 @@ probe_attempt() { # <kind> <bin_path> <host[/path]> [proto 1=http, 2=tls1.2, 3=t
             -H "Upgrade: websocket" -H "Connection: Upgrade" \
             -H "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==" -H "Sec-WebSocket-Version: 13" \
             -L --max-redirs 5 -m 8 --connect-timeout 5 -o "$tmp_body" -A 'Mozilla/5.0' \
-            -b "$jar" -c "$jar" -w "\nREDIRECT_URL:%{redirect_url}\nHTTP_CODE:%{http_code}\n" "https://gateway.discord.gg/?v=10&encoding=json" 2>&1); rc=$?
+            -b "$jar" -c "$jar" -w "\nREDIRECT_URL:%{redirect_url}\nEFFECTIVE_URL:%{url_effective}\nHTTP_CODE:%{http_code}\n" "https://gateway.discord.gg/?v=10&encoding=json" 2>&1); rc=$?
         else
           out=$($to "$bin" $lp $pq -s -k --tlsv1.3 -L --max-redirs 5 -m 8 --connect-timeout 5 -o "$tmp_body" -A 'Mozilla/5.0' \
-            -b "$jar" -c "$jar" -w "\nREDIRECT_URL:%{redirect_url}\nHTTP_CODE:%{http_code}\n" "$url" 2>&1); rc=$?
+            -b "$jar" -c "$jar" -w "\nREDIRECT_URL:%{redirect_url}\nEFFECTIVE_URL:%{url_effective}\nHTTP_CODE:%{http_code}\n" "$url" 2>&1); rc=$?
         fi
       else
         out=$($to "$bin" wget -q -T 6 -O "$tmp_body" -U 'Mozilla/5.0' --no-check-certificate "$url" 2>&1); rc=$?
@@ -1380,10 +1382,18 @@ probe_attempt() { # <kind> <bin_path> <host[/path]> [proto 1=http, 2=tls1.2, 3=t
 
   t1=$(uptime_cs)
   local redir
+  local eff_url
   local http_code
   redir=$(printf '%s\n' "$out" | sed -n 's/^REDIRECT_URL://p')
+  eff_url=$(printf '%s\n' "$out" | sed -n 's/^EFFECTIVE_URL://p')
   http_code=$(printf '%s\n' "$out" | sed -n 's/^HTTP_CODE://p')
   case "$redir" in
+    *rkn.gov.ru*|*eais.*|*warning.rt.ru*|*blackhole*|*zapret*|https:///*)
+      rm -f "$tmp_body" "$jar"
+      echo "fail isp_redir"
+      return ;;
+  esac
+  case "$eff_url" in
     *rkn.gov.ru*|*eais.*|*warning.rt.ru*|*blackhole*|*zapret*|https:///*)
       rm -f "$tmp_body" "$jar"
       echo "fail isp_redir"
@@ -1894,7 +1904,13 @@ DC5|91.108.56.130|443"
     else
       af_json="${af_json},\n"
     fi
-    af_json="${af_json}    \"$d_name\": {\"ip\": \"$d_ip\", \"port\": $d_port, \"status\": \"$d_status\", \"latency_ms\": $d_latency, \"primary_media\": $is_pm}"
+    local safe_name safe_ip safe_status safe_lat
+    safe_name=$(json_str "$d_name")
+    safe_ip=$(json_str "$d_ip")
+    safe_status=$(json_str "$d_status")
+    case "$d_port" in ''|*[!0-9]*) d_port=443 ;; esac
+    case "$d_latency" in ''|*[!0-9]*) safe_lat=0 ;; *) safe_lat="$d_latency" ;; esac
+    af_json="${af_json}    \"$safe_name\": {\"ip\": \"$safe_ip\", \"port\": $d_port, \"status\": \"$safe_status\", \"latency_ms\": $safe_lat, \"primary_media\": $is_pm}"
   done < "$affinity_tmp"
   rm -f "$affinity_tmp"
 
@@ -1908,7 +1924,7 @@ DC5|91.108.56.130|443"
     printf 'TG_MEDIA\tskip\tN/A\n'
   fi
 
-  af_json="${af_json}\n  },\n  \"primary_media_dc\": \"$best_media_dc\",\n  \"media_speed_mbps\": \"$media_spd\"\n}\n"
+  af_json="${af_json}\n  },\n  \"primary_media_dc\": \"$(json_str "$best_media_dc")\",\n  \"media_speed_mbps\": \"$(json_str "$media_spd")\"\n}\n"
   mkdir -p "$STATE_DIR" 2>/dev/null
   printf '%b' "$af_json" > "$TG_AFFINITY_FILE" 2>/dev/null
   printf 'TG_AFFINITY\t%s\t%s\tprimary_media\t%sms\n' "$best_media_dc" "$best_media_ip" "$min_latency"
@@ -2380,7 +2396,7 @@ cmd_smart_reset() {
     all) rm -f "$SMART_DIR"/*.tsv ;;
     *) smart_valid_net "$1" || { echo "Неверная сеть" >&2; exit 1; }
        rm -f "$SMART_DIR/$1.tsv"
-       [ -f "$SMART_DIR/nets.tsv" ] && { grep -v "^$1	" "$SMART_DIR/nets.tsv" > "$SMART_DIR/nets.tsv.tmp"; mv -f "$SMART_DIR/nets.tsv.tmp" "$SMART_DIR/nets.tsv"; } ;;
+       [ -f "$SMART_DIR/nets.tsv" ] && { grep -v "^$1	" "$SMART_DIR/nets.tsv" > "$SMART_DIR/nets.tsv.tmp.$$" && mv -f "$SMART_DIR/nets.tsv.tmp.$$" "$SMART_DIR/nets.tsv" || rm -f "$SMART_DIR/nets.tsv.tmp.$$"; } ;;
   esac
   if is_running && smart_active; then sh "$SERVICE" restart >/dev/null 2>&1; fi
   smart_net_update
@@ -2533,7 +2549,7 @@ cmd_smart_learn_once() {
   trap - EXIT INT TERM
   cleanup_probe_app_rule
   n=$((${n:-0} + 1)); case "$r" in ok*) ok=$((${ok:-0} + 1)) ;; esac
-  printf 'n=%s\nok=%s\nlast=%s\nt=%s\n' "$n" "${ok:-0}" "$h" "$(date +%s)" > "$SMART_LEARN_FILE.tmp" && mv -f "$SMART_LEARN_FILE.tmp" "$SMART_LEARN_FILE"
+  { printf 'n=%s\nok=%s\nlast=%s\nt=%s\n' "$n" "${ok:-0}" "$h" "$(date +%s)" > "$SMART_LEARN_FILE.tmp.$$" && mv -f "$SMART_LEARN_FILE.tmp.$$" "$SMART_LEARN_FILE"; } || rm -f "$SMART_LEARN_FILE.tmp.$$"
 }
 
 smart_variant_name() { # <slot> <v> -> variant name
@@ -3263,7 +3279,7 @@ bench_measure_serial() { # <idx> <strategy> <hosts> <domain> <mode> <curl> <res>
     return 1
   fi
 
-  sh "$SERVICE" restart >/dev/null 2>&1
+  SVC_DEFER_SNAPSHOT=1 sh "$SERVICE" restart >/dev/null 2>&1
 
   while [ "$wait_i" -lt 8 ]; do
     if is_running; then ready=true; break; fi
@@ -3470,6 +3486,10 @@ bench_parallel_run() { # <slots> <strat_list> <hosts> <domain> <mode> <curl>
 
 cmd_bench_strategies() {
   local target_domain="$1"
+  if [ -n "$target_domain" ]; then
+    target_domain=$(printf '%s' "$target_domain" | tr 'A-Z' 'a-z' | sed 's#^[a-z]*://##; s#/.*##; s/:[0-9]*$//; s/^www\.//')
+    case "$target_domain" in ''|*[!a-z0-9.-]*) echo "Некорректный домен" >&2; return 1 ;; esac
+  fi
   local tool
   local kind
   local bin
@@ -3522,8 +3542,6 @@ cmd_bench_strategies() {
 
   local bench_hosts_file="$LISTS_DIR/probe_bench.list"
   if [ -n "$target_domain" ]; then
-    target_domain=$(printf '%s' "$target_domain" | tr 'A-Z' 'a-z' | sed 's#^[a-z]*://##; s#/.*##; s/:[0-9]*$//; s/^www\.//')
-    case "$target_domain" in ''|*[!a-z0-9.-]*) echo "Некорректный домен" >&2; return 1 ;; esac
     target_domain=$(resolve_probe_target "$target_domain")
     bench_hosts_file="$STATE_DIR/probe_bench_custom.$$.list"
     printf '%s\n' "$target_domain" > "$bench_hosts_file"
@@ -3736,7 +3754,7 @@ cmd_tgws_update() {
     if [ "$kind" = curl ]; then
       "$bin" -s -f -m 15 "$u" -o "$tmp.one" 2>/dev/null </dev/null
     elif [ -x "$HELPER_BIN" ]; then
-      "$HELPER_BIN" -fetch "$u" -resolve "$(bench_dns)" -o "$tmp.one" >/dev/null 2>&1 </dev/null
+      "$HELPER_BIN" -fetch "$u" -resolve "${PROBE_DNS:-1.1.1.1}" -o "$tmp.one" >/dev/null 2>&1 </dev/null
     fi
     [ -s "$tmp.one" ] && { got=$((got + 1)); tgws_decode < "$tmp.one" >> "$tmp"; }
     rm -f "$tmp.one"
@@ -3968,8 +3986,8 @@ cmd_catalog_apply_module() {
 
   case "$cat" in
     udp_quic)
-      awk -v desync="$line" '
-        BEGIN { in_q = 0 }
+      NFQWS_CAT_LINE="$line" awk '
+        BEGIN { desync = ENVIRON["NFQWS_CAT_LINE"]; in_q = 0 }
         /^NFQWS_ARGS_QUIC="/ {
           print "NFQWS_ARGS_QUIC=\"--filter-udp=443 --filter-l7=quic"
           print "                 --payload=quic_initial"
@@ -3986,8 +4004,8 @@ cmd_catalog_apply_module() {
       ' "$CONFFILE" > "$tmp"
       ;;
     udp_voice)
-      awk -v desync="$line" '
-        BEGIN { in_u = 0 }
+      NFQWS_CAT_LINE="$line" awk '
+        BEGIN { desync = ENVIRON["NFQWS_CAT_LINE"]; in_u = 0 }
         /^NFQWS_ARGS_UDP="/ {
           print "NFQWS_ARGS_UDP=\"--filter-udp=590-600,1400,3478-3481,5349,19294-19344,49152-65535"
           print "                --filter-l7=wireguard,stun,discord,unknown"
@@ -4006,44 +4024,67 @@ cmd_catalog_apply_module() {
       ' "$CONFFILE" > "$tmp"
       ;;
     tcp_http)
-      awk -v desync="$line" '
-        BEGIN { in_http = 0 }
-        /--payload=http_req/ {
-          print "            --payload=http_req"
-          print "            " desync "\""
-          in_http = 1
-          next
-        }
+      NFQWS_CAT_LINE="$line" awk '
+        BEGIN { desync = ENVIRON["NFQWS_CAT_LINE"]; in_http = 0 }
         in_http {
-          if ($0 ~ /"/) { in_http = 0 }
+          if ($0 ~ /^[[:space:]]*(--payload=|--new([[:space:]]|$|"))/ || $0 ~ /^[A-Za-z_][A-Za-z0-9_]*=/) {
+            print "            " desync
+            in_http = 0
+          } else if ($0 ~ /"/) {
+            print "            " desync "\""
+            in_http = 0
+            next
+          } else {
+            next
+          }
+        }
+        /--payload=http_req([[:space:]]|,|$|")/ {
+          if ($0 ~ /"[[:space:]]*$/) {
+            sub(/"[[:space:]]*$/, "")
+            print
+            print "            " desync "\""
+          } else {
+            print
+            in_http = 1
+          }
           next
         }
         { print }
+        END {
+          if (in_http) print "            " desync
+        }
       ' "$CONFFILE" > "$tmp"
       ;;
     tcp_tls)
-      awk -v desync="$line" '
-        BEGIN { in_tls = 0 }
-        /--payload=tls_client_hello/ {
-          print "            --payload=tls_client_hello"
-          print "            " desync
-          in_tls = 1
-          next
-        }
+      NFQWS_CAT_LINE="$line" awk '
+        BEGIN { desync = ENVIRON["NFQWS_CAT_LINE"]; in_tls = 0 }
         in_tls {
-          if ($0 ~ /--payload=http_req/) {
+          if ($0 ~ /^[[:space:]]*(--payload=|--new([[:space:]]|$|"))/ || $0 ~ /^[A-Za-z_][A-Za-z0-9_]*=/) {
+            print "            " desync
             in_tls = 0
-            print
+          } else if ($0 ~ /"/) {
+            print "            " desync "\""
+            in_tls = 0
+            next
+          } else {
             next
           }
-          if ($0 ~ /"/) {
-            in_tls = 0
+        }
+        /--payload=tls_client_hello([[:space:]]|,|$|")/ {
+          if ($0 ~ /"[[:space:]]*$/) {
+            sub(/"[[:space:]]*$/, "")
             print
-            next
+            print "            " desync "\""
+          } else {
+            print
+            in_tls = 1
           }
           next
         }
         { print }
+        END {
+          if (in_tls) print "            " desync
+        }
       ' "$CONFFILE" > "$tmp"
       ;;
   esac
@@ -4052,6 +4093,67 @@ cmd_catalog_apply_module() {
     rm -f "$tmp"
     echo "Модуль не применён: в конфиге нет блока для каталога $cat" >&2
     return 1
+  fi
+
+  local needed_mods="" fn mod
+  for fn in $(printf '%s\n' "$line" | awk '{
+    s = $0
+    while (match(s, /(--lua-desync|ipfrag|hostkey)=[A-Za-z0-9_]+/)) {
+      tok = substr(s, RSTART, RLENGTH)
+      sub(/^.*=/, "", tok)
+      print tok
+      s = substr(s, RSTART + RLENGTH)
+    }
+  }' | sort -u); do
+    for mod in zapret-antidpi.lua zapret-auto.lua custom_funcs.lua zapret-multishake.lua z2k-modern-core.lua; do
+      if [ -f "$LUA_DIR/$mod" ] && grep -qE "^function[[:space:]]+${fn}\(" "$LUA_DIR/$mod"; then
+        case " $needed_mods " in
+          *" $mod "*) ;;
+          *) needed_mods="${needed_mods:+$needed_mods }$mod" ;;
+        esac
+        break
+      fi
+    done
+  done
+  if [ -n "$needed_mods" ]; then
+    for mod in $needed_mods; do
+      grep -qF "/$mod" "$tmp" 2>/dev/null && continue
+      local tmp_lua="$STATE_DIR/cat_lua.$$.tmp"
+      awk -v mod="$mod" '
+        function qcount(s,   t) { t = s; return gsub(/"/, "", t) }
+        {
+          lines[NR] = $0
+          if ($0 ~ /^NFQWS_BASE_ARGS=/) {
+            b_start = NR
+            in_b = 1
+            if ($0 ~ /--lua-init=/) last = NR
+            if (qcount($0) % 2 == 0) in_b = 0
+            next
+          }
+          if (in_b) {
+            if ($0 ~ /--lua-init=/) last = NR
+            if (qcount($0) % 2 == 1) in_b = 0
+          }
+        }
+        END {
+          ins = last ? last : b_start
+          for (i = 1; i <= NR; i++) {
+            if (ins && i == ins) {
+              if (lines[i] ~ /"[[:space:]]*$/) {
+                sub(/"[[:space:]]*$/, "", lines[i])
+                print lines[i]
+                print "                 --lua-init=@$LUA_DIR/" mod "\""
+              } else {
+                print lines[i]
+                print "                 --lua-init=@$LUA_DIR/" mod
+              }
+            } else {
+              print lines[i]
+            }
+          }
+        }' "$tmp" > "$tmp_lua" && [ -s "$tmp_lua" ] && mv -f "$tmp_lua" "$tmp"
+      rm -f "$tmp_lua" 2>/dev/null
+    done
   fi
 
   local err
@@ -4149,7 +4251,7 @@ cmd_monet_system() {
   style=$(printf '%s' "$key" | sed -n 's/.*"android\.theme\.customization\.theme_style"[[:space:]]*:[[:space:]]*"\([A-Z_]*\)".*/\1/p')
   seed=$(printf '%s' "$key" | sed -n 's/.*"android\.theme\.customization\.system_palette"[[:space:]]*:[[:space:]]*"\(#\{0,1\}\)\([0-9A-Fa-f]\{6,8\}\)".*/\2/p')
   [ ${#seed} -eq 8 ] && seed=${seed#??}
-  tmp="$STATE_DIR/monet.d"; rm -rf "$tmp"; mkdir -p "$tmp" || return 1
+  tmp="$STATE_DIR/monet.d.$$"; rm -rf "$tmp"; mkdir -p "$tmp" || return 1
 # Batch 12 requests per command to minimize Java startup overhead
   for r in $MONET_ROLES $MONET_FIXED; do
     case " $MONET_FIXED " in *" $r "*) set -- "$r:fixed" ;; *) set -- "$r:light" "$r:dark" ;; esac
@@ -4169,7 +4271,7 @@ cmd_monet_system() {
 # Pre-Android 14 fallback: return style and seed
     for f in "$tmp"/*; do [ -f "$f" ] && cat "$f"; done
     true
-  } > "$cache.tmp" && mv -f "$cache.tmp" "$cache"
+  } > "$cache.tmp.$$" && mv -f "$cache.tmp.$$" "$cache" || rm -f "$cache.tmp.$$"
   rm -rf "$tmp"
   tail -n +2 "$cache"
 }
@@ -4238,6 +4340,19 @@ if [ -n "$ua" ]; then
   [ "$1" = smart-reset ] && echo "$(date '+%Y-%m-%d %H:%M:%S') user action: $ua" >> "$LOG_DIR/smart.log" 2>/dev/null
 fi
 
+cmd_set_cpu_affinity() {
+  local p
+  load_conf >/dev/null 2>&1
+  is_running || return 0
+  p=$(cat "$PIDFILE" 2>/dev/null)
+  [ -n "$p" ] || return 0
+  if [ "${CPU_AFFINITY:-1}" = "0" ]; then
+    reset_cpu_affinity "$p"
+  else
+    apply_cpu_affinity "$p"
+  fi
+}
+
 case "$1" in
   status) cmd_status ;;
   json-status) cmd_json_status ;;
@@ -4278,7 +4393,7 @@ case "$1" in
 
   get-conf) cat "$CONFFILE" ;;
   save-conf-b64)
-    t="$STATE_DIR/save.tmp"; b64d "$2" | tr -d '\r' > "$t"
+    t="$STATE_DIR/save.$$.tmp"; b64d "$2" | tr -d '\r' > "$t"
     if [ ! -s "$t" ]; then echo "Пустой конфиг" >&2; rm -f "$t"; exit 1; fi
     if err=$(validate_conf_file "$t" 2>&1); then
       cp -f "$CONFFILE" "$CONFFILE.bak" 2>/dev/null; mv -f "$t" "$CONFFILE"; chmod 0644 "$CONFFILE"; echo OK; need_restart_note
@@ -4363,8 +4478,8 @@ case "$1" in
     if [ -f "$f" ]; then cat "$f"; fi ;;
   save-list-b64) f=$(list_file "$2") || { echo "Неизвестный список" >&2; exit 1; }
     # Verify write success to catch filesystem errors
-    { b64d "$3" | tr -d '\r' > "$f.tmp"; } && mv -f "$f.tmp" "$f" ||
-      { rm -f "$f.tmp"; echo "Не удалось сохранить ${f##*/}" >&2; exit 1; }
+    { b64d "$3" | tr -d '\r' > "$f.tmp.$$"; } && mv -f "$f.tmp.$$" "$f" ||
+      { rm -f "$f.tmp.$$"; echo "Не удалось сохранить ${f##*/}" >&2; exit 1; }
     chmod 0644 "$f"
     rm -f "$LIST_COUNTS_CACHE" 2>/dev/null
 # User adopted new version: clear pending notification
@@ -4480,11 +4595,7 @@ case "$1" in
           if [ "$3" = "1" ]; then acquire_wakelock; else release_wakelock; fi
         fi ;;
       CPU_AFFINITY)
-        load_conf >/dev/null 2>&1
-        if is_running; then
-          local p; p=$(cat "$PIDFILE" 2>/dev/null)
-          if [ -n "$p" ]; then apply_cpu_affinity "$p"; fi
-        fi ;;
+        cmd_set_cpu_affinity ;;
       AUTOSTART) ;;
       *) need_restart_note ;;
     esac ;;

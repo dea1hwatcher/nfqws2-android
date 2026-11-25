@@ -437,10 +437,11 @@ assert(bCount <= ORCHESTRA_MAX_LRU + 1, `second store is bounded by the shared L
 sect('Lua Global Scope Pollution & Hot-Path Allocation Audit');
 
 const luaFiles = fs.readdirSync(path.join(REPO, 'lua'))
-  .filter(f => f.endsWith('.lua'))
+  .filter(f => f.endsWith('.lua') && f !== 'zapret-tests.lua')
   .map(f => ({ name: f, code: fs.readFileSync(path.join(REPO, 'lua', f), 'utf8') }));
 
 let globalAccidentalAssignments = 0;
+const globalLeakDetails = [];
 
 for (const { name, code } of luaFiles) {
   // Check for common patterns where developers forget 'local' inside functions:
@@ -448,6 +449,7 @@ for (const { name, code } of luaFiles) {
   const lines = code.split('\n');
   let insideFunc = false;
   let funcName = '';
+  let braceDepth = 0;
 
   lines.forEach((line, idx) => {
     const trimmed = line.trim();
@@ -463,27 +465,37 @@ for (const { name, code } of luaFiles) {
       insideFunc = false;
     }
 
-    if (insideFunc) {
-      // Check for standalone undeclared assignment: identifier = { ... }
+    if (insideFunc && braceDepth === 0) {
+      // Check for standalone undeclared assignment: identifier = { ... } (outside nested table literals)
       const match = trimmed.match(/^([a-z_][a-z0-9_]*)\s*=\s*\{/i);
       if (match) {
         const varName = match[1];
         // Whitelist known globals and common self-references
-        const whitelist = ['autostate', 'reconstruct', 'ipfrag', 'fooling', 'options', 'dis', 'res', 'copy', 'headers', 't', 'a', 'b', 'opts'];
+        const whitelist = ['autostate', 'reconstruct', 'ipfrag', 'fooling', 'options', 'dis', 'res', 'copy', 'headers', 't', 'a', 'b', 'opts', 'hostfakesplit_alt'];
         if (!whitelist.includes(varName) && !varName.startsWith('desync.') && !varName.startsWith('track.')) {
-          // Check if 'local varName' was declared earlier in the file or function
-          const wasDeclaredLocal = code.slice(0, code.indexOf(line)).includes(`local ${varName}`) ||
+          const prefix = lines.slice(0, idx).join('\n');
+          const wasDeclaredLocal = prefix.includes(`local ${varName}`) ||
                                    line.includes(`local ${varName}`);
           if (!wasDeclaredLocal) {
-            // suspicious global assignment
-            // (Note: we log it for audit)
+            globalAccidentalAssignments++;
+            globalLeakDetails.push(`${name}:${idx + 1} (${varName} in ${funcName})`);
           }
         }
       }
     }
+
+    const stripped = line.replace(/"[^"]*"|'[^']*'/g, '').replace(/--.*$/, '');
+    for (const ch of stripped) {
+      if (ch === '{') braceDepth++;
+      else if (ch === '}' && braceDepth > 0) braceDepth--;
+    }
   });
 }
-ok(`Lua script files (${luaFiles.length} modules) pass hot-path lexical scope review`);
+if (globalAccidentalAssignments === 0) {
+  ok(`Lua script files (${luaFiles.length} runtime modules) pass hot-path lexical scope review (0 accidental globals)`);
+} else {
+  fail(`Found ${globalAccidentalAssignments} accidental global table assignment(s) in Lua: ${globalLeakDetails.slice(0, 5).join(', ')}`);
+}
 
 // ==============================================================================
 // 5. SHELL SCRIPT LIFECYCLE AUDIT: TEMP FILES & LOG ROTATION

@@ -21,7 +21,7 @@
 local function z2k_nets_load()
 	if z2k_nets_loaded then return z2k_nets end
 	z2k_nets_loaded = true
-	local asnpath = os.getenv("Z2K_TCP16_ASN") or "/opt/zapret2/state/tcp16_asn.txt"
+	local asnpath = os.getenv("Z2K_TCP16_ASN") or "/data/adb/nfqws2/state/tcp16_asn.txt"
 	local f = io.open(asnpath, "r")
 	if not f then return nil end
 	local want, n = {}, 0
@@ -32,7 +32,7 @@ local function z2k_nets_load()
 	f:close()
 	if n == 0 then return nil end
 
-	local netpath = os.getenv("Z2K_TCP16_NETS") or "/opt/zapret2/lists/tcp16_nets.txt"
+	local netpath = os.getenv("Z2K_TCP16_NETS") or "/data/adb/nfqws2/lists/tcp16_nets.txt"
 	local nf = io.open(netpath, "r")
 	if not nf then return nil end
 	local set, cnt = {}, 0
@@ -85,7 +85,7 @@ local z2k_asn_sni, z2k_asn_sni_loaded = nil, false
 local function z2k_asn_sni_load()
 	if z2k_asn_sni_loaded then return z2k_asn_sni end
 	z2k_asn_sni_loaded = true
-	local path = os.getenv("Z2K_TCP16_SNI") or "/opt/zapret2/state/tcp16_sni.txt"
+	local path = os.getenv("Z2K_TCP16_SNI") or "/data/adb/nfqws2/state/tcp16_sni.txt"
 	local f = io.open(path, "r")
 	if not f then return nil end
 	local m, n = {}, 0
@@ -109,7 +109,7 @@ function z2k_sni_pinned()
 	if now < (z2k_pin_at + Z2K_PIN_RECHECK) then return z2k_pin_name end
 	z2k_pin_at = now
 	z2k_pin_name = nil
-	local path = os.getenv("Z2K_SNI_PIN") or "/opt/zapret2/lists/sni_wl_pin.txt"
+	local path = os.getenv("Z2K_SNI_PIN") or "/data/adb/nfqws2/lists/sni_wl_pin.txt"
 	local f = io.open(path, "r")
 	if not f then return nil end
 	local raw = f:read("*l")
