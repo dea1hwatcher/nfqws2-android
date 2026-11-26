@@ -52,8 +52,8 @@ local function packet(track, opts)
 	tcp.rseq = opts.seq or 1
 	if opts.incoming then tcp.pos = (opts.seq or 1) + (opts.len or 1400) end
 	local desync = { target = {},
-		track = track, outgoing = not opts.incoming, l7payload = "tls_client_hello",
-		dis = { tcp = { th_flags = (opts.rst and TH_RST or 0) + (opts.fin and TH_FIN or 0), th_sport = track.port, th_dport = 443, th_ack = opts.ack }, payload = string.rep("x", opts.len or 100) },
+		track = track, outgoing = not opts.incoming, l7payload = opts.l7payload or "tls_client_hello",
+		dis = { tcp = { th_flags = (opts.rst and TH_RST or 0) + (opts.fin and TH_FIN or 0), th_sport = track.port, th_dport = 443, th_ack = opts.ack }, payload = opts.payload or string.rep("x", opts.len or 100) },
 		arg = { slot = opts.slot or "tls", home = HOME, pass = tostring(opts.pass or N), first = opts.first, base = opts.base, pri = opts.pri, probe = opts.probe, key = opts.key },
 		func_instance = "smart_" .. (opts.slot or "tls"), plan = (opts.plan or plan)()
 	}
@@ -890,6 +890,84 @@ do
 	check(v == VERDICT_DROP, "and the original packet is dropped")
 	rawsend_payload_segmented, resolve_range, rawsend_opts, rawsend_opts_base, reconstruct_opts,
 		direction_check, payload_check, replay_first, replay_drop_set, direction_cutoff_opposite, genhost = unpack(keep)
+end
+
+section("CircumVolve Phase 3: mechanism family Stochastic Jump and failure-cause routing")
+do
+	local orig_fake, orig_ws, orig_reo, orig_hfs = fake, wssize, tls_ext_reorder, hostfakesplit
+	fake = function(c, d) called[#called + 1] = d.arg.strategy; return VERDICT_PASS end
+	wssize = function(c, d) called[#called + 1] = d.arg.strategy; return VERDICT_PASS end
+	tls_ext_reorder = function(c, d) called[#called + 1] = d.arg.strategy; return VERDICT_PASS end
+	hostfakesplit = function(c, d) called[#called + 1] = d.arg.strategy; return VERDICT_PASS end
+
+	local function fam_plan()
+		return {
+			{ func = "fake", func_instance = "f1", arg = { strategy = "1", tcp_ts = "-1000", repeats = "11" }, payload_filter = "all", range = {} },
+			{ func = "fake", func_instance = "f2", arg = { strategy = "2", tcp_ts = "-5000", repeats = "6" }, payload_filter = "all", range = {} },
+			{ func = "fake", func_instance = "f3", arg = { strategy = "3", tcp_ts = "-600000", repeats = "2" }, payload_filter = "all", range = {} },
+			{ func = "tls_ext_reorder", func_instance = "r4", arg = { strategy = "4", mode = "sni_last" }, payload_filter = "all", range = {} },
+			{ func = "wssize", func_instance = "w5", arg = { strategy = "5", wsize = "1" }, payload_filter = "all", range = {} },
+			{ func = "hostfakesplit", func_instance = "h6", arg = { strategy = "6", host = "mail.ru" }, payload_filter = "all", range = {} },
+			{ func = "tf", func_instance = "p7", arg = { strategy = "7" }, payload_filter = "all", range = {} },
+		}
+	end
+	local function fp(host, opts)
+		opts = opts or {}
+		opts.slot = "famtest"
+		opts.pass = 7
+		opts.plan = fam_plan
+		return packet(host, opts)
+	end
+
+	-- Fail two variants of fake_ts (1 and 2): Stochastic Jump must skip remaining fake_ts (3) and jump to an orthogonal family
+	later(400)
+	local jc1 = conn("jump.example"); fp(jc1); for _ = 1, 3 do fp(jc1, { retrans = true }) end
+	later(); local jc2 = conn("jump.example"); fp(jc2); for _ = 1, 3 do fp(jc2, { retrans = true }) end
+	local rj = rec("jump.example", "famtest")
+	check(rj and rj.cur ~= 1 and rj.cur ~= 2 and rj.cur ~= 3 and rj.cur ~= 7,
+		"after 2 fake_ts variants fail, Stochastic Jump leaves fake_ts (variant 3 skipped -> cur=" .. tostring(rj and rj.cur) .. ")")
+
+	-- TLS fatal alert (decode_error = 50) on ext_reorder (4) triggers immediate switch on first failure + server_incompat ban
+	later(400)
+	local sc = conn("strict.example")
+	-- Force cur to ext_reorder (4) to observe server rejection reaction directly
+	fp(sc)
+	rec("strict.example", "famtest").cur = 4
+	local sc2 = conn("strict.example")
+	check(fp(sc2) == 4, "strict site tries ext_reorder (4)")
+	-- TLS v1.2 Alert record (0x15 03 03, len=2, level=fatal(2), decode_error(50=0x32))
+	fp(sc2, { incoming = true, seq = 1, len = 7, payload = "\x15\x03\x03\x00\x02\x02\x32" })
+	local rs = rec("strict.example", "famtest")
+	check(rs and rs.cur ~= 4, "TLS fatal alert switches immediately without retrying ext_reorder (-> " .. tostring(rs and rs.cur) .. ")")
+	check(rs and (rs.cool[4] or 0) > clock and rs.fam_ban and (rs.fam_ban["ext_reorder"] or 0) > clock,
+		"server_incompat cools variant 4 and bans ext_reorder family for host")
+
+	-- HTTP 400 Bad Request before ok triggers server_incompat immediately too
+	later(400)
+	local hc = conn("http400.example")
+	fp(hc, { l7payload = "http_req" })
+	rec("http400.example", "famtest").cur = 4
+	local hc2 = conn("http400.example")
+	fp(hc2, { l7payload = "http_req" })
+	fp(hc2, { incoming = true, l7payload = "http_reply", seq = 1, len = 64, payload = "HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\n\r\n" })
+	check(rec("http400.example", "famtest").cur ~= 4, "HTTP 400 response triggers server_incompat immediate switch")
+
+	-- Slow 16 KB stall triggers slow16k cause and prioritizes wssize / hostfakesplit
+	later(400)
+	local c1 = conn("throttled.example"); fp(c1)
+	rec("throttled.example", "famtest").cur = 1
+	local c1b = conn("throttled.example"); fp(c1b)
+	fp(c1b, { incoming = true, seq = 15000, len = 1400 })
+	later(3)
+	local c1c = conn("throttled.example"); fp(c1c)
+	-- c1b reached 15KB (everok=true -> need=3 errors); fail two more connections so variant 1 switches
+	later(); local c1d = conn("throttled.example"); fp(c1d); for _ = 1, 3 do fp(c1d, { retrans = true }) end
+	later(); local c1e = conn("throttled.example"); fp(c1e); for _ = 1, 3 do fp(c1e, { retrans = true }) end
+	local rt = rec("throttled.example", "famtest")
+	check(rt and (rt.cur == 5 or rt.cur == 6 or rt.cur == 4),
+		"slow16k failure-cause routing prefers wssize/hostfakesplit/ext_reorder (cur=" .. tostring(rt and rt.cur) .. ")")
+
+	fake, wssize, tls_ext_reorder, hostfakesplit = orig_fake, orig_ws, orig_reo, orig_hfs
 end
 
 io.write("\n", failed == 0 and "PASS" or "FAIL", "  ", total - failed, " of ", total, " checks passed\n")

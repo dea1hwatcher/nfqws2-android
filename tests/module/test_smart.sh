@@ -96,6 +96,9 @@ echo down > "$NFQWS_SYSNET/wlan0/operstate"
 smart_net_update
 assert_eq "mobile-25001" "$(cat "$SMART_NET_FILE")" "state/smart_net holds the id"
 assert_contains "$(cat "$SMART_DIR/nets.tsv")" "mobile-25001	MTS" "and the label is kept for the WebUI"
+assert_file "$STATE_DIR/smart_names" "smart_names cache is written on net update"
+assert_contains "$(cat "$STATE_DIR/smart_names")" "tls 57 CircumVolve" "smart_names includes CircumVolve TLS labels"
+assert_contains "$(cat "$STATE_DIR/smart_names")" "quic 9 CircumVolve" "smart_names includes CircumVolve QUIC labels"
 smart_net_update
 assert_eq "1" "$(grep -c mobile-25001 "$SMART_DIR/nets.tsv")" "once"
 MOCK_DEV=""
@@ -325,6 +328,26 @@ assert_contains "$ctl_out" "SMART_BENCH_START" "emits SMART_BENCH_START"
 assert_contains "$ctl_out" "SMART_BENCH_RES" "emits SMART_BENCH_RES"
 assert_contains "$ctl_out" "SMART_BENCH_BEST" "emits SMART_BENCH_BEST"
 assert_no_file "$CONFDIR/state/smart_bench" "smart_bench state is cleaned up"
+
+# Collateral-damage gate: variant 1 opens target but breaks control host -> must be flagged and excluded from BEST
+cat > "$MOCKBIN/curl" <<'X'
+#!/bin/sh
+line=$(cat "$CONFDIR/state/smart_bench.0" 2>/dev/null)
+case "$line" in
+  "example.com 1 "*) echo "HTTP_CODE:000" >&2; exit 35 ;;
+esac
+echo "HTTP/1.1 200 OK"
+echo "HTTP_CODE:200"
+exit 0
+X
+chmod 0755 "$MOCKBIN/curl"
+ctl smart-bench "custom.example" tls
+assert_rc 0 "$ctl_rc" "smart-bench completes with collateral gate active"
+assert_contains "$ctl_out" "collateral:example.com" "flags variant that breaks control domain"
+best_col_v=$(printf '%s\n' "$ctl_out" | awk -F'\t' '$1 == "SMART_BENCH_BEST" { print $3 }')
+assert_match "$best_col_v" '^[0-9]+$' "collateral gate picks a clean numeric winner"
+if [ "$best_col_v" != "1" ]; then _ok "blocks collateral-breaking variant 1 from winning SMART_BENCH_BEST (got $best_col_v)"; else _fail "collateral-breaking variant 1 won SMART_BENCH_BEST"; fi
+
 kill "$bench_pid" 2>/dev/null
 rm -f "$CONFDIR/state/nfqws2.pid"
 
@@ -377,21 +400,43 @@ assert_contains "$(grep -o 'slot=tls:pass=14:base=[0-9,-]*:first=[0-9]*' "$REPO_
 # without it fake reaches server causing RST
 assert_contains "$(grep 'strategy=35' "$REPO_DIR/strategies/smart.conf" | grep 'fake:blob=tls_clienthello')" "tcp_ts=-600000" "eduncey #4: the fake ClientHello is fooled too"
 
+section "CircumVolve smart.conf integration and version bump"
+assert_contains "$(grep '^SMART_CONF_VER=' "$REPO_DIR/strategies/smart.conf")" "SMART_CONF_VER=28" "SMART_CONF_VER bumped to 28"
+assert_contains "$(grep '^#@bench-quic' "$REPO_DIR/strategies/smart.conf")" "6-11" "smart.conf defines #@bench-quic including 9-11"
+assert_contains "$(grep -A6 '^NFQWS_BASE_ARGS=' "$REPO_DIR/strategies/smart.conf" | tr '\n' ' ')" "z2k-circumvolve.lua" "loads z2k-circumvolve.lua in NFQWS_BASE_ARGS"
+assert_contains "$(grep -A6 '^NFQWS_BASE_ARGS=' "$REPO_DIR/strategies/smart.conf" | tr '\n' ' ')" "z2k-quic-crypto.lua" "loads z2k-quic-crypto.lua in NFQWS_BASE_ARGS"
+assert_contains "$(grep '^#@tls 57 ' "$REPO_DIR/strategies/smart.conf")" "ext_reorder" "TLS variant 57 uses ext_reorder"
+assert_contains "$(grep '^#@quic 11 ' "$REPO_DIR/strategies/smart.conf")" "crypto_split_pkt" "QUIC variant 11 uses crypto_split_pkt"
+
 if [ -x "${NFQWS2_TEST_BIN:-}" ]; then
   section "the orchestrator itself (inside nfqws2)"
   H="$SANDBOX/smarthome"; mkdir -p "$H/state" "$H/smart" "$H/logs"
   out=$(cd "$REPO_DIR/lua" && "$NFQWS2_TEST_BIN" --user=root --intercept=0 --lua-init=@zapret-lib.lua --lua-init=@zapret-antidpi.lua \
-    --lua-init=@zapret-auto.lua --lua-init=@zapret-smart.lua "--lua-init=SMART_TEST_HOME='$H'" --lua-init=@"$TESTS_DIR/lua/test_smart.lua" 2>&1)
+    --lua-init=@zapret-auto.lua --lua-init=@z2k-circumvolve.lua --lua-init=@z2k-quic-crypto.lua --lua-init=@zapret-smart.lua \
+    "--lua-init=SMART_TEST_HOME='$H'" --lua-init=@"$TESTS_DIR/lua/test_smart.lua" 2>&1)
   assert_contains "$out" "PASS" "tests/lua/test_smart.lua passes"
   printf '%s\n' "$out" | grep -E '^   FAIL' || true
+
+  section "CircumVolve Lua primitives & QUIC crypto (inside nfqws2)"
+  out_c=$(cd "$REPO_DIR/lua" && "$NFQWS2_TEST_BIN" --user=root --intercept=0 --lua-init=@zapret-lib.lua --lua-init=@zapret-antidpi.lua \
+    --lua-init=@zapret-auto.lua --lua-init=@z2k-circumvolve.lua --lua-init=@z2k-quic-crypto.lua \
+    --lua-init=@"$TESTS_DIR/lua/test_circumvolve.lua" 2>&1)
+  assert_contains "$out_c" "PASS" "tests/lua/test_circumvolve.lua passes"
+  printf '%s\n' "$out_c" | grep -E '^   FAIL' || true
 elif command -v luajit >/dev/null 2>&1; then
   # Standalone LuaJIT fallback: provides runtime engine stubs via tests/lua/luajit-prelude.lua
   section "the orchestrator itself (LuaJIT, no nfqws2 binary)"
   H="$SANDBOX/smarthome"; mkdir -p "$H/state" "$H/smart" "$H/logs"
   out=$(cd "$REPO_DIR/lua" && luajit -e "dofile('$TESTS_DIR/lua/luajit-prelude.lua')" -e "SMART_TEST_HOME='$H'" \
-    -e "dofile('zapret-lib.lua') dofile('zapret-antidpi.lua') dofile('zapret-auto.lua') dofile('zapret-smart.lua') dofile('$TESTS_DIR/lua/test_smart.lua')" 2>&1)
+    -e "dofile('zapret-lib.lua') dofile('zapret-antidpi.lua') dofile('zapret-auto.lua') dofile('z2k-circumvolve.lua') dofile('z2k-quic-crypto.lua') dofile('zapret-smart.lua') dofile('$TESTS_DIR/lua/test_smart.lua')" 2>&1)
   assert_contains "$out" "PASS" "tests/lua/test_smart.lua passes"
   printf '%s\n' "$out" | grep -E '^   FAIL|^luajit:' || true
+
+  section "CircumVolve Lua primitives & QUIC crypto (LuaJIT)"
+  out_c=$(cd "$REPO_DIR/lua" && luajit -e "dofile('$TESTS_DIR/lua/luajit-prelude.lua')" \
+    -e "dofile('zapret-lib.lua') dofile('zapret-antidpi.lua') dofile('zapret-auto.lua') dofile('z2k-circumvolve.lua') dofile('z2k-quic-crypto.lua') dofile('$TESTS_DIR/lua/test_circumvolve.lua')" 2>&1)
+  assert_contains "$out_c" "PASS" "tests/lua/test_circumvolve.lua passes"
+  printf '%s\n' "$out_c" | grep -E '^   FAIL|^luajit:' || true
 fi
 
 harness_finish
