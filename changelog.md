@@ -1,3 +1,17 @@
+### Изменения в v3.1.4:
+
+RU
+
+- Обновление бинарников nfqws2 (v1.0.8)
+- Исправление задержки при выборе стратегии и перезапуске процесса nfqws2
+- Оптимизация и исправление ошибок
+
+EN
+
+- Update nfqws2 binaries (v1.0.8)
+- Fix delay at strategy selection and daemon restart
+- Optimization and bug fixes
+
 ### Изменения в v3.1.3:
 
 RU
