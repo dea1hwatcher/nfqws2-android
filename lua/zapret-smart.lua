@@ -305,7 +305,87 @@ local GENES = {
 		host = { "www.google.com", "ozon.ru", "mail.ru", "ya.ru", "vk.com" },
 		midhost = { "host-2", "midsld-2", "midsld" },
 	},
+	quic_crypto_desync = {
+		mode = { "pad_prefix", "crypto_reorder", "crypto_split_pkt" },
+		pad = { "64", "128", "256" },
+	},
+	tls_ext_reorder = {
+		mode = { "sni_last", "pad_first" },
+	},
+	tlsrec_zero = {
+		reorder = { "0", "1" },
+	},
+	timed_fake_split = {
+		delay = { "4", "8", "15" },
+	},
 }
+local function strategy_family(slot, v)
+	local base = SM.mut[slot] and v and v > MUT_BASE and SM.mut[slot][v] and SM.mut[slot][v].base or v
+	local insts = base and SM.layout[slot] and SM.layout[slot][base]
+	if not insts or #insts == 0 then return "other" end
+	local has_fake, has_ttl, has_ts, has_seq, has_md, has_ms, has_ovl, has_wss, has_hfs, has_pass =
+		false, false, false, false, false, false, false, false, false, false
+	for _, ins in ipairs(insts) do
+		local f, a = ins.func, ins.arg or {}
+		if f == "quic_crypto_desync" then return "quic_crypto"
+		elseif f == "tlsrec_zero" or f == "tlsrec" then return "tlsrec"
+		elseif f == "tls_ext_reorder" then return "ext_reorder"
+		elseif f == "timed_fake_split" then return "timed_split"
+		elseif f == "wssize" then has_wss = true
+		elseif f == "hostfakesplit" or f == "hostfakesplit_alt" then has_hfs = true
+		elseif f == "multidisorder" or f == "multidisorder_legacy" then has_md = true
+		elseif f == "multisplit" then
+			has_ms = true
+			if a.seqovl then has_ovl = true end
+		elseif f == "fake" then
+			has_fake = true
+			if a.ip_ttl or a.ip6_ttl or a.ip_autottl then has_ttl = true end
+			if a.tcp_ts then has_ts = true end
+			if a.tcp_seq or a.tcp_ack then has_seq = true end
+		elseif f == "pass" then has_pass = true
+		end
+	end
+	if has_wss then return "wssize"
+	elseif has_hfs then return "hostfakesplit"
+	elseif has_fake and has_md then return "fake_disorder"
+	elseif has_fake and has_ovl then return "fake_seqovl"
+	elseif has_md then return "multidisorder"
+	elseif has_ovl then return "seqovl"
+	elseif has_ms then return "multisplit"
+	elseif has_ttl then return "fake_ttl"
+	elseif has_ts then return "fake_ts"
+	elseif has_seq then return "fake_seq"
+	elseif has_fake then return "fake"
+	elseif has_pass then return "pass"
+	end
+	return "other"
+end
+local function strategy_pkt_cost(slot, v)
+	local m = SM.mut[slot] and v and v > MUT_BASE and SM.mut[slot][v] or nil
+	local base = m and m.base or v
+	local insts = base and SM.layout[slot] and SM.layout[slot][base]
+	if not insts then return 0 end
+	local ov
+	if m then
+		ov = {}
+		for _, c in ipairs(m.ch) do
+			if c.k == "repeats" then ov[c.i] = c.val end
+		end
+	end
+	local cost = 0
+	for i, ins in ipairs(insts) do
+		local reps = (ov and ov[i]) or (ins.arg and ins.arg.repeats)
+		cost = cost + (tonumber(reps) or 1)
+	end
+	return cost
+end
+local function fam_fail_count(r, fam)
+	local m = r.fam_fail_v and r.fam_fail_v[fam]
+	if not m then return 0 end
+	local n = 0
+	for _ in pairs(m) do n = n + 1 end
+	return n
+end
 local function in_list(l, x)
 	for _, y in ipairs(l) do if y == x then return true end end
 	return false
@@ -415,6 +495,17 @@ local function make_mutant(slot, from, t)
 		local ch, cur = {}, g.orig
 		for _, c in ipairs(keep) do
 			if c.i == g.i and c.k == g.k then cur = c.val else ch[#ch + 1] = { i = c.i, k = c.k, val = c.val } end
+		end
+		-- Occam simplification bias: steer high-repeat mutants toward lighter packet cost when safe.
+		if g.k == "repeats" then
+			local cn = tonumber(cur)
+			if cn and cn >= 6 and math.random(2) == 1 then
+				local lighter = {}
+				for _, pv in ipairs(g.pool) do
+					if (tonumber(pv) or 99) < cn then lighter[#lighter + 1] = pv end
+				end
+				if #lighter > 0 then val = lighter[math.random(#lighter)] end
+			end
 		end
 		if val ~= cur then
 			if val ~= g.orig then ch[#ch + 1] = { i = g.i, k = g.k, val = val } end
@@ -605,6 +696,8 @@ local function next_strategy(slot, r, n, t, pass)
 	local s = netstat(slot)
 	local best, bs
 	local cb = base_of(slot, r.cur)
+	local cur_fam = strategy_family(slot, r.cur)
+	local cause = r.last_cause
 	for _, v in ipairs(variants(slot, n)) do
 		local seen = (r.ok[v] or 0) + (r.err[v] or 0)
 		-- чужая подстройка — кандидат, только если она уже где-то помогла
@@ -614,6 +707,26 @@ local function next_strategy(slot, r, n, t, pass)
 			local sc = seen >= 0.5 and (0.7 * share(r.ok[v], r.err[v]) + 0.3 * net) or (net - 0.05)
 			if v == pass and (r.ok[v] or 0) < 0.5 then sc = sc - 1 end
 			if (r.cool[v] or 0) > t then sc = sc - 0.3 end
+			local fam = strategy_family(slot, v)
+			if fam ~= "other" then
+				local fe = fam_fail_count(r, fam)
+				if fe >= 2 and (r.ok[v] or 0) < 0.5 then sc = sc - 0.25 end
+				if r.fam_ban and (r.fam_ban[fam] or 0) > t then sc = sc - 0.8 end
+				if cur_fam ~= "other" and fam_fail_count(r, cur_fam) >= 2 and fam ~= cur_fam and fe == 0 and fam ~= "pass" and not (r.fam_ban and (r.fam_ban[fam] or 0) > t) then
+					sc = sc + 0.08
+				end
+				if cause == "slow16k" then
+					if fam == "wssize" then sc = sc + 0.12
+					elseif fam == "hostfakesplit" then sc = sc + 0.10
+					elseif fam == "ext_reorder" or fam == "tlsrec" or fam == "fake_seqovl" then sc = sc + 0.08 end
+				elseif cause == "early_rst" or cause == "silent_ch" then
+					if fam == "tlsrec" or fam == "ext_reorder" then sc = sc + 0.10
+					elseif fam == "fake_disorder" or fam == "multidisorder" or fam == "timed_split" then sc = sc + 0.08 end
+				elseif cause == "server_incompat" then
+					if fam == "fake_disorder" or fam == "multidisorder" or fam == "multisplit" or fam == "wssize" then sc = sc + 0.08 end
+				end
+				sc = sc - strategy_pkt_cost(slot, v) * 0.0005
+			end
 			-- не проверенный ни сайтом, ни в сети: сначала первые в очереди
 			-- (pri=), потом основной набор, расширенный пул — последним. Раньше
 			-- шли просто по номеру после текущего, и с Youtube_circular #1 (21)
@@ -751,6 +864,9 @@ local function on_ok(slot, r, v, t, c)
 	r.everok = true
 	if c then c.okt = c.okt or t end
 	if v == r.cur then win_push(r, c, 1); r.cooln[v] = 0 end
+	local fam = strategy_family(slot, v)
+	if fam ~= "other" and r.fam_fail_v then r.fam_fail_v[fam] = nil end
+	r.last_cause = nil
 	SM.lastok = t
 	SM.suspect_since = nil
 end
@@ -767,7 +883,7 @@ end
 -- Ошибка соединения, шедшего на варианте v. mid — оборвалось посреди работы
 -- после удачного начала: удача остаётся удачей (сайт на варианте открывался),
 -- а для «не похоже на блокировку» такие ошибки не в счёт
-local function on_err(slot, key, r, v, n, t, pass, mid, c)
+local function on_err(slot, key, r, v, n, t, pass, mid, c, cause)
 	-- уже ясно, что дело не в DPI: не считаем и не перебираем
 	if r.nodpi and r.nodpi > t then return end
 	if network_suspect(key, t) then
@@ -776,6 +892,8 @@ local function on_err(slot, key, r, v, n, t, pass, mid, c)
 	end
 	count(r, slot, "err", v, 1, t)
 	if not mid then r.early[v] = true end
+	if cause then r.last_cause = cause end
+	local fam = strategy_family(slot, v)
 	if v ~= r.cur then return end   -- сайт уже ушёл с этого варианта
 	-- обрыв посреди работы превращает удачу этого же соединения в ошибку,
 	-- а не добавляет вторую запись
@@ -793,7 +911,9 @@ local function on_err(slot, key, r, v, n, t, pass, mid, c)
 	local need = r.everok and 3 or 2
 	if share(r.ok[v], r.err[v]) >= 0.8 and (r.ok[v] or 0) >= 5 then need = 4 end
 	local bad = e >= need and e > o
-	if not bad or t - (r.sw or 0) < SWITCH_GAP then return end
+	-- При явной несовместимости формата с сервером (TLS fatal Alert / HTTP 400) не тратим повторы на недоказанный вариант
+	if cause == "server_incompat" and (r.ok[v] or 0) < 0.5 then bad = true end
+	if not bad or (cause ~= "server_incompat" and t - (r.sw or 0) < SWITCH_GAP) then return end
 	-- сайт не открылся ни разу, а с первых пакетов ломается на многих
 	-- вариантах — это не блокировка: сервер недоступен, прокси или само
 	-- приложение. Перебор тут ничего не даст; сайт возвращается на стартовый
@@ -830,13 +950,26 @@ local function on_err(slot, key, r, v, n, t, pass, mid, c)
 	end
 	-- вариант остывает: чем чаще ломается, тем дольше
 	r.cooln[v] = (r.cooln[v] or 0) + 1
-	r.cool[v] = t + math.min(COOL_MAX, COOL_BASE * 2 ^ (r.cooln[v] - 1))
+	if cause == "server_incompat" then
+		r.cool[v] = t + COOL_MAX
+		if fam == "ext_reorder" or fam == "tlsrec" or fam == "timed_split" then
+			r.fam_ban = r.fam_ban or {}
+			r.fam_ban[fam] = t + COOL_MAX
+		end
+	else
+		r.cool[v] = t + math.min(COOL_MAX, COOL_BASE * 2 ^ (r.cooln[v] - 1))
+	end
+	if fam ~= "other" then
+		r.fam_fail_v = r.fam_fail_v or {}
+		r.fam_fail_v[fam] = r.fam_fail_v[fam] or {}
+		r.fam_fail_v[fam][v] = true
+	end
 	-- на этом варианте (или на том, что он подстраивает) сайт уже работал —
 	-- сначала пробуем его подстроить, а не уходить на совсем другой
 	local nxt, tuned
 	local base = base_of(slot, v)
 	local worked = (r.ok[v] or 0) >= 2 or (r.ok[base] or 0) >= 2
-	if worked and v ~= pass and t - (r.tune or 0) >= TUNE_GAP then
+	if worked and cause ~= "server_incompat" and v ~= pass and t - (r.tune or 0) >= TUNE_GAP then
 		-- подстройка этого варианта, что уже помогла другим сайтам, — прежде новой
 		local s, bs = netstat(slot), nil
 		for id, m in pairs(SM.mut[slot] or {}) do
@@ -1074,7 +1207,7 @@ function smart_watch()
 				if r and sn < NET_STUCK_IPS and not (r.nodpi and r.nodpi > t) then
 					DLOG("smart: " .. c.key .. ": connection :" .. h.lp .. " silent after ClientHello on variant " .. c.v)
 					SJ(c.key .. ": сервер " .. tostring(c.ip) .. " принял ClientHello и молчит — ошибка " .. vname(c.slot, c.v) .. ", обрываем")
-					on_err(c.slot, c.key, r, c.v, c.n, t, c.pass, false, c)
+					on_err(c.slot, c.key, r, c.v, c.n, t, c.pass, false, c, "silent_ch")
 				end
 				kill[#kill + 1] = kill_line(h.ip, h.lp)
 			end
@@ -1113,6 +1246,23 @@ local function watch_start()
 	if SM.watching or not timer_set then return end
 	SM.watching = true
 	timer_set("smart_watch", smart_watch, WATCH_MS, false)
+end
+
+local TLS_FATAL_INCOMPAT = { [10] = true, [22] = true, [40] = true, [47] = true, [50] = true, [70] = true }
+local function detect_server_incompat(cs, desync)
+	if not desync.dis.tcp or desync.outgoing then return nil end
+	local pl = desync.dis.payload
+	if type(pl) ~= "string" or #pl < 7 or cs.maxin >= 512 or cs.ok then return nil end
+	if #pl <= 32 and cs.maxin <= 32 then
+		local b1, b2, b3, b4, b5, b6, b7 = string.byte(pl, 1, 7)
+		if b1 == 0x15 and b2 == 0x03 and b3 <= 0x04 and b4 == 0x00 and b5 == 0x02 and b6 == 0x02 and TLS_FATAL_INCOMPAT[b7] then
+			return "tls_alert_" .. b7
+		end
+	end
+	if cs.is_http and string.sub(pl, 1, 12):match("^HTTP/1%.[01] 400") and not pl:find("Location:", 1, true) then
+		return "http_400"
+	end
+	return nil
 end
 
 function smart(ctx, desync)
@@ -1215,7 +1365,7 @@ function smart(ctx, desync)
 				DLOG("smart: " .. key .. ": previous connection stalled at " .. prev.maxin .. " bytes")
 				SJ(key .. ": соединение замерло на " .. prev.maxin .. " байтах (обрыв на 16 КБ) — ошибка " .. vname(slot, prev.v))
 				-- начало у него было удачным (больше 4 КБ) — это обрыв посреди работы
-				on_err(slot, key, r, prev.v, n, t, pass, prev.ok, prev)
+				on_err(slot, key, r, prev.v, n, t, pass, prev.ok, prev, "slow16k")
 				break
 			end
 		end
@@ -1235,19 +1385,28 @@ function smart(ctx, desync)
 		local okin = tonumber(desync.arg.okin) or 4096
 		local tcp = desync.dis.tcp
 		local slowbps, slowbase
-		if tcp and not desync.outgoing and #desync.dis.payload > 0 then
+		if tcp and desync.outgoing and desync.l7payload == "http_req" then
+			cs.is_http = true
+		end
+		local incompat = tcp and not desync.outgoing and #desync.dis.payload > 0 and detect_server_incompat(cs, desync) or nil
+		if incompat then
+			cs.done, cs.failed = true, true
+			DLOG("smart: " .. key .. ": server incompatibility (" .. incompat .. ") on variant " .. cs.v)
+			SJ(key .. ": сервер отверг формат (" .. incompat .. ") — ошибка " .. vname(slot, cs.v))
+			on_err(slot, key, r, cs.v, n, t, pass, false, cs, "server_incompat")
+		elseif tcp and not desync.outgoing and #desync.dis.payload > 0 then
 			local p = pos_get(desync, 'p')
 			if p > cs.maxin then cs.maxin = p end
 			cs.tin = t
 			cs.srv = true
 			slowbps, slowbase = slow_sample(cs, p)
 		end
-		if slowbps then
+		if not cs.done and slowbps then
 			DLOG("smart: " .. key .. ": slow answer, " .. math.floor(slowbps) .. " B/s vs " .. math.floor(slowbase) .. " B/s usual here")
 			if not (r.nodpi and r.nodpi > t) then
 				SJ(key .. ": медленно — " .. math.floor(slowbps / 1024 + 0.5) .. " КБ/с при обычных для сети " ..
 					math.floor(slowbase / 1024 + 0.5) .. " КБ/с — ошибка " .. vname(slot, cs.v))
-				on_err(slot, key, r, cs.v, n, t, pass, true, cs)
+				on_err(slot, key, r, cs.v, n, t, pass, true, cs, "slow16k")
 			end
 		end
 		local fin = tcp and bitand(tcp.th_flags, TH_FIN) ~= 0
@@ -1313,7 +1472,7 @@ function smart(ctx, desync)
 			-- пропустил, сбрасывает сам сервер — не ошибка обхода
 			cs.done = true
 			DLOG("smart: " .. key .. ": server reset after " .. cs.maxin .. " bytes — not counted")
-		elseif not cs.ok then
+		elseif not cs.done and not cs.ok then
 			local dd, a = detector_args(desync)
 			a.inseq = tostring(okin)
 			if standard_success_detector(dd, crec) then
@@ -1325,7 +1484,7 @@ function smart(ctx, desync)
 				a.inseq = tostring(ANSWER)
 				if standard_failure_detector(dd, crec) then
 					cs.done, cs.failed = true, true
-					on_err(slot, key, r, cs.v, n, t, pass, false, cs)
+					on_err(slot, key, r, cs.v, n, t, pass, false, cs, "early_rst")
 				end
 			end
 		end

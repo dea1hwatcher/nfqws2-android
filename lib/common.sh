@@ -3253,8 +3253,23 @@ smart_net_id() {
   esac
 }
 
+smart_names_sync() {
+  local src="$STRATEGIES_DIR/smart.conf"
+  local dst="$STATE_DIR/smart_names"
+  [ -f "$src" ] || return 0
+  if [ ! -f "$dst" ] || [ "$src" -nt "$dst" ]; then
+    mkdir -p "$STATE_DIR" 2>/dev/null
+    if sed -n 's/^#@\([a-z0-9_]* [0-9][0-9]* .*\)$/\1/p' "$src" 2>/dev/null | tr -d '\r' > "$dst.tmp.$$"; then
+      mv -f "$dst.tmp.$$" "$dst"
+    else
+      rm -f "$dst.tmp.$$"
+    fi
+  fi
+}
+
 smart_net_update() {
   mkdir -p "$SMART_DIR" "$STATE_DIR" 2>/dev/null
+  smart_names_sync
   local line id label
   line=$(smart_net_id); id=${line%%	*}; label=${line#*	}
   [ "$id" = "$(cat "$SMART_NET_FILE" 2>/dev/null)" ] || printf '%s\n' "$id" > "$SMART_NET_FILE"

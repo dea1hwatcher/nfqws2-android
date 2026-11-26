@@ -2342,7 +2342,7 @@ cmd_smart_status() { # [network — whose stats to display; defaults to active n
 # Exclude false-positive non-DPI flags from legacy formats
     local v3=0
     head -n 1 "$f" | grep -q '^#v4' && v3=1
-    sed -n 's/^#@\([a-z]*\) \([0-9]*\) \(.*\)$/N\t\1\t\2\t\3/p' "$STRATEGIES_DIR/smart.conf" 2>/dev/null |
+    sed -n 's/^#@\([a-z0-9_]*\) \([0-9]*\) \(.*\)$/N\t\1\t\2\t\3/p' "$STRATEGIES_DIR/smart.conf" 2>/dev/null |
       cat - "$f" | awk -F'\t' -v now="$(date +%s)" -v v3="$v3" '
         function get(s, v,   a, k, i, p) { k = split(s, a, ","); for (i = 1; i <= k; i++) { split(a[i], p, ":"); if (p[1] == v) return p[2] } return 0 }
         function add(s, arr, slot,   a, k, i, p) { k = split(s, a, ","); for (i = 1; i <= k; i++) { split(a[i], p, ":"); arr[slot "|" p[1]] += p[2]; seen[slot "|" p[1]] = 1 } }
@@ -2415,7 +2415,7 @@ cmd_smart_sites() {
   smart_valid_net "$1" || { echo "Неверная сеть" >&2; return 1; }
   case "$grp" in tls|google|quic|problems|nodpi|all) ;; *) echo "tls|google|quic|problems|nodpi|all" >&2; return 1 ;; esac
   if ! { [ -f "$f" ] && head -n 1 "$f" | grep -q '^#v4'; }; then echo '[]'; return 0; fi
-  sed -n 's/^#@\([a-z_]*\) \([0-9]*\) \(.*\)$/N\t\1\t\2\t\3/p' "$STRATEGIES_DIR/smart.conf" 2>/dev/null |
+  sed -n 's/^#@\([a-z0-9_]*\) \([0-9]*\) \(.*\)$/N\t\1\t\2\t\3/p' "$STRATEGIES_DIR/smart.conf" 2>/dev/null |
     cat - "$f" | awk -F'\t' -v now="$(date +%s)" -v grp="$grp" '
       function get(s, v,   a, k, i, p) { k = split(s, a, ","); for (i = 1; i <= k; i++) { split(a[i], p, ":"); if (p[1] == v) return p[2] } return 0 }
       function q(s) { gsub(/["\\]/, "", s); return s }
@@ -2562,7 +2562,7 @@ smart_variant_name() { # <slot> <v> -> variant name
   local slot="$1"
   local v="$2"
   local name=""
-  name=$(sed -n "s/^#@${slot}[[:space:]]\+${v}[[:space:]]\+//p" "$STRATEGIES_DIR/smart.conf" 2>/dev/null | tr -d '\r')
+  name=$(sed -n "s/^#@${slot}[[:space:]][[:space:]]*${v}[[:space:]][[:space:]]*//p" "$STRATEGIES_DIR/smart.conf" 2>/dev/null | tr -d '\r')
   [ -z "$name" ] && name="Вариант #$v"
   printf '%s' "$name"
 }
@@ -2713,7 +2713,7 @@ cmd_smart_bench() {
   if [ -z "$candidates" ]; then
     case "$slot" in
       google) candidates="1 2 6 15 34 41 43 44" ;;
-      quic) candidates="1 2 3 4 6 7 8" ;;
+      quic) candidates="1 2 3 4 6 7 8 9 10 11" ;;
       *) candidates="1 8 9 15 23 39" ;;
     esac
   fi
@@ -2797,9 +2797,32 @@ cmd_smart_bench() {
       [ -z "$top_fail" ] && top_fail="-"
     fi
 
+    # Collateral-damage gate: verify a control domain does not break under winning candidates.
+    local collateral_fail=0
+    local col_host="${BENCH_COLLATERAL_HOST-example.com}"
+    if [ "$ok_cnt" -gt 0 ] && [ -n "$col_host" ] && [ "$col_host" != "-" ]; then
+      col_host=$(printf '%s' "$col_host" | tr 'A-Z' 'a-z' | sed 's#^[a-z]*://##; s#/.*##; s/:[0-9]*$//; s/^www\.//')
+      case " $targets " in
+        *" $col_host "*) ;;
+        *)
+          local col_ts
+          col_ts=$(date +%s)
+          printf '%s %s %s\n' "$col_host" "$v" "$col_ts" > "$STATE_DIR/smart_bench.0"
+          local col_res
+          local col_st
+          col_res=$(probe_attempt "$kind" "$bin" "$col_host" "$proto")
+          col_st="${col_res%% *}"
+          if [ "$col_st" != "ok" ]; then
+            collateral_fail=1
+            top_fail="collateral:$col_host"
+          fi
+          ;;
+      esac
+    fi
+
     printf 'SMART_BENCH_RES\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$v_idx" "$v" "$v_name" "$ok_cnt" "$total_cnt" "$avg_ms" "$top_fail"
 
-    if [ "$ok_cnt" -gt "$best_ok" ] || { [ "$ok_cnt" -eq "$best_ok" ] && [ "$best_ok" -gt 0 ] && [ "$avg_ms" -lt "$best_ms" ]; }; then
+    if [ "$collateral_fail" -eq 0 ] && { [ "$ok_cnt" -gt "$best_ok" ] || { [ "$ok_cnt" -eq "$best_ok" ] && [ "$best_ok" -gt 0 ] && [ "$avg_ms" -lt "$best_ms" ]; }; }; then
       best_ok="$ok_cnt"
       best_total="$total_cnt"
       best_ms="$avg_ms"
