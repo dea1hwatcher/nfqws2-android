@@ -287,6 +287,11 @@ assert_eq "alt13" "$ctl_out" "the active strategy is recorded"
 ctl set-strategy nosuchstrategy
 assert_rc 1 "$ctl_rc" "an unknown strategy is rejected"
 
+ctl set-strategy alt13 restart
+assert_rc 0 "$ctl_rc" "set-strategy alt13 restart succeeds when stopped"
+ctl get-strategy
+assert_eq "alt13" "$ctl_out" "set-strategy restart updates active strategy"
+
 ctl set-strategy default
 assert_rc 0 "$ctl_rc" "set-strategy default works"
 ctl get-strategy

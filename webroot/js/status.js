@@ -140,12 +140,29 @@ async function applySelectedStrategy(){
   await applyStrategy(val);
 }
 async function applyStrategy(val){
-  const r = await withBusy(['set-strategy', val]);
-  if(r.code){ toast(errText(r, 'Не удалось применить стратегию')); return; }
-  currentStrategy = val;
-  renderStrategyRow();
-  if(S.running) await act('restart');
-  else { toast(t('Стратегия «{0}» применится при следующем запуске', strategyName(val))); stat(); }
+  if(S.running){
+    svcBusy = 'restart';
+    renderHeroActions();
+    const r = await withBusy(['set-strategy', val, 'restart'], 30000);
+    svcBusy = '';
+    if(r.code){
+      toast(errText(r, 'Не удалось применить стратегию'));
+      await initStrategySelector();
+      await stat();
+      return;
+    }
+    currentStrategy = val;
+    renderStrategyRow();
+    toast(t('Служба перезапущена'));
+    await stat();
+  } else {
+    const r = await withBusy(['set-strategy', val]);
+    if(r.code){ toast(errText(r, 'Не удалось применить стратегию')); return; }
+    currentStrategy = val;
+    renderStrategyRow();
+    toast(t('Стратегия «{0}» применится при следующем запуске', strategyName(val)));
+    stat();
+  }
   if(val === 'smart' && currentPage !== 'smart') smartOffer();
 }
 function editStrategy(name){

@@ -118,6 +118,7 @@ build_strategy_conf() { # <name> <output_file>
 
 set_strategy() {
   local name="${1:-default}"
+  local action="${2:-}"
   local tmp="$STATE_DIR/strat_apply.$$.tmp"
   case "$name" in default) ;; imp:*) strategy_name_ok "${name#imp:}" || { echo "Некорректное имя" >&2; return 1; } ;;
     *) strategy_name_ok "$name" || { echo "Некорректное имя" >&2; return 1; } ;; esac
@@ -140,7 +141,12 @@ set_strategy() {
   if [ "$NET_STRATEGY" = "1" ]; then
     save_net_strategy "$name" >/dev/null 2>&1
   fi
-  is_running && update_description running
+  if [ "$action" = "restart" ] && is_running; then
+    load_conf >/dev/null 2>&1 || true
+    SVC_PREVALIDATED=1 sh "$SERVICE" restart || return $?
+  else
+    is_running && update_description running
+  fi
   echo "Применена стратегия: ${name#imp:}"
 }
 
@@ -4407,7 +4413,7 @@ case "$1" in
 
   list-strategies) list_strategies ;;
   get-strategy) get_current_strategy ;;
-  set-strategy) set_strategy "$2" ;;
+  set-strategy) set_strategy "$2" "$3" ;;
   strategy-get-b64)
     case "$2" in default) f="$MODDIR/defaults/nfqws2.conf" ;; *) f=$(strategy_file "$2") ;; esac
     [ -n "$f" ] && [ -f "$f" ] || { echo "Стратегия не найдена" >&2; exit 1; }

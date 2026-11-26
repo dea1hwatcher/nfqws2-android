@@ -504,7 +504,21 @@ app_rules() {
     [ "$REAL_CMD" = "iptables" ] && log_msg "No xt_owner/xt_CONNMARK — app filter is not applied"
     return 2
   fi
-  uids=$(resolve_app_uids)
+  if [ "${FW_IN_START:-0}" = "1" ] && [ "${FW_APP_UIDS_SET:-0}" = "1" ]; then
+    uids="$FW_APP_UIDS"
+  elif [ "${SVC_PREVALIDATED:-0}" = "1" ] && [ -s "$APP_UIDS_FILE" ] && [ ! "$CONFDIR/apps.list" -nt "$APP_UIDS_FILE" ]; then
+    uids=$(cat "$APP_UIDS_FILE" 2>/dev/null)
+    if [ "${FW_IN_START:-0}" = "1" ]; then
+      FW_APP_UIDS="$uids"
+      FW_APP_UIDS_SET=1
+    fi
+  else
+    uids=$(resolve_app_uids)
+    if [ "${FW_IN_START:-0}" = "1" ]; then
+      FW_APP_UIDS="$uids"
+      FW_APP_UIDS_SET=1
+    fi
+  fi
   n=$(printf '%s\n' "$uids" | tr ',' '\n' | grep -cE '^[0-9]+$')
   if [ "$REAL_CMD" = "iptables" ]; then
     printf '%s\n' "$uids" > "$APP_UIDS_FILE"
@@ -996,26 +1010,40 @@ _expand_path_refs() { # <path_string>
 }
 
 validate_strategy_blob_references() { # <args_or_conffile>
-  local content="$1" f p
+  local content="$1" f missing=0 refs old_ifs
   if [ -f "$content" ]; then
     content=$(cat "$content" 2>/dev/null)
   fi
 
-  local missing=0
-  for p in $(printf '%s\n' "$content" | awk '
+  refs=$(printf '%s\n' "$content" | awk -v lua="$LUA_DIR" -v blobs="$BLOBS_DIR" -v conf="$CONFDIR" -v mod="$MODDIR" '
+    function sub_tok(s, k, v,   i) {
+      while ((i = index(s, k)) > 0) s = substr(s, 1, i - 1) v substr(s, i + length(k))
+      return s
+    }
     {
       s = $0
       if (s ~ /^[[:space:]]*#/) next
       while (match(s, /@[-A-Za-z0-9_.\/${}]+/)) {
-        print substr(s, RSTART + 1, RLENGTH - 1)
+        p = substr(s, RSTART + 1, RLENGTH - 1)
         s = substr(s, RSTART + RLENGTH)
+        if (p ~ /^(META|TG)/) continue
+        p = sub_tok(p, "${LUA_DIR}", lua)
+        p = sub_tok(p, "$LUA_DIR", lua)
+        p = sub_tok(p, "${BLOBS_DIR}", blobs)
+        p = sub_tok(p, "$BLOBS_DIR", blobs)
+        p = sub_tok(p, "${CONFDIR}", conf)
+        p = sub_tok(p, "$CONFDIR", conf)
+        p = sub_tok(p, "${MODDIR}", mod)
+        p = sub_tok(p, "$MODDIR", mod)
+        if (p ~ /\/(nfqws2-debug\.log|nfqws2\.log|auto\.log)$/) continue
+        if (!seen[p]++) print p
       }
-    }' | sort -u); do
-    case "$p" in META*|TG*) continue ;; esac
-    f=$(_expand_path_refs "$p")
-    case "$f" in
-      */nfqws2-debug.log|*/nfqws2.log|*/auto.log) continue ;;
-    esac
+    }')
+  old_ifs="$IFS"
+  IFS='
+'
+  for f in $refs; do
+    IFS="$old_ifs"
     if [ ! -f "$f" ]; then
       heal_blob "$f" 2>/dev/null || true
     fi
@@ -1024,28 +1052,47 @@ validate_strategy_blob_references() { # <args_or_conffile>
       missing=$((missing + 1))
     fi
   done
+  IFS="$old_ifs"
   [ "$missing" -eq 0 ] || return 1
   return 0
 }
 
 generate_strategy_receipt() { # [conffile]
-  local conf="${1:-$CONFFILE}" f p file_list
+  local conf="${1:-$CONFFILE}" f refs file_list old_ifs
   [ -f "$conf" ] || return 1
   file_list="$conf"
-  for p in $(awk '
+  refs=$(awk -v lua="$LUA_DIR" -v blobs="$BLOBS_DIR" -v conf="$CONFDIR" -v mod="$MODDIR" '
+    function sub_tok(s, k, v,   i) {
+      while ((i = index(s, k)) > 0) s = substr(s, 1, i - 1) v substr(s, i + length(k))
+      return s
+    }
     {
       s = $0
       while (match(s, /@[-A-Za-z0-9_.\/${}]+/)) {
-        print substr(s, RSTART + 1, RLENGTH - 1)
+        p = substr(s, RSTART + 1, RLENGTH - 1)
         s = substr(s, RSTART + RLENGTH)
+        p = sub_tok(p, "${LUA_DIR}", lua)
+        p = sub_tok(p, "$LUA_DIR", lua)
+        p = sub_tok(p, "${BLOBS_DIR}", blobs)
+        p = sub_tok(p, "$BLOBS_DIR", blobs)
+        p = sub_tok(p, "${CONFDIR}", conf)
+        p = sub_tok(p, "$CONFDIR", conf)
+        p = sub_tok(p, "${MODDIR}", mod)
+        p = sub_tok(p, "$MODDIR", mod)
+        if (p ~ /\/(nfqws2-debug\.log|nfqws2\.log|auto\.log)$/) continue
+        if (!seen[p]++) print p
       }
-    }' "$conf" 2>/dev/null | sort -u); do
-    f=$(_expand_path_refs "$p")
-    case "$f" in
-      */nfqws2-debug.log|*/nfqws2.log|*/auto.log) continue ;;
-    esac
-    [ -f "$f" ] && file_list="$file_list $f"
+    }' "$conf" 2>/dev/null)
+  old_ifs="$IFS"
+  IFS='
+'
+  for f in $refs; do
+    IFS="$old_ifs"
+    if [ -f "$f" ]; then
+      file_list="$file_list $f"
+    fi
   done
+  IFS="$old_ifs"
   if command -v sha256sum >/dev/null 2>&1; then
     sha256sum $file_list 2>/dev/null | sha256sum 2>/dev/null | awk '{print $1}'
   else
@@ -1520,10 +1567,28 @@ ipt_restore_exec() { # <cmd: iptables|ip6tables> <rules_file>
   command -v "$restore_bin" >/dev/null 2>&1 || return 1
 
   local wait_arg=""
-  if "$restore_bin" -w 1 < /dev/null >/dev/null 2>&1; then
-    wait_arg="-w 5"
-  elif "$restore_bin" -w < /dev/null >/dev/null 2>&1; then
-    wait_arg="-w"
+  if [ "$cmd" = "ip6tables" ]; then
+    if [ -z "${IPT_RESTORE_WAIT_CHECKED_v6:-}" ]; then
+      IPT_RESTORE_WAIT_CHECKED_v6=1
+      IPT_RESTORE_WAIT_v6=""
+      if "$restore_bin" -w 1 < /dev/null >/dev/null 2>&1; then
+        IPT_RESTORE_WAIT_v6="-w 5"
+      elif "$restore_bin" -w < /dev/null >/dev/null 2>&1; then
+        IPT_RESTORE_WAIT_v6="-w"
+      fi
+    fi
+    wait_arg="$IPT_RESTORE_WAIT_v6"
+  else
+    if [ -z "${IPT_RESTORE_WAIT_CHECKED_v4:-}" ]; then
+      IPT_RESTORE_WAIT_CHECKED_v4=1
+      IPT_RESTORE_WAIT_v4=""
+      if "$restore_bin" -w 1 < /dev/null >/dev/null 2>&1; then
+        IPT_RESTORE_WAIT_v4="-w 5"
+      elif "$restore_bin" -w < /dev/null >/dev/null 2>&1; then
+        IPT_RESTORE_WAIT_v4="-w"
+      fi
+    fi
+    wait_arg="$IPT_RESTORE_WAIT_v4"
   fi
 
   local attempt=1 max_attempts=5 delay=0.1
@@ -2062,7 +2127,9 @@ meta_quic_stop() {
   return 0
 }
 meta_quic_start() {
-  meta_quic_stop
+  if [ "${SVC_PREVALIDATED:-0}" != "1" ]; then
+    meta_quic_stop
+  fi
   [ "$META_QUIC_REJECT" = "1" ] || return 0
   _meta_quic_chain iptables "$META_NET4" icmp-port-unreachable
   if [ "$IPV6_ENABLED" != "0" ]; then
@@ -2106,20 +2173,22 @@ bpf_offload_detach() {
 
 apply_tether_offload() {
   if [ "$ENABLE_HOTSPOT" = "1" ]; then
-    if ! command -v settings >/dev/null 2>&1; then
-      return 0
-    fi
-    if [ ! -f "$TETHER_OFFLOAD_STATE" ]; then
-      {
-        echo "setting=$(settings get global tether_offload_disabled 2>/dev/null)"
-        if command -v device_config >/dev/null 2>&1; then
-          echo "bpf=$(device_config get tethering override_bpf_offload 2>/dev/null)"
-        fi
-      } > "$TETHER_OFFLOAD_STATE" 2>/dev/null || true
-    fi
-    settings put global tether_offload_disabled 1 2>/dev/null || true
-    if command -v device_config >/dev/null 2>&1; then
-      device_config put tethering override_bpf_offload false 2>/dev/null || true
+    if [ "${SVC_PREVALIDATED:-0}" != "1" ] || [ ! -f "$TETHER_OFFLOAD_STATE" ]; then
+      if ! command -v settings >/dev/null 2>&1; then
+        return 0
+      fi
+      if [ ! -f "$TETHER_OFFLOAD_STATE" ]; then
+        {
+          echo "setting=$(settings get global tether_offload_disabled 2>/dev/null)"
+          if command -v device_config >/dev/null 2>&1; then
+            echo "bpf=$(device_config get tethering override_bpf_offload 2>/dev/null)"
+          fi
+        } > "$TETHER_OFFLOAD_STATE" 2>/dev/null || true
+      fi
+      settings put global tether_offload_disabled 1 2>/dev/null || true
+      if command -v device_config >/dev/null 2>&1; then
+        device_config put tethering override_bpf_offload false 2>/dev/null || true
+      fi
     fi
     bpf_offload_detach
     local udev
@@ -2163,6 +2232,9 @@ restore_tether_offload() {
 # check both rc: firewall_ip6tables returns 0 when IPv6 is off, masking an iptables failure
 firewall_start() {
   local rc=0
+  FW_IN_START=1
+  FW_APP_UIDS=""
+  FW_APP_UIDS_SET=0
   sysctl_apply net.netfilter.nf_conntrack_acct 1
   FW_RESTORE_DIR="$STATE_DIR/firewall-restore"
   mkdir -p "$FW_RESTORE_DIR" 2>/dev/null
@@ -2178,6 +2250,9 @@ firewall_start() {
   else
     firewall_ip6tables || rc=1
   fi
+  FW_IN_START=0
+  FW_APP_UIDS=""
+  FW_APP_UIDS_SET=0
   if [ "$IPV6_ENABLED" = "1" ] && ! _firewall_family_ok ip6tables; then
     # logged on start, not on every watchdog re-apply; the doctor keeps showing it
     [ -f "$DESIRED_FILE" ] || log_msg "Error: ip6tables rules failed to apply — IPv6 traffic is not intercepted"
@@ -2201,7 +2276,9 @@ firewall_stop() {
   _firewall_stop iptables || rc=1
   _firewall_stop ip6tables || rc=1
   meta_quic_stop
-  restore_tether_offload
+  if [ "${SVC_REPLACING:-0}" != "1" ]; then
+    restore_tether_offload
+  fi
   return $rc
 }
 
@@ -2472,15 +2549,73 @@ health_hosts() {
 
 # 0 when at least one reference site opens. No list or no curl means no verdict:
 # the gate must never block a restart it cannot judge.
+# Probe up to 2 hosts concurrently with short timeouts so one stalled host does
+# not add sequential 6s waits on top of the restart path.
 health_probe() {
-  local hosts h
+  local hosts h1="" h2="" d p1="" p2="" ticks=0 rc=1
   command -v curl >/dev/null 2>&1 || return 0
   hosts=$(health_hosts)
   [ -n "$hosts" ] || return 0
-  for h in $hosts; do
-    curl -s -k -o /dev/null -m 6 --connect-timeout 4 "https://$h/" >/dev/null 2>&1 && return 0
+  set -- $hosts
+  h1="$1"
+  h2="${2:-}"
+  if [ -z "$h2" ]; then
+    curl -s -k -o /dev/null -m 3 --connect-timeout 2 "https://$h1/" >/dev/null 2>&1
+    return $?
+  fi
+  d=$(mktemp -d "${STATE_DIR:-/tmp}/hp.XXXXXX" 2>/dev/null)
+  if [ -z "$d" ]; then
+    d="${STATE_DIR:-/tmp}/hp.$$"
+    rm -rf "$d" 2>/dev/null
+    if ! mkdir -p "$d" 2>/dev/null; then
+      if curl -s -k -o /dev/null -m 3 --connect-timeout 2 "https://$h1/" >/dev/null 2>&1; then
+        return 0
+      fi
+      if curl -s -k -o /dev/null -m 3 --connect-timeout 2 "https://$h2/" >/dev/null 2>&1; then
+        return 0
+      fi
+      return 1
+    fi
+  fi
+  (
+    curl_pid=""
+    trap '[ -n "$curl_pid" ] && kill -TERM "$curl_pid" 2>/dev/null; exit 1' TERM INT
+    curl -s -k -o /dev/null -m 3 --connect-timeout 2 "https://$h1/" >/dev/null 2>&1 &
+    curl_pid=$!
+    if wait "$curl_pid" 2>/dev/null; then
+      : > "$d/ok"
+    fi
+    : > "$d/d1"
+  ) &
+  p1=$!
+  (
+    curl_pid=""
+    trap '[ -n "$curl_pid" ] && kill -TERM "$curl_pid" 2>/dev/null; exit 1' TERM INT
+    curl -s -k -o /dev/null -m 3 --connect-timeout 2 "https://$h2/" >/dev/null 2>&1 &
+    curl_pid=$!
+    if wait "$curl_pid" 2>/dev/null; then
+      : > "$d/ok"
+    fi
+    : > "$d/d2"
+  ) &
+  p2=$!
+  while [ "$ticks" -lt 35 ]; do
+    if [ -f "$d/ok" ]; then
+      rc=0
+      break
+    fi
+    if [ -f "$d/d1" ] && [ -f "$d/d2" ]; then
+      break
+    fi
+    sleep 0.1
+    ticks=$((ticks + 1))
   done
-  return 1
+  if [ -n "$p1" ]; then kill -TERM "$p1" 2>/dev/null; fi
+  if [ -n "$p2" ]; then kill -TERM "$p2" 2>/dev/null; fi
+  wait "$p1" "$p2" 2>/dev/null
+  if [ -f "$d/ok" ]; then rc=0; fi
+  rm -rf "$d" 2>/dev/null
+  return "$rc"
 }
 
 system_config() {
@@ -2517,7 +2652,13 @@ system_config() {
     _sysctl_write_raw net.netfilter.nf_conntrack_max 16384
   fi
   setup_cli_symlinks
-  apply_stealth_hiding
+  if [ "${SVC_PREVALIDATED:-0}" != "1" ]; then
+    local _sbid=""
+    _sbid=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null)
+    if [ -z "$_sbid" ] || [ "$_sbid" != "$(cat "$STATE_DIR/stealth_boot" 2>/dev/null)" ]; then
+      apply_stealth_hiding
+    fi
+  fi
   return 0
 }
 
@@ -2653,6 +2794,9 @@ apply_stealth_hiding() {
 
   # 4. Safe root-only CLI symlinks for Termux and root shell
   setup_cli_symlinks
+  if [ -d "$STATE_DIR" ] && [ -r /proc/sys/kernel/random/boot_id ]; then
+    cat /proc/sys/kernel/random/boot_id > "$STATE_DIR/stealth_boot" 2>/dev/null || true
+  fi
   return 0
 }
 

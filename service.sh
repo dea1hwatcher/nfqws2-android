@@ -98,26 +98,33 @@ start() {
       chmod 0755 "$NFQWS_BIN" 2>/dev/null
       [ -x "$NFQWS_BIN" ] || { log_msg "Error: executable $NFQWS_BIN not found"; return 1; }
     fi
-    local err
-    err=$(validate_args_conf) || { log_msg "${err:-Error: arguments validation failed}"; return 1; }
-    err=$(validate_strategy_blob_references "$CONFFILE") || { log_msg "${err:-Error: strategy blob or script file validation failed}"; return 1; }
+    local args="" dry_err
+    if [ "${SVC_PREVALIDATED:-0}" = "1" ] && [ -s "$ARGS_FILE" ]; then
+      args=$(cat "$ARGS_FILE" 2>/dev/null)
+    fi
+    if [ -z "$args" ]; then
+      err=$(validate_args_conf) || { log_msg "${err:-Error: arguments validation failed}"; return 1; }
+      err=$(validate_strategy_blob_references "$CONFFILE") || { log_msg "${err:-Error: strategy blob or script file validation failed}"; return 1; }
 
-    log_msg "Starting nfqws2..."
-    kernel_modules
-    rotate_logs start
-    ensure_eol "$LISTS_DIR/auto.list"
+      log_msg "Starting nfqws2..."
+      kernel_modules
+      rotate_logs start
+      ensure_eol "$LISTS_DIR/auto.list"
 
-    local args
-    args=$(_startup_args)
-    printf '%s\n' "$args" > "$ARGS_FILE"
-    smart_net_update
+      args=$(_startup_args)
+      printf '%s\n' "$args" > "$ARGS_FILE"
+      smart_net_update
 
-    local dry_err
-    if ! dry_err=$(dry_run_check "$args"); then
-      log_msg "Error: nfqws2 --dry-run check failed"
-      printf '%s\n' "$dry_err" >> "$NFQWS_LOG"
-      start_failed "Error: nfqws2 startup parameters invalid (--dry-run check rejected)."
-      return 1
+      if ! dry_err=$(dry_run_check "$args"); then
+        log_msg "Error: nfqws2 --dry-run check failed"
+        printf '%s\n' "$dry_err" >> "$NFQWS_LOG"
+        start_failed "Error: nfqws2 startup parameters invalid (--dry-run check rejected)."
+        return 1
+      fi
+      save_strategy_receipt "$CONFFILE" 2>/dev/null || true
+    else
+      log_msg "Starting nfqws2..."
+      ensure_eol "$LISTS_DIR/auto.list"
     fi
     if [ -f "$SK_PIDFILE" ]; then
       kill -KILL "$(cat "$SK_PIDFILE" 2>/dev/null)" 2>/dev/null
@@ -134,8 +141,6 @@ start() {
       kill -KILL "$op" 2>/dev/null
       wait_for_process "$op" down 8
     done
-
-    save_strategy_receipt "$CONFFILE" 2>/dev/null || true
     export Z2K_ORCHESTRA_FILE="$ORCHESTRA_MEMORY_FILE"
     export Z2K_TCP16_ASN="$STATE_DIR/tcp16_asn.txt"
     export Z2K_TCP16_NETS="$LISTS_DIR/tcp16_nets.txt"
@@ -215,7 +220,7 @@ start() {
 # Shared snapshot restore & restart helper used by both replace_restore_snapshot()
 # (under an existing svc_lock) and rollback() (standalone or 5s Watchdog Gate).
 _snapshot_restore_apply() { # [lock_held=0|1]
-  local lock_held="${1:-0}" own_lock=0 res=0
+  local lock_held="${1:-0}" own_lock=0 res=0 prev_preval="${SVC_PREVALIDATED:-0}"
   if [ ! -f "$SNAPSHOT_DIR/nfqws2.conf" ]; then
     log_msg "Rollback: no saved snapshot for rollback"
     return 1
@@ -241,7 +246,9 @@ _snapshot_restore_apply() { # [lock_held=0|1]
   fi
   SVC_LOCK_HELD=1
   SVC_DEFER_SNAPSHOT=1
+  SVC_PREVALIDATED=0
   start || res=$?
+  SVC_PREVALIDATED="$prev_preval"
   SVC_DEFER_SNAPSHOT=0
   SVC_LOCK_HELD=0
   if [ "$own_lock" = "1" ]; then
@@ -277,7 +284,9 @@ replace_daemon() {
   trap 'svc_lock_release; exit 130' INT TERM
 
   _replace_internal() {
-    local old_pid err args dry_err start_rc caller_defer="${SVC_DEFER_SNAPSHOT:-0}"
+    local old_pid err args dry_err start_rc
+    local caller_defer="${SVC_DEFER_SNAPSHOT:-0}"
+    local caller_preval="${SVC_PREVALIDATED:-0}"
     old_pid=$(cat "$PIDFILE" 2>/dev/null)
     if [ -z "$old_pid" ]; then
       log_msg "replace: no pidfile — restart skipped"
@@ -285,18 +294,23 @@ replace_daemon() {
     fi
 
     err=$(validate_args_conf) || { log_msg "${err:-Error: arguments validation failed}"; return 1; }
-    err=$(validate_strategy_blob_references "$CONFFILE") || { log_msg "${err:-Error: strategy blob or script file validation failed}"; return 1; }
+    if [ "$caller_preval" != "1" ]; then
+      err=$(validate_strategy_blob_references "$CONFFILE") || { log_msg "${err:-Error: strategy blob or script file validation failed}"; return 1; }
+    fi
 
     args=$(_startup_args)
     printf '%s\n' "$args" > "$ARGS_FILE"
+    smart_net_update
 
-    if ! dry_err=$(dry_run_check "$args"); then
-      log_msg "Error: nfqws2 --dry-run check failed"
-      printf '%s\n' "$dry_err" >> "$NFQWS_LOG"
-      log_msg "New strategy parameters are invalid — existing process PID $old_pid preserved"
-      return 1
+    if [ "$caller_preval" != "1" ]; then
+      if ! dry_err=$(dry_run_check "$args"); then
+        log_msg "Error: nfqws2 --dry-run check failed"
+        printf '%s\n' "$dry_err" >> "$NFQWS_LOG"
+        log_msg "New strategy parameters are invalid — existing process PID $old_pid preserved"
+        return 1
+      fi
+      save_strategy_receipt "$CONFFILE" 2>/dev/null || true
     fi
-    save_strategy_receipt "$CONFFILE" 2>/dev/null || true
 
     # Remember whether the *old* configuration passed traffic: only with a working
     # baseline can a failing probe after the restart be blamed on the new one.
@@ -315,8 +329,10 @@ replace_daemon() {
 
     SVC_LOCK_HELD=1
     SVC_DEFER_SNAPSHOT=1
+    SVC_PREVALIDATED=1
     start
     start_rc=$?
+    SVC_PREVALIDATED="$caller_preval"
     SVC_DEFER_SNAPSHOT="$caller_defer"
     SVC_LOCK_HELD=0
     if [ "$start_rc" -ne 0 ]; then
@@ -331,9 +347,9 @@ replace_daemon() {
     # the restart; if it is not fine now, twice in a row, the new configuration is
     # at fault and the old one comes back.
     if [ "$base_ok" = "1" ]; then
-      sleep 1
+      sleep 0.5
       if ! health_probe; then
-        sleep 3
+        sleep 1.5
         if ! health_probe; then
           log_msg "replace: the new configuration passes no traffic — restoring the last working snapshot"
           replace_restore_snapshot
@@ -667,7 +683,7 @@ netwatch_apply() { # <reason for log>
   case "$sig" in
     '|'*) ;;
     *)
-      if [ -f "$DESIRED_FILE" ] && is_running; then
+      if [ -f "$DESIRED_FILE" ] && is_running && [ ! -d "$(svc_lock_dir)" ]; then
         if [ -n "$ISP_INTERFACE" ] || [ "$ENABLE_HOTSPOT" = "1" ] || ! firewall_ok; then
           log_msg "netwatch: network changed ($1) — rebuilding rules"
           firewall_start
@@ -846,6 +862,11 @@ watchdog() {
     [ -f "$DESIRED_FILE" ] || continue
 
     if ! is_running; then
+      # Another start/replace actively holds service.lock: never tear down its
+      # firewall rules mid-setup or race with it; retry next tick only if stale.
+      if [ -d "$(svc_lock_dir)" ] && [ -z "$(find "$(svc_lock_dir)" -maxdepth 0 -mmin +2 2>/dev/null)" ]; then
+        continue
+      fi
       if [ -f "$STATE_DIR/rollback_armed" ]; then
         log_msg "watchdog: crash detected while rollback_armed — triggering auto-rollback"
         rm -f "$STATE_DIR/rollback_armed" 2>/dev/null
@@ -991,7 +1012,7 @@ network_strategy_check() {
       log_msg "Network changed to $(current_network_title 2>/dev/null || echo "$cur_net") — switching to saved strategy «$saved»"
       if sh "$MODDIR/bin/nfqws2-ctl" set-strategy "$saved" >/dev/null 2>&1; then
         load_conf >/dev/null 2>&1 || true
-        replace_daemon >/dev/null 2>&1 || { stop >/dev/null 2>&1; start >/dev/null 2>&1; }
+        SVC_PREVALIDATED=1 replace_daemon >/dev/null 2>&1 || { stop >/dev/null 2>&1; start >/dev/null 2>&1; }
       fi
     fi
   fi

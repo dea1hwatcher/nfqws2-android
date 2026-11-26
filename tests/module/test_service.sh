@@ -873,4 +873,106 @@ fi
 cp "$SANDBOX/conf.keep" "$CONFFILE"
 svc stop >/dev/null 2>&1
 
+section "parallel health_probe tolerates a slow failing host"
+reload_conf
+cp "$LISTS_DIR/probe_hosts.list" "$SANDBOX/probe_hosts.keep" 2>/dev/null || true
+printf 'slow-dead.example\nfast-ok.example\n' > "$LISTS_DIR/probe_hosts.list"
+cat > "$MOCKBIN/curl" <<'X'
+#!/bin/sh
+case "$*" in
+  *slow-dead.example*) sleep 1; exit 22 ;;
+  *fast-ok.example*) exit 0 ;;
+esac
+exit 22
+X
+chmod 0755 "$MOCKBIN/curl"
+health_probe
+assert_rc 0 $? "parallel health_probe succeeds when second host answers while first stalls"
+assert_eq "" "$(ls -d "$STATE_DIR"/hp.* 2>/dev/null)" "health_probe cleans up its temporary directory"
+
+printf 'dead1.example\ndead2.example\n' > "$LISTS_DIR/probe_hosts.list"
+cat > "$MOCKBIN/curl" <<'X'
+#!/bin/sh
+exit 22
+X
+chmod 0755 "$MOCKBIN/curl"
+health_probe
+assert_rc 1 $? "parallel health_probe fails when all reference hosts fail"
+assert_eq "" "$(ls -d "$STATE_DIR"/hp.* 2>/dev/null)" "failing parallel health_probe cleans up temporary files"
+cp "$TESTS_DIR/lib/mock/curl" "$MOCKBIN/curl"
+chmod 0755 "$MOCKBIN/curl"
+if [ -f "$SANDBOX/probe_hosts.keep" ]; then
+  mv -f "$SANDBOX/probe_hosts.keep" "$LISTS_DIR/probe_hosts.list"
+fi
+
+section "replace avoids duplicate dry-run validation and set-strategy restart validates once"
+conf_reset
+printf 'WATCHDOG=0\nIPV6_ENABLED=0\n' >> "$CONFFILE"
+reload_conf
+cp "$MODDIR/bin/nfqws2" "$SANDBOX/nfqws2.real"
+cat > "$MODDIR/bin/nfqws2" <<EOF
+#!/bin/sh
+case " \$* " in *" --dry-run "*) printf 'dry\n' >> "$SANDBOX/dry_runs" ;; esac
+case "\${1:-}" in __stay) trap 'exit 0' TERM INT HUP; _i=0; while [ "\$_i" -lt 1800 ]; do [ -d "$SANDBOX" ] || exit 0; sleep 1; _i=\$((_i + 1)); done; exit 0 ;; esac
+for _a in "\$@"; do
+  case "\$_a" in --pidfile=*) pf="\${_a#--pidfile=}"; sh "\$0" __stay & printf '%s\n' "\$!" > "\$pf"; exit 0 ;; esac
+done
+exec "$SANDBOX/nfqws2.real" "\$@"
+EOF
+chmod 0755 "$MODDIR/bin/nfqws2"
+
+svc start >/dev/null 2>&1
+: > "$SANDBOX/dry_runs"
+svc replace >/dev/null 2>&1
+assert_rc 0 "$svc_rc" "replace succeeds under dry-run counter"
+dry_cnt=$(wc -l < "$SANDBOX/dry_runs" 2>/dev/null | tr -d ' ')
+assert_eq "1" "${dry_cnt:-0}" "replace runs --dry-run once, not twice in replace + start"
+
+old_pid=$(cat "$PIDFILE" 2>/dev/null)
+: > "$SANDBOX/dry_runs"
+ctl set-strategy alt13 restart >/dev/null 2>&1
+assert_rc 0 "$ctl_rc" "ctl set-strategy alt13 restart succeeds on running daemon"
+dry_cnt=$(wc -l < "$SANDBOX/dry_runs" 2>/dev/null | tr -d ' ')
+assert_eq "1" "${dry_cnt:-0}" "combined set-strategy restart validates via --dry-run once total"
+ctl get-strategy
+assert_eq "alt13" "$ctl_out" "combined command switches active strategy"
+new_pid=$(cat "$PIDFILE" 2>/dev/null)
+if [ -n "$new_pid" ] && [ "$old_pid" != "$new_pid" ]; then _ok "combined command replaces daemon PID"
+else _fail "combined command did not switch PID ($old_pid -> $new_pid)"; fi
+
+svc stop >/dev/null 2>&1
+mv -f "$SANDBOX/nfqws2.real" "$MODDIR/bin/nfqws2"
+chmod 0755 "$MODDIR/bin/nfqws2"
+ctl set-strategy default >/dev/null 2>&1
+
+section "watchdog skips auto-restart and firewall_stop while service.lock is held"
+conf_reset
+printf 'WATCHDOG=1\nIPV6_ENABLED=0\n' >> "$CONFFILE"
+svc stop >/dev/null 2>&1
+echo 1 > "$DESIRED_FILE"
+mkdir -p "$STATE_DIR/service.lock"
+iptables -w -t mangle -N nfqws_post 2>/dev/null
+iptables -w -t mangle -A nfqws_post -j RETURN 2>/dev/null
+: > "$SERVICE_LOG"
+mkdir -p "$SANDBOX/wd_sleep"
+cat > "$SANDBOX/wd_sleep/sleep" <<EOF
+#!/bin/sh
+if [ "\$1" = "20" ]; then
+  n=\$(cat "$SANDBOX/wd_sleep/n" 2>/dev/null || echo 0)
+  n=\$((n + 1)); printf '%s\n' "\$n" > "$SANDBOX/wd_sleep/n"
+  [ "\$n" -ge 2 ] && sed -i 's/^WATCHDOG=.*/WATCHDOG=0/' "$CONFFILE"
+  exit 0
+fi
+exit 0
+EOF
+chmod 0755 "$SANDBOX/wd_sleep/sleep"
+PATH="$SANDBOX/wd_sleep:$PATH" sh "$MODDIR/service.sh" watchdog >/dev/null 2>&1
+assert_file "$MOCK_IPT_STORE/iptables/mangle/nfqws_post" "watchdog preserves firewall rules while service.lock is held"
+assert_not_contains "$(cat "$SERVICE_LOG")" "auto-restarting" "watchdog does not trigger auto-restart while service.lock is held"
+assert_no_file "$PIDFILE" "watchdog does not spawn daemon during active lock"
+rmdir "$STATE_DIR/service.lock" 2>/dev/null
+rm -rf "$SANDBOX/wd_sleep" "$DESIRED_FILE" "$WD_PIDFILE"
+svc firewall_stop >/dev/null 2>&1
+conf_reset
+
 harness_finish
