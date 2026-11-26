@@ -141,6 +141,17 @@ shifting=$(grep -hE -- 'http_(garbage_prefix|pipeline_fake|pipeline_fake_v2|head
   "$REPO_DIR"/strategy-catalogs/*.list 2>/dev/null || true)
 assert_eq "" "$shifting" "the catalog ships no payload-shifting HTTP helpers"
 
+zapret1_syntax=$(grep -hnEv '^[[:space:]]*#' \
+  "$REPO_DIR/defaults/nfqws2.conf" "$REPO_DIR"/strategies/*.conf "$REPO_DIR"/strategy-catalogs/*.list 2>/dev/null \
+  | grep -E '(^|[: ])fooling=|repeats=[0-9]+-|badseq_increment=' || true)
+assert_eq "" "$zapret1_syntax" "presets and catalogs use zapret2 syntax (no fooling=, range repeats, or badseq_increment)"
+
+native_badseq=$(grep -hv '^[[:space:]]*#' \
+  "$REPO_DIR/defaults/nfqws2.conf" "$REPO_DIR"/strategies/*.conf "$REPO_DIR"/strategy-catalogs/*.list 2>/dev/null \
+  | grep -Eo -- '--lua-desync=(fake|hostfakesplit|hostfakesplit_alt|multisplit|multidisorder|fakedsplit|fakeddisorder):[^ "]*' \
+  | grep -E ':(badseq|md5sig)(:|$)' || true)
+assert_eq "" "$native_badseq" "native zapret2 desync functions do not use zapret1 badseq/md5sig flags"
+
 assert_no_file "$REPO_DIR/lua/silent-drop-detector.lua" \
   "the never-loaded silent-drop detector is gone"
 

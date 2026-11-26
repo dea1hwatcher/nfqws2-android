@@ -1,6 +1,6 @@
 {
   "about": "Что взято из чужих проектов и до какой версии. Обновляется при каждом переносе изменений; читает трекер обновлений и тесты целостности.",
-  "updated": "2026-11-25",
+  "updated": "2026-11-26",
   "module": "nfqws2-android v3.1.3",
   "projects": [
     {
@@ -9,10 +9,10 @@
       "repo": "bol-van/zapret2",
       "branch": "master",
       "track": "commits",
-      "ref": "da8abd32b7e834a58a7055ef594df8def9dd4fcf",
-      "label": "master (post-v1.0.7 / 22.11)",
-      "date": "2026-11-22T21:00:00+03:00",
-      "use": "Бинарник nfqws2 (сборка в CI); lua/zapret-lib.lua (исправление discopy URG flag, поддержка IPv6-литералов с портами в URL, проверка границ усеченных TLS-записей len+5) и zapret-auto.lua (регистронезависимый is_dpi_redirect с сопоставлением IP-адресов и удалением скобок, обработка без SLD)"
+      "ref": "93fbe9af8110107f44b70dba1ee956a0902f65b6",
+      "label": "v1.0.8 (25.11)",
+      "date": "2026-11-25T11:22:46+03:00",
+      "use": "Бинарник nfqws2 (сборка в CI на базе v1.0.8); lua/zapret-lib.lua (исправление discopy URG flag, поддержка IPv6-литералов с портами в URL, проверка границ усеченных TLS-записей len+5) и zapret-auto.lua (регистронезависимый is_dpi_redirect с сопоставлением IP-адресов и удалением скобок, обработка без SLD)"
     },
     {
       "id": "ext",
@@ -43,9 +43,9 @@
       "repo": "Dunterbabochka/zapret2-next",
       "branch": "main",
       "track": "commits",
-      "ref": "0b36eebd0eb098eb33a970d47d10e6a1eb162ea6",
+      "ref": "0b36eeb564cf99418dd9d3f673e89c91ca225369",
       "label": "v0.4.6",
-      "date": "2026-11-12T17:15:32Z",
+      "date": "2026-11-11T21:29:19+03:00",
       "use": "Пресеты Flowseal 1.10.4, реализация hostfakesplit_alt (altorder=1 из zapret 1)"
     },
     {
@@ -55,10 +55,10 @@
       "branch": "main",
       "path": "files/Zapret2/zapret2",
       "track": "commits",
-      "ref": "743a2b515dfef2d6697896818241d483e552db9e",
-      "label": "v5.069",
-      "date": "2026-11-12T19:22:07Z",
-      "use": "Кандидаты умного режима для Google (43-46), списки исключений"
+      "ref": "a0b855a2852b95ba133396bd5aa3b4d35af2a18b",
+      "label": "v5.095",
+      "date": "2026-11-25T15:57:24Z",
+      "use": "Кандидаты умного режима для Google (43-46 и Yt pos=1,host+2,midsld как 51), обновления списков исключений (Blizzard/OEM/DNS-тесты)"
     },
     {
       "id": "nfqws2-keenetic",
@@ -99,9 +99,9 @@
       "repo": "Omn1z/nfqws2-keenetic-strategy-selector",
       "branch": "main",
       "track": "commits",
-      "ref": "de6d7f62c0b05c56d7df1cf05dbb430c51325769",
-      "label": "de6d7f6 (21.11)",
-      "date": "2026-11-21T16:00:00+03:00",
+      "ref": "de6d7f60c68c37b8245494aedca999e84c3e3a7f",
+      "label": "v1.9.1 (de6d7f6)",
+      "date": "2026-11-21T04:09:13+03:00",
       "use": "Алгоритмы автотестирования и сортировки стратегий обхода DPI; аудит AmneziaWG fw4 dual-tunnel (роутерные правила)."
     },
     {
@@ -111,10 +111,10 @@
       "branch": "main",
       "path": "strategies/nfqws2",
       "track": "commits",
-      "ref": "8f044be5e99e07b5888489a2fcd3c6a588aac191",
-      "label": "v0.2.5 (21.11)",
-      "date": "2026-11-21T18:44:01Z",
-      "use": "34 новые .conf (Flowseal 1.10.4 и порты kinlay0 v1.1.5), 6 блобов и 4 hostlist-файла. Пути /etc/nfqws2 переведены в переменные модуля; 36 одноимённых конфигов и 8 уже перенесённых ранее стратегий не тронуты."
+      "ref": "0e35241385ff29aec4b7040c06462419b8f1be54",
+      "label": "v0.2.6 (25.11)",
+      "date": "2026-11-25T07:53:27+03:00",
+      "use": "34 .conf (Flowseal 1.10.4 и порты kinlay0 v1.1.5), 6 блобов, 4 hostlist-файла; v0.2.6: исправление zapret-custom.lua (apply_fooling/apply_ip_id), MartinBacker/z2r_rocket/fake_disorder/alt11/general и IPv6 ip6_autottl/TTL fallback parity."
     }
   ]
 }

@@ -2807,6 +2807,51 @@ end
 
 
 -- tls_fake_disorder: fake flood + 3-segment multidisorder for TLS ClientHello (Zapret-2-GUI)
+local function disorder_has_explicit_fooling(arg)
+	return arg and (
+		arg.tcp_seq or arg.tcp_ack or arg.tcp_ts or arg.tcp_md5 or
+		arg.tcp_flags_set or arg.tcp_flags_unset or arg.badsum or
+		arg.ip_ttl or arg.ip_autottl or arg.ip6_ttl or arg.ip6_autottl or
+		arg.ip6_hopbyhop or arg.ip6_hopbyhop2 or arg.ip6_destopt or
+		arg.ip6_destopt2 or arg.ip6_routing or arg.ip6_ah or arg.fool
+	)
+end
+
+local function disorder_send_fakes(desync, fake_payload, num_fakes, default_ttl, opts_fake)
+	if num_fakes <= 0 then return end
+	local dis = deepcopy(desync.dis)
+	dis.payload = fake_payload
+	apply_fooling(desync, dis, opts_fake.fooling)
+	apply_ip_id(desync, dis, opts_fake.ipid)
+	-- Fallback TTL ensures unfooled fakes expire before reaching the peer
+	if default_ttl and not disorder_has_explicit_fooling(desync.arg) then
+		if dis.ip then dis.ip.ip_ttl = default_ttl end
+		if dis.ip6 then dis.ip6.ip6_hlim = default_ttl end
+	end
+	for _ = 1, num_fakes do
+		rawsend_dissect(dis, opts_fake.rawsend, opts_fake.reconstruct)
+	end
+end
+
+local function disorder_send_payload(desync, data, spos1, spos2, opts_orig)
+	local pos1 = resolve_pos(data, desync.l7payload, spos1)
+	local pos2 = resolve_pos(data, desync.l7payload, spos2)
+	if pos1 and pos2 and pos1 > 1 and pos2 > pos1 and pos2 <= #data then
+		local part1 = string.sub(data, 1, pos1 - 1)
+		local part2 = string.sub(data, pos1, pos2 - 1)
+		local part3 = string.sub(data, pos2)
+		if not rawsend_payload_segmented(desync, part3, pos2 - 1, opts_orig) then return false end
+		if not rawsend_payload_segmented(desync, part2, pos1 - 1, opts_orig) then return false end
+		if not rawsend_payload_segmented(desync, part1, 0, opts_orig) then return false end
+	else
+		local part1 = string.sub(data, 1, 1)
+		local part2 = string.sub(data, 2)
+		if not rawsend_payload_segmented(desync, part2, 1, opts_orig) then return false end
+		if not rawsend_payload_segmented(desync, part1, 0, opts_orig) then return false end
+	end
+	return true
+end
+
 function tls_fake_disorder(ctx, desync)
 	if not desync.dis.tcp then
 		if not desync.dis.icmp then instance_cutoff_shim(ctx, desync) end
@@ -2829,30 +2874,9 @@ function tls_fake_disorder(ctx, desync)
 			local opts_fake = { rawsend = rawsend_opts(desync), reconstruct = reconstruct_opts(desync), ipfrag = {}, ipid = desync.arg, fooling = desync.arg }
 			local opts_orig = { rawsend = rawsend_opts_base(desync), reconstruct = {}, ipfrag = {}, ipid = desync.arg, fooling = { tcp_ts_up = desync.arg.tcp_ts_up } }
 
-			if num_fakes > 0 then
-				local dis = deepcopy(desync.dis)
-				dis.payload = fake_payload
-				if dis.ip then dis.ip.ip_ttl = 2 end
-				if dis.ip6 then dis.ip6.ip6_hlim = 2 end
-				for i = 1, num_fakes do
-					rawsend_dissect(dis, opts_fake.rawsend, opts_fake.reconstruct)
-				end
-			end
-
-			local pos1 = resolve_pos(data, desync.l7payload, "host")
-			local pos2 = resolve_pos(data, desync.l7payload, "endhost")
-			if pos1 and pos2 and pos1 > 1 and pos2 > pos1 and pos2 <= #data then
-				local part1 = string.sub(data, 1, pos1 - 1)
-				local part2 = string.sub(data, pos1, pos2 - 1)
-				local part3 = string.sub(data, pos2)
-				if not rawsend_payload_segmented(desync, part3, pos2 - 1, opts_orig) then return VERDICT_PASS end
-				if not rawsend_payload_segmented(desync, part2, pos1 - 1, opts_orig) then return VERDICT_PASS end
-				if not rawsend_payload_segmented(desync, part1, 0, opts_orig) then return VERDICT_PASS end
-			else
-				local part1 = string.sub(data, 1, 1)
-				local part2 = string.sub(data, 2)
-				if not rawsend_payload_segmented(desync, part2, 1, opts_orig) then return VERDICT_PASS end
-				if not rawsend_payload_segmented(desync, part1, 0, opts_orig) then return VERDICT_PASS end
+			disorder_send_fakes(desync, fake_payload, num_fakes, 2, opts_fake)
+			if not disorder_send_payload(desync, data, "host", "endhost", opts_orig) then
+				return VERDICT_PASS
 			end
 
 			replay_drop_set(desync)
@@ -2888,30 +2912,9 @@ function fake_disorder(ctx, desync)
 			local opts_fake = { rawsend = rawsend_opts(desync), reconstruct = reconstruct_opts(desync), ipfrag = {}, ipid = desync.arg, fooling = desync.arg }
 			local opts_orig = { rawsend = rawsend_opts_base(desync), reconstruct = {}, ipfrag = {}, ipid = desync.arg, fooling = { tcp_ts_up = desync.arg.tcp_ts_up } }
 
-			if num_fakes > 0 then
-				local dis = deepcopy(desync.dis)
-				dis.payload = fake_payload
-				for i = 1, num_fakes do
-					rawsend_dissect(dis, opts_fake.rawsend, opts_fake.reconstruct)
-				end
-			end
-
-			local spos1 = desync.arg.pos1 or "host"
-			local spos2 = desync.arg.pos2 or "endhost"
-			local pos1 = resolve_pos(data, desync.l7payload, spos1)
-			local pos2 = resolve_pos(data, desync.l7payload, spos2)
-			if pos1 and pos2 and pos1 > 1 and pos2 > pos1 and pos2 <= #data then
-				local part1 = string.sub(data, 1, pos1 - 1)
-				local part2 = string.sub(data, pos1, pos2 - 1)
-				local part3 = string.sub(data, pos2)
-				if not rawsend_payload_segmented(desync, part3, pos2 - 1, opts_orig) then return VERDICT_PASS end
-				if not rawsend_payload_segmented(desync, part2, pos1 - 1, opts_orig) then return VERDICT_PASS end
-				if not rawsend_payload_segmented(desync, part1, 0, opts_orig) then return VERDICT_PASS end
-			else
-				local part1 = string.sub(data, 1, 1)
-				local part2 = string.sub(data, 2)
-				if not rawsend_payload_segmented(desync, part2, 1, opts_orig) then return VERDICT_PASS end
-				if not rawsend_payload_segmented(desync, part1, 0, opts_orig) then return VERDICT_PASS end
+			disorder_send_fakes(desync, fake_payload, num_fakes, 2, opts_fake)
+			if not disorder_send_payload(desync, data, desync.arg.pos1 or "host", desync.arg.pos2 or "endhost", opts_orig) then
+				return VERDICT_PASS
 			end
 
 			replay_drop_set(desync)
