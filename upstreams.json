@@ -1,7 +1,7 @@
 {
   "about": "Что взято из чужих проектов и до какой версии. Обновляется при каждом переносе изменений; читает трекер обновлений и тесты целостности.",
-  "updated": "2026-11-26",
-  "module": "nfqws2-android v3.1.3",
+  "updated": "2026-11-27",
+  "module": "nfqws2-android v3.1.4",
   "projects": [
     {
       "id": "zapret2",
@@ -32,10 +32,10 @@
       "branch": "main",
       "path": "strategies",
       "track": "commits",
-      "ref": "01135bd39697b40e9bc0a9ff86d85f82c8a1dd7f",
-      "label": "PR #36 / 21.11",
-      "date": "2026-11-21T20:23:01Z",
-      "use": "Свежая ревизия hardcorp74.conf (ozon.ru, wide-youtube.l.google.com со Sochi Park блобом и multidisorder, repeats=6, синхронизация OVH/Vultr)"
+      "ref": "6d6b86ceb96c4706975aa85e335d0175089ef121",
+      "label": "PR #39 / 26.11",
+      "date": "2026-11-26T16:07:04Z",
+      "use": "hardcorp74.conf (multi-L7 QUIC/UDP, http_req с tls_clienthello_www_sferum_ru, wide-youtube.l.google.com, ozon.ru), консолидированный lists/ipset_as.list, project-athens.com → user.list"
     },
     {
       "id": "zapret2-next",
@@ -66,10 +66,10 @@
       "repo": "nfqws/nfqws2-keenetic",
       "branch": "master",
       "track": "releases",
-      "ref": "v1.3.3",
-      "label": "v1.3.3",
-      "date": "2026-11-05T08:34:59Z",
-      "use": "Патч TLS-сборки для CI, fastpath reassembly, wssize 1 + multidisorder midsld"
+      "ref": "v1.3.4",
+      "label": "v1.3.4",
+      "date": "2026-11-26T12:53:36Z",
+      "use": "Патч TLS-сборки для CI (перебазирован под zapret2 v1.0.8 с --fuzz=0), fastpath reassembly, wssize 1 + multidisorder midsld"
     },
     {
       "id": "tachyon",
@@ -99,9 +99,9 @@
       "repo": "Omn1z/nfqws2-keenetic-strategy-selector",
       "branch": "main",
       "track": "commits",
-      "ref": "de6d7f60c68c37b8245494aedca999e84c3e3a7f",
-      "label": "v1.9.1 (de6d7f6)",
-      "date": "2026-11-21T04:09:13+03:00",
+      "ref": "64dcae9d7b505555312ba2243f5479a2df211191",
+      "label": "v1.9.1+dev (64dcae9)",
+      "date": "2026-11-26T08:56:23+03:00",
       "use": "Алгоритмы автотестирования и сортировки стратегий обхода DPI; аудит AmneziaWG fw4 dual-tunnel (роутерные правила)."
     },
     {
