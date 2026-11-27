@@ -312,6 +312,8 @@ assert_file "$PIDFILE" "boot-completed hook maintains running service"
 
 svc stop >/dev/null 2>&1
 [ -f "$WD_PIDFILE" ] && kill "$(cat "$WD_PIDFILE" 2>/dev/null)" 2>/dev/null
+rm -f "$WD_PIDFILE" "$WN_PIDFILE" "$WL_PIDFILE" "$SK_PIDFILE"
+printf 'WATCHDOG=0\n' >> "$CONFFILE"
 
 section "post-fs-data.sh early boot hook"
 
@@ -418,17 +420,17 @@ for _p in "$WD_PIDFILE" "$WN_PIDFILE" "$WL_PIDFILE" "$SK_PIDFILE"; do
 done
 rm -rf "$CONFDIR/state/service.lock"
 
-# the old configuration passed traffic (first probe), the new one never does
+# the old configuration passed traffic (base_ok probe before stop+start),
+# the new one (TCP_PORTS="9") never does. Check live firewall rules rather
+# than a shared call-counter file because health_probe runs two concurrent
+# curl subshells whose unsynchronized counter updates race on Linux.
 printf 'example.net\nexample.org\n' > "$LISTS_DIR/probe_hosts.list"
 cat > "$MOCKBIN/curl" <<'X'
 #!/bin/sh
-n=$(cat "$MOCK_DIR/curl_calls" 2>/dev/null || echo 0)
-n=$((n + 1)); printf '%s\n' "$n" > "$MOCK_DIR/curl_calls"
-[ "$n" -le 1 ] && exit 0
+grep -q '80,443,1984' "$MOCK_IPT_STORE/iptables/mangle/nfqws_post" 2>/dev/null && exit 0
 exit 22
 X
 chmod 0755 "$MOCKBIN/curl"
-rm -f "$MOCK_DIR/curl_calls"
 svc start >/dev/null 2>&1
 # config B differs from the config the snapshot holds: the rollback has to bring
 # A back, and the failing start must not have overwritten the snapshot with B
@@ -446,8 +448,9 @@ assert_eq "0" "$(grep -c 'TCP_PORTS="9"' "$SNAPSHOT_DIR/nfqws2.conf" 2>/dev/null
 assert_file "$PIDFILE" "and the service runs on the old configuration"
 assert_contains "$(ipt_rules nfqws_post)" "80,443,1984" "iptables rules actually reverted to the snapshot ports"
 assert_not_contains "$(ipt_rules nfqws_post)" "--dport 9 " "broken config ports are no longer active in iptables"
+assert_not_contains "$(ipt_rules nfqws_post)" "--dports 9 " "broken multiport rules are no longer active in iptables"
 assert_file "$CONFDIR/state/last_rollback.json" "the rollback is recorded"
-rm -f "$MOCKBIN/curl" "$MOCK_DIR/curl_calls"
+rm -f "$MOCKBIN/curl"
 
 section "a restart keeps the prior working snapshot during the 5s watchdog gate"
 
