@@ -1,3 +1,15 @@
+### Изменения в v3.1.5:
+
+RU
+
+- Фиксы по исследованию circumvolve
+- Прочие исправления
+
+EN
+
+- Circumvolve research fixes
+- Other fixes
+
 ### Изменения в v3.1.4:
 
 RU
